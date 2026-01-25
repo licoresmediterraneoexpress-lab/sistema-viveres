@@ -1,4 +1,28 @@
 import streamlit as st
+
+def verificar_password():
+    """Retorna True si el usuario ingresó la contraseña correcta."""
+    def check_password():
+        if st.session_state["password"] == "1234": # <--- AQUÍ PUEDES CAMBIAR TU CLAVE
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # Borra la clave de la memoria
+        else:
+            st.session_state["password_correct"] = False
+
+    if "password_correct" not in st.session_state:
+        # Pantalla de Login
+        st.title("🔐 Acceso al Sistema")
+        st.text_input("Ingresa la contraseña del negocio", type="password", on_change=check_password, key="password")
+        if "password_correct" in st.session_state and not st.session_state["password_correct"]:
+            st.error("😕 Contraseña incorrecta")
+        return False
+    else:
+        return True
+
+if not verificar_password():
+    st.stop()  # Detiene la ejecución si no hay clave correcta
+
+# --- AQUÍ EMPIEZA TODO TU CÓDIGO ANTERIOR ---import streamlit as st
 import pandas as pd
 import os
 from datetime import datetime
@@ -67,4 +91,5 @@ elif menu == "Inventario":
             st.session_state.inv = pd.concat([st.session_state.inv, nuevo], ignore_index=True)
             guardar_datos(st.session_state.inv)
             st.success("Guardado en tu PC")
+
     st.dataframe(st.session_state.inv)
