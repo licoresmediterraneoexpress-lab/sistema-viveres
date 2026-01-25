@@ -1,95 +1,104 @@
 import streamlit as st
-
-def verificar_password():
-    """Retorna True si el usuario ingresó la contraseña correcta."""
-    def check_password():
-        if st.session_state["password"] == "1234": # <--- AQUÍ PUEDES CAMBIAR TU CLAVE
-            st.session_state["password_correct"] = True
-            del st.session_state["password"]  # Borra la clave de la memoria
-        else:
-            st.session_state["password_correct"] = False
-
-    if "password_correct" not in st.session_state:
-        # Pantalla de Login
-        st.title("🔐 Acceso al Sistema")
-        st.text_input("Ingresa la contraseña del negocio", type="password", on_change=check_password, key="password")
-        if "password_correct" in st.session_state and not st.session_state["password_correct"]:
-            st.error("😕 Contraseña incorrecta")
-        return False
-    else:
-        return True
-
-if not verificar_password():
-    st.stop()  # Detiene la ejecución si no hay clave correcta
-
-# --- AQUÍ EMPIEZA TODO TU CÓDIGO ANTERIOR ---import streamlit as st
+from supabase import create_client, Client
 import pandas as pd
-import os
-from datetime import datetime
 
-# Configuración y Estética
-st.set_page_config(page_title="Sistema POS Víveres", layout="wide")
-st.markdown("""<style> .stButton>button { width: 100%; border-radius: 5px; height: 3em; background-color: #007bff; color: white; } </style>""", unsafe_allow_html=True)
+# 1. Seguridad
+def verificar_password():
+    if "password_correct" not in st.session_state:
+        st.title("🔐 Acceso al Sistema")
+        pwd = st.text_input("Contraseña del negocio", type="password")
+        if st.button("Entrar"):
+            if pwd == "1234":
+                st.session_state["password_correct"] = True
+                st.rerun()
+            else: st.error("Incorrecta")
+        return False
+    return True
 
-# Archivos Locales para guardar datos
-DB_INV = "inventario.csv"
-DB_VENTAS = "ventas.csv"
+if not verificar_password(): st.stop()
 
-def cargar_datos():
-    if os.path.exists(DB_INV): return pd.read_csv(DB_INV)
-    return pd.DataFrame(columns=["ID", "Producto", "Stock", "Precio_Detal", "Precio_Mayor", "Min_Mayor"])
-
-def guardar_datos(df):
-    df.to_csv(DB_INV, index=False)
-
-# Cargar datos
-if 'inv' not in st.session_state: st.session_state.inv = cargar_datos()
-if 'carrito' not in st.session_state: st.session_state.carrito = []
+# 2. Conexión SQL
+url = st.secrets["SUPABASE_URL"]
+key = st.secrets["SUPABASE_KEY"]
+supabase: Client = create_client(url, key)
 
 # --- INTERFAZ ---
-st.title("🛒 Sistema de Ventas Víveres y Licores")
-tasa = st.sidebar.number_input("Tasa del dólar hoy:", value=1.0, step=0.1)
+st.sidebar.title("Navegación")
+menu = st.sidebar.selectbox("Ir a:", ["Punto de Venta", "Inventario", "Historial de Ventas"])
+tasa = st.sidebar.number_input("Tasa del Dólar (BS/USD)", value=1.0, step=0.1)
 
-menu = st.sidebar.selectbox("Ir a:", ["Vender", "Inventario", "Reportes"])
-
-if menu == "Vender":
-    col1, col2 = st.columns([1, 1])
-    with col1:
-        st.subheader("Caja")
-        prod = st.selectbox("Selecciona Producto", st.session_state.inv["Producto"].tolist() if not st.session_state.inv.empty else ["No hay productos"])
-        cant = st.number_input("Cantidad", min_value=1, value=1)
+# --- MÓDULO: INVENTARIO ---
+if menu == "Inventario":
+    st.header("📦 Gestión de Inventario")
+    with st.form("nuevo_producto"):
+        c1, c2 = st.columns(2)
+        nombre = c1.text_input("Nombre del Producto")
+        stock = c2.number_input("Cantidad inicial", min_value=0)
+        p_detal = c1.number_input("Precio Detal ($)")
+        p_mayor = c2.number_input("Precio Mayor ($)")
+        min_mayor = st.number_input("Cantidad mínima para precio mayor", value=6)
         
-        if st.button("Agregar al Carrito"):
-            item = st.session_state.inv[st.session_state.inv["Producto"] == prod].iloc[0]
-            precio = item["Precio_Mayor"] if cant >= item["Min_Mayor"] else item["Precio_Detal"]
-            st.session_state.carrito.append({"Producto": prod, "Cant": cant, "Precio $": precio, "Total $": precio * cant})
+        if st.form_submit_button("Guardar en SQL"):
+            supabase.table("inventario").insert({
+                "nombre": nombre, "stock": stock, 
+                "precio_detal": p_detal, "precio_mayor": p_mayor, 
+                "min_mayor": min_mayor
+            }).execute()
+            st.success(f"{nombre} guardado con éxito.")
 
-    with col2:
-        st.subheader("Carrito")
-        if st.session_state.carrito:
-            df_c = pd.DataFrame(st.session_state.carrito)
-            st.table(df_c)
-            total_usd = df_c["Total $"].sum()
-            st.metric("Total USD", f"${total_usd:,.2f}")
-            st.metric("Total Local", f"{total_usd * tasa:,.2f}")
-            if st.button("Finalizar Venta"):
-                # Aquí restaría del inventario (Lógica para la próxima versión)
-                st.session_state.carrito = []
-                st.success("Venta realizada con éxito")
+    # Ver tabla de productos
+    res = supabase.table("inventario").select("*").execute()
+    df = pd.DataFrame(res.data)
+    if not df.empty:
+        st.subheader("Productos en Estante")
+        st.dataframe(df[["nombre", "stock", "precio_detal", "precio_mayor"]])
 
-elif menu == "Inventario":
-    st.subheader("Gestión de Productos")
-    with st.form("nuevo"):
-        c1, c2, c3 = st.columns(3)
-        nombre = c1.text_input("Nombre")
-        stock = c2.number_input("Stock", min_value=0)
-        p_d = c3.number_input("Precio Detal $")
-        p_m = c1.number_input("Precio Mayor $")
-        min_m = c2.number_input("Mínimo para Mayor", value=6)
-        if st.form_submit_button("Guardar"):
-            nuevo = pd.DataFrame([{"ID": len(st.session_state.inv)+1, "Producto": nombre, "Stock": stock, "Precio_Detal": p_d, "Precio_Mayor": p_m, "Min_Mayor": min_m}])
-            st.session_state.inv = pd.concat([st.session_state.inv, nuevo], ignore_index=True)
-            guardar_datos(st.session_state.inv)
-            st.success("Guardado en tu PC")
+# --- MÓDULO: PUNTO DE VENTA ---
+elif menu == "Punto de Venta":
+    st.header("💰 Nueva Venta")
+    
+    # Obtener lista de productos para el buscador
+    res = supabase.table("inventario").select("*").execute()
+    productos = res.data
+    nombres_productos = [p['nombre'] for p in productos]
+    
+    prod_sel = st.selectbox("Seleccionar Producto", nombres_productos)
+    cant = st.number_input("Cantidad a vender", min_value=1, value=1)
+    
+    if prod_sel:
+        # Buscar datos del producto seleccionado
+        p_data = next(item for item in productos if item["nombre"] == prod_sel)
+        
+        # Lógica de precio Mayor vs Detal
+        precio_usar = p_data['precio_mayor'] if cant >= p_data['min_mayor'] else p_data['precio_detal']
+        total_usd = precio_usar * cant
+        
+        st.metric("Precio Unitario", f"${precio_usar}")
+        st.subheader(f"Total a cobrar: ${total_usd:.2f}  /  {total_usd * tasa:.2f} BS")
+        
+        if st.button("Confirmar Venta"):
+            if p_data['stock'] >= cant:
+                # 1. Restar del inventario
+                nuevo_stock = p_data['stock'] - cant
+                supabase.table("inventario").update({"stock": nuevo_stock}).eq("id", p_data["id"]).execute()
+                
+                # 2. Guardar registro de venta
+                supabase.table("ventas").insert({
+                    "producto": prod_sel, "cantidad": cant, 
+                    "total_usd": total_usd, "tasa_cambio": tasa
+                }).execute()
+                
+                st.success("Venta realizada. Inventario actualizado.")
+            else:
+                st.error("No hay suficiente stock.")
 
-    st.dataframe(st.session_state.inv)
+# --- MÓDULO: REPORTES ---
+elif menu == "Historial de Ventas":
+    st.header("📈 Reporte de Ventas")
+    res_v = supabase.table("ventas").select("*").execute()
+    df_v = pd.DataFrame(res_v.data)
+    if not df_v.empty:
+        st.write(f"Total vendido: ${df_v['total_usd'].sum():.2f}")
+        st.dataframe(df_v)
+    else:
+        st.write("Aún no hay ventas registradas.")
