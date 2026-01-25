@@ -27,6 +27,14 @@ st.sidebar.title("🏪 Mi Negocio")
 menu = st.sidebar.selectbox("Menú", ["Punto de Venta", "Inventario", "Cierre de Caja"])
 tasa = st.sidebar.number_input("Tasa del Dólar (BS/USD)", value=1.0, min_value=1.0)
 
+# --- NUEVO: ALERTAS DE STOCK BAJO ---
+st.sidebar.write("---")
+res_stock = supabase.table("inventario").select("nombre, stock").lt("stock", 6).execute()
+if res_stock.data:
+    st.sidebar.error("⚠️ PRODUCTOS BAJOS:")
+    for p in res_stock.data:
+        st.sidebar.warning(f"{p['nombre']}: quedan {p['stock']}")
+
 # --- MÓDULO: INVENTARIO ---
 if menu == "Inventario":
     st.header("📦 Gestión de Inventario")
@@ -106,3 +114,4 @@ elif menu == "Cierre de Caja":
         st.dataframe(df[["fecha", "producto", "cantidad", "total_usd"]])
     else:
         st.write("No hay ventas hoy.")
+
