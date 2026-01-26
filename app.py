@@ -55,11 +55,11 @@ if menu == "Inicio":
     if not df_v.empty:
         st.dataframe(df_v.tail(5), use_container_width=True)
 
-from fpdf import FPDF # Asegúrate de que esta línea esté al inicio del archivo app.py
-
-# --- MÓDULO 2: PUNTO DE VENTA (CON PDF) ---
+# --- MÓDULO 2: PUNTO DE VENTA (PAGOS MIXTOS) ---
 elif menu == "Punto de Venta":
-    st.header("💰 Nueva Venta")
+    st.header("💰 Nueva Venta con Pagos Mixtos")
+    
+    # 1. Selección de Producto
     res = supabase.table("inventario").select("*").execute()
     productos = res.data
     
@@ -69,42 +69,83 @@ elif menu == "Punto de Venta":
     with col_b:
         cant = st.number_input("Cantidad", min_value=1)
     
-    if prod_sel:
-        p_data = next(item for item in productos if item["nombre"] == prod_sel)
-        total_usd = (p_data['precio_detal'] * cant)
-        total_bs = total_usd * tasa
-        st.info(f"Monto a cobrar: ${total_usd:.2f} | En Bolívares: {total_bs:.2f} BS")
+    p_data = next(item for item in productos if item["nombre"] == prod_sel)
+    total_a_pagar = p_data['precio_detal'] * cant
+    total_bs = total_a_pagar * tasa
+    
+    st.warning(f"### Total a cobrar: ${total_a_pagar:.2f} ({total_bs:.2f} BS)")
+    st.divider()
+
+    # 2. GESTIÓN DE PAGOS MIXTOS
+    st.subheader("💳 Registrar Pagos")
+    
+    if "pagos_acumulados" not in st.session_state:
+        st.session_state.pagos_acumulados = []
+
+    c1, c2, c3 = st.columns([2, 2, 1])
+    metodo = c1.selectbox("Método de Pago", ["Efectivo $", "Efectivo BS", "Pago Móvil", "Zelle", "Punto de Venta", "Otros"])
+    monto_pago = c2.number_input("Monto a entregar", min_value=0.0)
+    
+    if c3.button("Añadir Pago"):
+        if monto_pago > 0:
+            st.session_state.pagos_acumulados.append({"metodo": metodo, "monto": monto_pago})
+        else:
+            st.error("El monto debe ser mayor a 0")
+
+    # Mostrar lista de pagos actuales
+    total_recibido_usd = 0
+    if st.session_state.pagos_acumulados:
+        st.write("*Detalle de pagos:*")
+        for i, p in enumerate(st.session_state.pagos_acumulados):
+            # Convertimos a USD para la suma total si el pago fue en BS
+            monto_en_usd = p['monto'] / tasa if "BS" in p['metodo'] or "Móvil" in p['metodo'] else p['monto']
+            total_recibido_usd += monto_en_usd
+            st.write(f"- {p['metodo']}: {p['monto']:.2f} (Ref: ${monto_en_usd:.2f})")
         
-        if st.button("Finalizar Venta y Generar Ticket PDF"):
-            # 1. Actualizar Stock y Registrar en Supabase
-            supabase.table("inventario").update({"stock": p_data['stock']-cant}).eq("id", p_data["id"]).execute()
-            supabase.table("ventas").insert({"producto": prod_sel, "cantidad": cant, "total_usd": total_usd}).execute()
+        if st.button("Limpiar Pagos"):
+            st.session_state.pagos_acumulados = []
+            st.rerun()
+
+    # 3. VERIFICACIÓN Y CIERRE
+    restante = total_a_pagar - total_recibido_usd
+    
+    if restante > 0.01: # Usamos 0.01 por temas de decimales
+        st.error(f"Faltan por pagar: ${restante:.2f}")
+    else:
+        st.success(f"¡Pago Completado! Cambio a devolver: ${abs(restante):.2f}")
+        
+        if st.button("Finalizar Venta e Imprimir Ticket"):
+            # Guardar en Supabase (Guardamos los métodos usados en una sola columna de texto)
+            metodos_texto = ", ".join([f"{x['metodo']}({x['monto']})" for x in st.session_state.pagos_acumulados])
             
-            # 2. CREACIÓN DEL PDF EN MEMORIA
-            pdf = FPDF(format=(80, 150)) # Formato de ticket pequeño (80mm)
+            supabase.table("inventario").update({"stock": p_data['stock']-cant}).eq("id", p_data["id"]).execute()
+            supabase.table("ventas").insert({
+                "producto": prod_sel, 
+                "cantidad": cant, 
+                "total_usd": total_a_pagar,
+                "metodo_pago": metodos_texto # Asegúrate de tener esta columna en Supabase
+            }).execute()
+            
+            # Generar PDF (Ticket)
+            pdf = FPDF(format=(80, 150))
             pdf.add_page()
             pdf.set_font("Arial", "B", 10)
             pdf.cell(0, 5, "TICKET DE VENTA", ln=True, align='C')
             pdf.set_font("Arial", "", 8)
-            pdf.cell(0, 5, "------------------------------------------", ln=True, align='C')
-            pdf.cell(0, 5, f"Producto: {prod_sel}", ln=True)
-            pdf.cell(0, 5, f"Cantidad: {cant}", ln=True)
-            pdf.cell(0, 5, f"Precio Unit: ${p_data['precio_detal']:.2f}", ln=True)
-            pdf.cell(0, 10, f"TOTAL USD: ${total_usd:.2f}", ln=True)
-            pdf.cell(0, 5, f"TASA: {tasa:.2f}", ln=True)
-            pdf.cell(0, 5, f"TOTAL BS: {total_bs:.2f}", ln=True)
-            pdf.cell(0, 5, "------------------------------------------", ln=True, align='C')
-            pdf.cell(0, 5, "¡Gracias por su compra!", ln=True, align='C')
+            pdf.cell(0, 5, f"Producto: {prod_sel} x{cant}", ln=True)
+            pdf.cell(0, 5, f"Total Facturado: ${total_a_pagar:.2f}", ln=True)
+            pdf.cell(0, 5, "--- PAGOS RECIBIDOS ---", ln=True)
+            for p in st.session_state.pagos_acumulados:
+                pdf.cell(0, 5, f"{p['metodo']}: {p['monto']:.2f}", ln=True)
+            pdf.cell(0, 5, "------------------------------------------", ln=True)
             
-            # 3. Botón de descarga
-            pdf_bytes = pdf.output() 
-            st.success("✅ Venta registrada.")
-            st.download_button(
-                label="📥 Descargar Ticket PDF",
-                data=pdf_bytes,
-                file_name=f"ticket_{prod_sel}.pdf",
-                mime="application/pdf"
-            )
+            pdf_bytes = pdf.output()
+            st.download_button("📥 Descargar Ticket", data=pdf_bytes, file_name="ticket.pdf", mime="application/pdf")
+            
+            # Limpiar para la próxima venta
+            st.session_state.pagos_acumulados = []
+
+
 
 # --- MÓDULO 3: INVENTARIO ---
 elif menu == "Inventario":
@@ -142,4 +183,5 @@ elif menu == "Cierre de Caja":
     
     total_ventas = df_v['total_usd'].sum() if not df_v.empty else 0
     total_gastos = df_g['monto_usd'].sum() if not df_g.empty else 0
+
 
