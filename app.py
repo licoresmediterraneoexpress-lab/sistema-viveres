@@ -77,6 +77,49 @@ elif menu == "Inventario":
             supabase.table("inventario").insert({"nombre":n, "stock":s, "precio_detal":pd1, "precio_mayor":pm}).execute()
     res = supabase.table("inventario").select("*").execute()
     st.dataframe(pd.DataFrame(res.data))
+    import streamlit as st
+# (Aquí ya debes tener tus importaciones de Supabase)
+
+# --- 1. FUNCIÓN DE LA PANTALLA PRINCIPAL (Lo nuevo) ---
+def mostrar_inicio():
+    st.title("🚀 Panel de Control")
+    
+    # Métricas principales
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Ventas de Hoy", "$0.00")
+    
+    # Aquí es donde se conectará con tus ALERTAS DE STOCK que ya hicimos
+    col2.metric("Alertas de Inventario", "Verificar", delta_color="inverse")
+    col3.metric("Facturas Totales", "0")
+
+    st.markdown("---")
+    st.subheader("Accesos Rápidos")
+    c1, c2 = st.columns(2)
+    c1.button("🛒 Realizar Nueva Venta")
+    c2.button("📦 Revisar Stock Bajo")
+
+# --- 2. FUNCIÓN PARA GENERAR FACTURAS ---
+def mostrar_facturacion():
+    st.title("📄 Generación de Facturas")
+    st.write("Seleccione los productos para la factura:")
+    # Aquí pondremos el formulario para elegir productos y el botón de PDF
+    st.info("Módulo en desarrollo: Aquí conectaremos tu inventario de Supabase.")
+
+# --- 3. TU MENÚ LATERAL (El que ya debes tener) ---
+st.sidebar.title("Navegación")
+opcion = st.sidebar.radio("Ir a:", ["Inicio", "Inventario", "Facturación"])
+
+# --- 4. LÓGICA PARA MOSTRAR CADA PANTALLA ---
+if opcion == "Inicio":
+    mostrar_inicio()
+
+elif opcion == "Inventario":
+    # AQUÍ PEGA TODO EL CÓDIGO QUE YA TENÍAS DE INVENTARIO Y ALERTAS
+    st.header("Gestión de Inventario")
+    st.write("Tu código anterior de stock va aquí...")
+
+elif opcion == "Facturación":
+    mostrar_facturacion()
 
 # --- MÓDULO: PUNTO DE VENTA ---
 elif menu == "Punto de Venta":
@@ -93,3 +136,4 @@ elif menu == "Punto de Venta":
             supabase.table("inventario").update({"stock": p_data['stock']-cant}).eq("id", p_data["id"]).execute()
             supabase.table("ventas").insert({"producto": prod_sel, "cantidad": cant, "total_usd": total_usd}).execute()
             st.success("Vendido")
+
