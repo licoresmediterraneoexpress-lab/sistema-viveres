@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 from supabase import create_client
 from datetime import datetime, date
-from fpdf import FPDF
 import time, io
 
 st.set_page_config(page_title="Mediterraneo POS", layout="wide")
@@ -20,7 +19,7 @@ st.markdown("<style>.stApp{background:white;} [data-testid='stSidebar']{backgrou
 with st.sidebar:
     st.markdown("<h2 style='color:#FF8C00;text-align:center;'>MEDITERRANEO</h2>", unsafe_allow_html=True)
     m = st.radio("MENÚ", ["📦 Stock", "🛒 Venta", "📊 Total"])
-    if st.button("🗑️ Vaciar"):
+    if st.button("🗑️ Vaciar Carrito"):
         st.session_state.car = []; st.rerun()
 
 if m == "📦 Stock":
@@ -28,58 +27,74 @@ if m == "📦 Stock":
     with st.expander("➕ Nuevo"):
         with st.form("f1", clear_on_submit=True):
             n, s = st.text_input("Nombre"), st.number_input("Stock", 0)
-            pd, pm, mm = st.number_input("Detal"), st.number_input("Mayor"), st.number_input("Min. Mayor", 1)
+            pd_v, pm_v, mm = st.number_input("Detal"), st.number_input("Mayor"), st.number_input("Min. Mayor", 1)
             if st.form_submit_button("Ok"):
-                db.table("inventario").insert({"nombre":n,"stock":s,"precio_detal":pd,"precio_mayor":pm,"min_mayor":mm}).execute()
+                db.table("inventario").insert({"nombre":n,"stock":s,"precio_detal":pd_v,"precio_mayor":pm_v,"min_mayor":mm}).execute()
                 st.success("Listo"); st.rerun()
-    res = db.table("inventario").select("*").execute()
-    if res.data: st.dataframe(pd.DataFrame(res.data), use_container_width=True)
+    
+    try:
+        res = db.table("inventario").select("*").execute()
+        if res.data and len(res.data) > 0:
+            st.dataframe(pd.DataFrame(res.data), use_container_width=True)
+        else:
+            st.info("El inventario está vacío.")
+    except Exception as e:
+        st.error("Error al cargar datos. Verifica la conexión.")
 
 elif m == "🛒 Venta":
     st.header("🛒 Ventas")
-    t = st.number_input("Tasa BCV", 1.0, 55.0)
-    r = db.table("inventario").select("*").execute()
-    if r.data:
-        df = pd.DataFrame(r.data)
-        c1, c2 = st.columns([3,1])
-        sel = c1.selectbox("Producto", df["nombre"])
-        can = c2.number_input("Cant", 1)
-        it = df[df["nombre"]==sel].iloc[0]
-        p_u = float(it["precio_mayor"]) if can >= it["min_mayor"] else float(it["precio_detal"])
-        if st.button("➕ Añadir"):
-            if it["stock"] >= can:
-                st.session_state.car.append({"p":sel,"c":can,"u":p_u,"t":p_u*can}); st.rerun()
-            else: st.error("No hay stock")
+    t = st.number_input("Tasa BCV", 1.0, 100.0, 50.0)
+    try:
+        r = db.table("inventario").select("*").execute()
+        if r.data and len(r.data) > 0:
+            df = pd.DataFrame(r.data)
+            c1, c2 = st.columns([3,1])
+            sel = c1.selectbox("Producto", df["nombre"])
+            can = c2.number_input("Cant", 1)
+            it = df[df["nombre"]==sel].iloc[0]
+            p_u = float(it["precio_mayor"]) if can >= it["min_mayor"] else float(it["precio_detal"])
+            if st.button("➕ Añadir"):
+                if it["stock"] >= can:
+                    st.session_state.car.append({"p":sel,"c":can,"u":p_u,"t":p_u*can}); st.rerun()
+                else: st.error("No hay stock")
+        else:
+            st.warning("No hay productos registrados en el inventario.")
+    except: st.error("Error en la base de datos.")
 
     if st.session_state.car:
         for i, x in enumerate(st.session_state.car):
             ca, cb = st.columns([8, 1])
-            ca.info(f"{x['p']} | {x['c']} x ${x['u']} = ${x['t']}")
+            ca.info(f"{x['p']} | {x['c']} x ${x['u']} = ${x['t']:.2f}")
             if cb.button("❌", key=f"d{i}"):
                 st.session_state.car.pop(i); st.rerun()
         
         tot_u = sum(z['t'] for z in st.session_state.car); tot_b = tot_u * t
         st.subheader(f"Total: Bs. {tot_b:,.2f} (${tot_u:,.2f})")
-        c1, c2 = st.columns(2)
-        pag = c1.number_input("Pagado Bs (Efectivo/Móvil/Punto/Divisa)")
-        if pag < tot_b: st.warning(f"Falta: {tot_b-pag:.2f}")
-        else: st.success(f"Vuelto: {pag-tot_b:.2f}")
+        pag = st.number_input("Pagado Bs", 0.0)
+        if pag < tot_b: st.warning(f"Falta: {tot_b-pag:,.2f} Bs")
+        else: st.success(f"Vuelto: {pag-tot_b:,.2f} Bs")
 
         if st.button("✅ FINALIZAR"):
             if pag >= tot_b - 0.1:
                 for y in st.session_state.car:
                     db.table("ventas").insert({"producto":y['p'],"cantidad":y['c'],"total_usd":y['t'],"tasa_cambio":t}).execute()
-                    old = df[df["nombre"]==y['p']].iloc[0]['stock']
-                    db.table("inventario").update({"stock": old - y['c']}).eq("nombre", y['p']).execute()
-                st.session_state.car = []; st.success("Venta Ok"); st.rerun()
+                    # Actualizar stock buscando el item correcto
+                    r_stock = db.table("inventario").select("stock").eq("nombre", y['p']).execute()
+                    if r_stock.data:
+                        nuevo_s = int(r_stock.data[0]['stock']) - y['c']
+                        db.table("inventario").update({"stock": nuevo_s}).eq("nombre", y['p']).execute()
+                st.session_state.car = []; st.success("Venta realizada"); time.sleep(1); st.rerun()
 
 elif m == "📊 Total":
     st.header("📊 Reportes")
     f = st.date_input("Fecha", date.today())
-    res = db.table("ventas").select("*").execute()
-    if res.data:
-        dfv = pd.DataFrame(res.data)
-        st.dataframe(dfv, use_container_width=True)
-        out = io.BytesIO()
-        with pd.ExcelWriter(out, engine='xlsxwriter') as wr: dfv.to_excel(wr)
-        st.download_button("📥 Excel", out.getvalue(), "reporte.xlsx")
+    try:
+        res = db.table("ventas").select("*").execute()
+        if res.data:
+            dfv = pd.DataFrame(res.data)
+            st.dataframe(dfv, use_container_width=True)
+            out = io.BytesIO()
+            with pd.ExcelWriter(out, engine='xlsxwriter') as wr: dfv.to_excel(wr, index=False)
+            st.download_button("📥 Descargar Excel", out.getvalue(), "reporte.xlsx")
+        else: st.info("No hay ventas registradas.")
+    except: st.error("No se pudieron cargar los reportes.")
