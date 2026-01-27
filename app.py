@@ -60,7 +60,7 @@ with st.sidebar:
 if opcion == "📦 Inventario":
     st.header("📦 Control de Existencias")
     clave = st.sidebar.text_input("Clave de Seguridad", type="password")
-    autorizado = clave == CLAVE_ADMIN
+    autorizado = (clave == CLAVE_ADMIN)
     t1, t2 = st.tabs(["📋 Listado", "🆕 Nuevo"])
     res_inv = db.table("inventario").select("*").execute()
     df_inv = pd.DataFrame(res_inv.data) if res_inv.data else pd.DataFrame()
@@ -70,16 +70,19 @@ if opcion == "📦 Inventario":
             df_m = df_inv[df_inv['nombre'].str.contains(busq, case=False)] if busq else df_inv
             st.dataframe(df_m[["nombre", "stock", "precio_detal", "precio_mayor", "min_mayor"]], use_container_width=True, hide_index=True)
             if autorizado:
+                st.write("---")
                 sel = st.selectbox("Editar producto", df_inv["nombre"])
                 it = df_inv[df_inv["nombre"] == sel].iloc[0]
                 c1, c2, c3 = st.columns(3)
-                en, es = c1.text_input("Nombre", it["nombre"]), c1.number_input("Stock", value=int(it["stock"]))
-                epd, epm = c2.number_input("Precio Detal $", value=float(it["precio_detal"])), c2.number_input("Precio Mayor $", value=float(it["precio_mayor"]))
+                en = c1.text_input("Nombre", it["nombre"])
+                es = c1.number_input("Stock", value=int(it["stock"]))
+                epd = c2.number_input("Precio Detal $", value=float(it["precio_detal"]))
+                epm = c2.number_input("Precio Mayor $", value=float(it["precio_mayor"]))
                 emm = c3.number_input("Min. Mayor", value=int(it["min_mayor"]))
                 b1, b2 = st.columns(2)
                 if b1.button("💾 Guardar"):
                     db.table("inventario").update({"nombre":en, "stock":es, "precio_detal":epd, "precio_mayor":epm, "min_mayor":emm}).eq("id", it["id"]).execute()
-                    st.rerun()
+                    st.success("Guardado"); st.rerun()
                 if b2.button("🗑️ Borrar"):
                     db.table("inventario").delete().eq("id", it["id"]).execute(); st.rerun()
     with t2:
@@ -93,4 +96,46 @@ if opcion == "📦 Inventario":
 
 # --- 5. VENTA RÁPIDA ---
 elif opcion == "🛒 Venta Rápida":
-    st.header("🛒 Terminal de Ventas
+    st.header("🛒 Terminal de Ventas")
+    tasa = st.number_input("Tasa (Bs/$)", 1.0, 1000.0, 60.0)
+    res_p = db.table("inventario").select("*").execute()
+    if res_p.data:
+        df_p = pd.DataFrame(res_p.data)
+        busq_v = st.text_input("🔍 Buscar producto...").lower()
+        df_v = df_p[df_p['nombre'].str.lower().str.contains(busq_v)] if busq_v else df_p
+        if not df_v.empty:
+            v1, v2 = st.columns([3, 1])
+            psel = v1.selectbox("Elegir", df_v["nombre"])
+            csel = v2.number_input("Cant", 1)
+            item = df_p[df_p["nombre"] == psel].iloc[0]
+            pf = float(item["precio_mayor"]) if csel >= item["min_mayor"] else float(item["precio_detal"])
+            if st.button("➕ Añadir"):
+                if item["stock"] >= csel:
+                    st.session_state.car.append({"p":psel, "c":csel, "u":pf, "t":pf*csel}); st.rerun()
+                else: st.error("Sin stock")
+
+    if st.session_state.car:
+        st.write("---")
+        for i, it in enumerate(st.session_state.car):
+            ca, cb = st.columns([9, 1]); ca.info(f"{it['p']} x{it['c']} = ${it['t']:.2f}")
+            if cb.button("❌", key=f"v_{i}"): st.session_state.car.pop(i); st.rerun()
+        
+        tot_u = sum(z['t'] for z in st.session_state.car)
+        st.markdown(f"### Subtotal Productos: ${tot_u:,.2f}")
+        monto_ajustado_usd = st.number_input("Monto Final a Cobrar ($)", min_value=float(tot_u), value=float(tot_u), step=0.01)
+        propina_calc = monto_ajustado_usd - tot_u
+        
+        if propina_calc > 0:
+            st.markdown(f"<div class='propina-box'>Propina registrada: ${propina_calc:,.2f}</div>", unsafe_allow_html=True)
+        
+        total_final_bs = monto_ajustado_usd * tasa
+        st.markdown(f"## TOTAL A COBRAR: Bs. {total_final_bs:,.2f}")
+        
+        c1, c2, c3 = st.columns(3)
+        eb, pb = c1.number_input("Efec Bs", 0.0), c1.number_input("P.Móvil Bs", 0.0)
+        pub, ob = c2.number_input("Punto Bs", 0.0), c2.number_input("Otro Bs", 0.0)
+        zu, du = c3.number_input("Zelle $", 0.0), c3.number_input("Divisa $", 0.0)
+        
+        pag_b = eb + pb + pub + ob + ((zu + du) * tasa)
+        if pag_b >= total_final_bs - 0.1:
+            st.success(f"Vuelto: {pag_b - total_final_bs:,.2f} Bs.")
