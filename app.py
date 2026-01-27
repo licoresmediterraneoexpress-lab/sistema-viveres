@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from supabase import create_client
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import time
 
 # --- CONFIGURACIÓN DE PÁGINA ---
@@ -28,13 +28,14 @@ st.markdown("""
     .stButton>button { background-color: #FF8C00; color: white; border-radius: 10px; font-weight: bold; width: 100%; }
     .titulo-negocio { color: #FF8C00; font-size: 26px; font-weight: bold; text-align: center; }
     .alerta-pago { padding: 20px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 22px; margin: 10px 0px; }
+    .metric-card { background-color: #f0f2f6; padding: 15px; border-radius: 10px; border-left: 5px solid #FF8C00; }
     </style>
     """, unsafe_allow_html=True)
 
 with st.sidebar:
     st.markdown('<div class="titulo-negocio">MEDITERRANEO EXPRESS</div>', unsafe_allow_html=True)
     st.write("---")
-    menu = st.radio("SECCIONES", ["📦 Inventario", "🛒 Ventas", "📊 Cierre de Caja"])
+    menu = st.radio("SECCIONES", ["📦 Inventario", "🛒 Ventas", "📊 Historial y Cierre"])
     if st.button("🗑️ Vaciar Carrito"):
         st.session_state.carrito = []
         st.rerun()
@@ -95,7 +96,7 @@ elif menu == "🛒 Ventas":
         
         st.markdown(f"## TOTAL A COBRAR: Bs. {total_bs:,.2f}  <small>(o ${total_usd:,.2f})</small>", unsafe_allow_html=True)
 
-        st.markdown("### 💳 Registro de Pagos (Bolívares y Dólares)")
+        st.markdown("### 💳 Registro de Pagos")
         c1, c2, c3 = st.columns(3)
         with c1:
             ef_bs = st.number_input("Efectivo (Bs.)", min_value=0.0)
@@ -107,19 +108,13 @@ elif menu == "🛒 Ventas":
             ze_usd = st.number_input("Zelle ($)", min_value=0.0)
             di_usd = st.number_input("Divisas ($)", min_value=0.0)
 
-        # --- CÁLCULOS DE CONVERSIÓN ---
-        # Sumamos lo que entró en Bs directamente
-        total_entrado_bs = ef_bs + mo_bs + pu_bs + ot_bs
-        # Convertimos lo que entró en USD a Bs
-        total_entrado_usd_en_bs = (ze_usd + di_usd) * tasa
-        
-        total_pagado_bs = total_entrado_bs + total_entrado_usd_en_bs
+        total_pagado_bs = ef_bs + mo_bs + pu_bs + ot_bs + ((ze_usd + di_usd) * tasa)
         restante_bs = total_bs - total_pagado_bs
 
         if restante_bs > 0.1:
-            st.markdown(f'<div class="alerta-pago" style="background-color: #ffe5e5; color: #cc0000;">FALTA POR COBRAR: Bs. {restante_bs:,.2f}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="alerta-pago" style="background-color: #ffe5e5; color: #cc0000;">FALTA: Bs. {restante_bs:,.2f}</div>', unsafe_allow_html=True)
         elif restante_bs < -0.1:
-            st.markdown(f'<div class="alerta-pago" style="background-color: #e5f7ff; color: #0041C2;">CAMBIO A DAR: Bs. {abs(restante_bs):,.2f}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="alerta-pago" style="background-color: #e5f7ff; color: #0041C2;">CAMBIO: Bs. {abs(restante_bs):,.2f}</div>', unsafe_allow_html=True)
         else:
             st.markdown(f'<div class="alerta-pago" style="background-color: #e5ffe5; color: #008000;">¡PAGO COMPLETO!</div>', unsafe_allow_html=True)
 
@@ -127,8 +122,6 @@ elif menu == "🛒 Ventas":
             if total_pagado_bs >= (total_bs - 0.1):
                 try:
                     for i, item in enumerate(st.session_state.carrito):
-                        # Guardamos en la DB: los Bs los dividimos por tasa para que tu reporte siga siendo en USD (estándar)
-                        # o los guardas como gustes, pero aquí mantenemos la estructura de tus columnas
                         venta_data = {
                             "fecha": datetime.now().isoformat(),
                             "producto": item["producto"],
@@ -147,35 +140,60 @@ elif menu == "🛒 Ventas":
                         supabase.table("inventario").update({"stock": stk_act - item["cantidad"]}).eq("nombre", item["producto"]).execute()
                     
                     st.balloons()
-                    st.success("🎉 ¡VENTA COMPLETADA CON ÉXITO!")
+                    st.success("🎉 ¡COMPRA EXITOSA!")
                     time.sleep(2)
                     st.session_state.carrito = []
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error: {e}")
-            else:
-                st.error("El monto ingresado es insuficiente.")
 
-# --- MÓDULO: CIERRE DE CAJA ---
-elif menu == "📊 Cierre de Caja":
-    st.header("📊 Resumen de Cierre")
-    fecha_sel = st.date_input("Día", date.today())
+# --- MÓDULO: HISTORIAL Y CIERRE ---
+elif menu == "📊 Historial y Cierre":
+    st.header("📊 Historial Detallado de Ventas")
+    
+    col_f1, col_f2 = st.columns(2)
+    with col_f1:
+        fecha_sel = st.date_input("Consultar Fecha", date.today())
+    
     try:
         inicio = datetime.combine(fecha_sel, datetime.min.time()).isoformat()
         fin = datetime.combine(fecha_sel, datetime.max.time()).isoformat()
         res = supabase.table("ventas").select("*").gte("fecha", inicio).lte("fecha", fin).execute()
+        
         if res.data:
             df_v = pd.DataFrame(res.data)
-            st.subheader("Totales en Dólares (Equivalente)")
-            col1, col2, col3, col4, col5, col6 = st.columns(6)
-            col1.metric("Efectivo", f"${df_v['pago_efectivo'].sum():.2f}")
-            col2.metric("Punto", f"${df_v['pago_punto'].sum():.2f}")
-            col3.metric("Móvil", f"${df_v['pago_movil'].sum():.2f}")
-            col4.metric("Zelle", f"${df_v['pago_zelle'].sum():.2f}")
-            col5.metric("Divisas", f"${df_v['pago_divisas'].sum():.2f}")
-            col6.metric("Otros", f"${df_v['pago_otros'].sum():.2f}")
-            st.markdown(f"### 💰 TOTAL VENDIDO: ${df_v['total_usd'].sum():.2f}")
+            df_v['fecha'] = pd.to_datetime(df_v['fecha']).dt.strftime('%H:%M:%S')
+            
+            # --- SECCIÓN 1: MÉTRICAS FINANCIERAS ---
+            st.subheader("💰 Resumen de Caja")
+            c1, c2, c3, c4, c5 = st.columns(5)
+            c1.metric("Efectivo (USD eq)", f"${df_v['pago_efectivo'].sum():.2f}")
+            c2.metric("Punto (USD eq)", f"${df_v['pago_punto'].sum():.2f}")
+            c3.metric("Móvil (USD eq)", f"${df_v['pago_movil'].sum():.2f}")
+            c4.metric("Zelle", f"${df_v['pago_zelle'].sum():.2f}")
+            c5.metric("Divisas", f"${df_v['pago_divisas'].sum():.2f}")
+            
+            st.markdown(f"### **TOTAL VENDIDO EL DÍA: ${df_v['total_usd'].sum():.2f}**")
+            
+            st.write("---")
+            
+            # --- SECCIÓN 2: PRODUCTOS VENDIDOS (LO NUEVO) ---
+            st.subheader("📦 Productos Vendidos hoy")
+            # Agrupamos por producto para ver el total de cada uno
+            resumen_prod = df_v.groupby('producto').agg({
+                'cantidad': 'sum',
+                'total_usd': 'sum'
+            }).reset_index().rename(columns={'cantidad': 'Cant. Total', 'total_usd': 'Ingreso ($)'})
+            
+            st.table(resumen_prod)
+            
+            st.write("---")
+            
+            # --- SECCIÓN 3: BITÁCORA DE TRANSACCIONES ---
+            st.subheader("📝 Bitácora de Ventas (Detalle por hora)")
+            st.dataframe(df_v[["fecha", "producto", "cantidad", "total_usd", "tasa_cambio"]], use_container_width=True)
+            
         else:
-            st.info("No hay ventas registradas.")
+            st.info(f"No se encontraron ventas para el día {fecha_sel}.")
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Error al cargar historial: {e}")
