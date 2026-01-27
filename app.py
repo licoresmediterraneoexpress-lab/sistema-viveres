@@ -105,7 +105,7 @@ if opcion == "📦 Inventario":
                     db.table("inventario").insert({"nombre":n_nom,"stock":n_stk,"costo":n_cos,"precio_detal":n_pdet,"precio_mayor":n_pmay,"min_mayor":n_mmay}).execute()
                     st.rerun()
 
-# --- 5. VENTA RÁPIDA (AJUSTE EN BOLÍVARES) ---
+# --- 5. VENTA RÁPIDA (BS + MONITOR DE PAGOS) ---
 elif opcion == "🛒 Venta Rápida":
     st.header("🛒 Terminal de Ventas")
     
@@ -148,42 +148,45 @@ elif opcion == "🛒 Venta Rápida":
                 st.session_state.car.pop(i)
                 st.rerun()
         
-        # --- LÓGICA DE CÁLCULO EN BOLÍVARES ---
+        # --- CÁLCULOS EN BOLÍVARES ---
         sub_total_usd = sum(z['t'] for z in st.session_state.car)
         sub_total_bs = sub_total_usd * tasa
         
-        st.write(f"Sub-total Sugerido: **{sub_total_bs:,.2f} Bs.** (${sub_total_usd:,.2f})")
-        
-        # El usuario modifica el monto en BOLÍVARES
+        st.write(f"Sub-total Sugerido: **{sub_total_bs:,.2f} Bs.**")
         total_final_bs = st.number_input("Monto Final a Cobrar (Bs.)", value=float(sub_total_bs), step=1.0)
         
-        # Calculamos los equivalentes para la base de datos
+        # Conversión para base de datos
         total_final_usd = total_final_bs / tasa
-        ajuste_usd = total_final_usd - sub_total_usd # Esto es la propina o descuento en USD
+        ajuste_usd = total_final_usd - sub_total_usd
         
-        st.markdown(f"## TOTAL: {total_final_bs:,.2f} Bs.")
-        st.caption(f"Equivalente a: ${total_final_usd:,.2f}")
-        
-        # --- SECCIÓN DE PAGOS MIXTOS ---
+        # --- SECCIÓN DE PAGOS MIXTOS CON MONITOR ---
         st.write("---")
-        st.subheader("💳 Registro de Pago")
+        st.subheader("💳 Registro de Pagos")
+        
         p1, p2, p3 = st.columns(3)
         ef_b = p1.number_input("Efectivo Bs", 0.0); pm_b = p1.number_input("Pago Móvil Bs", 0.0)
         pu_b = p2.number_input("Punto Bs", 0.0); ot_b = p2.number_input("Otros Bs", 0.0)
         ze_u = p3.number_input("Zelle $", 0.0); di_u = p3.number_input("Divisas $", 0.0)
         
         pago_total_bs = ef_b + pm_b + pu_b + ot_b + ((ze_u + di_u) * tasa)
+        restante_bs = total_final_bs - pago_total_bs
         
+        # Monitor Dinámico
+        if restante_bs > 0.1:
+            st.warning(f"⚠️ Faltante por cobrar: **{restante_bs:,.2f} Bs.**")
+        elif restante_bs <= -0.1:
+            st.success(f"💰 Vuelto a entregar: **{abs(restante_bs):,.2f} Bs.**")
+        else:
+            st.success("✅ Cuenta saldada")
+
+        # Botón de Finalizar (solo si está pagado)
         if pago_total_bs >= total_final_bs - 0.1:
-            vuelto = pago_total_bs - total_final_bs
-            st.success(f"💰 Vuelto: {vuelto:,.2f} Bs.")
-            
             if st.button("✅ FINALIZAR Y FACTURAR", use_container_width=True):
                 for x in st.session_state.car:
                     db.table("ventas").insert({
                         "producto":x['p'], "cantidad":x['c'], "total_usd":x['t'], 
                         "costo_venta": x['costo_u'] * x['c'], 
-                        "propina": ajuste_usd / len(st.session_state.car), # Se guarda el ajuste en USD
+                        "propina": ajuste_usd / len(st.session_state.car),
                         "p_efectivo": ef_b, "p_movil": pm_b, "p_punto": pu_b, "p_zelle": ze_u, "p_divisas": di_u,
                         "fecha":datetime.now().isoformat()
                     }).execute()
@@ -195,7 +198,7 @@ elif opcion == "🛒 Venta Rápida":
                 st.rerun()
 
     if st.session_state.pdf_b:
-        st.download_button("📥 Descargar Último Ticket (PDF)", st.session_state.pdf_b, "factura.pdf", mime="application/pdf")
+        st.download_button("📥 Descargar Ticket (PDF)", st.session_state.pdf_b, "factura.pdf")
 # --- 6. GASTOS ---
 elif opcion == "💸 Gastos":
     st.header("💸 Gastos Operativos")
@@ -219,6 +222,7 @@ elif opcion == "📊 Reporte de Utilidades":
 
     f_f = st.date_input("Fecha", date.today())
     v
+
 
 
 
