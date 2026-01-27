@@ -27,6 +27,7 @@ st.markdown("""
     [data-testid="stSidebar"] { background-color: #0041C2; color: white; }
     .stButton>button { background-color: #FF8C00; color: white; border-radius: 10px; font-weight: bold; width: 100%; }
     .titulo-negocio { color: #FF8C00; font-size: 26px; font-weight: bold; text-align: center; }
+    .alerta-pago { padding: 20px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 20px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -34,7 +35,6 @@ with st.sidebar:
     st.markdown('<div class="titulo-negocio">MEDITERRANEO EXPRESS</div>', unsafe_allow_html=True)
     st.write("---")
     menu = st.radio("SECCIONES", ["📦 Inventario", "🛒 Ventas", "📊 Cierre de Caja"])
-    st.write("---")
     if st.button("🗑️ Vaciar Carrito"):
         st.session_state.carrito = []
         st.rerun()
@@ -52,18 +52,12 @@ if menu == "📦 Inventario":
                 p_detal = st.number_input("Precio Detal", min_value=0.0, format="%.2f")
                 p_mayor = st.number_input("Precio Mayor", min_value=0.0, format="%.2f")
                 m_mayor = st.number_input("Mínimo para Mayor", min_value=1, step=1)
-            
             if st.form_submit_button("Guardar en Sistema"):
                 if nom:
-                    datos_inv = {
-                        "nombre": nom, "stock": int(sto), 
-                        "precio_detal": float(p_detal), "precio_mayor": float(p_mayor), 
-                        "min_mayor": int(m_mayor)
-                    }
-                    supabase.table("inventario").insert(datos_inv).execute()
+                    supabase.table("inventario").insert({"nombre": nom, "stock": int(sto), "precio_detal": float(p_detal), "precio_mayor": float(p_mayor), "min_mayor": int(m_mayor)}).execute()
                     st.success(f"¡{nom} guardado!")
                     st.rerun()
-
+    
     res = supabase.table("inventario").select("*").execute()
     if res.data:
         st.dataframe(pd.DataFrame(res.data)[["nombre", "stock", "precio_detal", "precio_mayor", "min_mayor"]], use_container_width=True)
@@ -87,10 +81,7 @@ elif menu == "🛒 Ventas":
         
         if st.button("➕ Agregar al Carrito"):
             if int(p_info["stock"]) >= cantidad:
-                st.session_state.carrito.append({
-                    "producto": seleccion, "cantidad": int(cantidad), 
-                    "precio_u": float(precio_usar), "subtotal": float(precio_usar * cantidad)
-                })
+                st.session_state.carrito.append({"producto": seleccion, "cantidad": int(cantidad), "precio_u": float(precio_usar), "subtotal": float(precio_usar * cantidad)})
                 st.rerun()
             else:
                 st.error("Stock insuficiente")
@@ -100,26 +91,36 @@ elif menu == "🛒 Ventas":
         df_car = pd.DataFrame(st.session_state.carrito)
         st.table(df_car)
         total_usd = float(df_car["subtotal"].sum())
-        st.subheader(f"Total: ${total_usd:.2f} | Bs. {total_usd * tasa:.2f}")
+        total_bs = total_usd * tasa
+        st.subheader(f"TOTAL A COBRAR: ${total_usd:.2f} | Bs. {total_bs:.2f}")
 
-        st.markdown("### 💳 Métodos de Pago")
+        st.markdown("### 💳 Registro de Pagos Mixtos")
         c1, c2, c3 = st.columns(3)
         with c1:
-            ef = st.number_input("Efectivo", min_value=0.0)
-            mo = st.number_input("Pago Móvil", min_value=0.0)
+            ef = st.number_input("Efectivo", min_value=0.0, key="p_ef")
+            mo = st.number_input("Pago Móvil", min_value=0.0, key="p_mo")
         with c2:
-            ze = st.number_input("Zelle ($)", min_value=0.0)
-            di = st.number_input("Divisas ($)", min_value=0.0)
+            ze = st.number_input("Zelle ($)", min_value=0.0, key="p_ze")
+            di = st.number_input("Divisas ($)", min_value=0.0, key="p_di")
         with c3:
-            pu = st.number_input("Punto de Venta", min_value=0.0)
-            ot = st.number_input("Otros", min_value=0.0)
-        
+            pu = st.number_input("Punto de Venta", min_value=0.0, key="p_pu")
+            ot = st.number_input("Otros", min_value=0.0, key="p_ot")
+
+        # --- CALCULADORA DE RESTANTE EN TIEMPO REAL ---
+        sumatoria_pagos = ef + mo + ze + di + pu + ot
+        restante = total_usd - sumatoria_pagos
+
+        if restante > 0.01:
+            st.markdown(f'<div class="alerta-pago" style="background-color: #ffe5e5; color: #cc0000;">FALTA POR PAGAR: ${restante:.2f} | Bs. {restante*tasa:.2f}</div>', unsafe_allow_html=True)
+        elif restante < -0.01:
+            st.markdown(f'<div class="alerta-pago" style="background-color: #e5f7ff; color: #0041C2;">CAMBIO / VUELTO: ${abs(restante):.2f} | Bs. {abs(restante*tasa):.2f}</div>', unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div class="alerta-pago" style="background-color: #e5ffe5; color: #008000;">¡PAGO COMPLETO!</div>', unsafe_allow_html=True)
+
         if st.button("✅ FINALIZAR VENTA"):
-            total_pagado = ef + pu + mo + ze + ot + di
-            if total_pagado >= (total_usd - 0.01):
+            if sumatoria_pagos >= (total_usd - 0.01):
                 try:
                     for i, item in enumerate(st.session_state.carrito):
-                        # Nota: Sumamos 'Divisas' a 'pago_otros' para mantener compatibilidad con tu tabla actual
                         venta_data = {
                             "fecha": datetime.now().isoformat(),
                             "producto": item["producto"],
@@ -130,10 +131,10 @@ elif menu == "🛒 Ventas":
                             "pago_punto": float(pu) if i == 0 else 0.0,
                             "pago_movil": float(mo) if i == 0 else 0.0,
                             "pago_zelle": float(ze) if i == 0 else 0.0,
-                            "pago_otros": float(ot + di) if i == 0 else 0.0
+                            "pago_divisas": float(di) if i == 0 else 0.0, # NUEVA COLUMNA
+                            "pago_otros": float(ot) if i == 0 else 0.0
                         }
                         supabase.table("ventas").insert(venta_data).execute()
-                        
                         stk_act = int(df_prod[df_prod["nombre"] == item["producto"]].iloc[0]["stock"])
                         supabase.table("inventario").update({"stock": stk_act - item["cantidad"]}).eq("nombre", item["producto"]).execute()
                     
@@ -145,32 +146,28 @@ elif menu == "🛒 Ventas":
                 except Exception as e:
                     st.error(f"Error: {e}")
             else:
-                st.error("Monto insuficiente")
+                st.error("Aún falta dinero para completar el total.")
 
 # --- MÓDULO: CIERRE DE CAJA ---
 elif menu == "📊 Cierre de Caja":
     st.header("📊 Cierre de Caja")
-    fecha_sel = st.date_input("Seleccione el día", date.today())
+    fecha_sel = st.date_input("Día", date.today())
     try:
         inicio = datetime.combine(fecha_sel, datetime.min.time()).isoformat()
         fin = datetime.combine(fecha_sel, datetime.max.time()).isoformat()
         res = supabase.table("ventas").select("*").gte("fecha", inicio).lte("fecha", fin).execute()
-        
         if res.data:
             df_v = pd.DataFrame(res.data)
-            st.metric("TOTAL VENDIDO (USD)", f"${df_v['total_usd'].sum():.2f}")
-            st.write("---")
-            st.subheader("Resumen por Métodos")
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Efectivo", f"{df_v['pago_efectivo'].sum():.2f}")
-            c2.metric("Zelle", f"${df_v['pago_zelle'].sum():.2f}")
-            c3.metric("Punto", f"{df_v['pago_punto'].sum():.2f}")
-            c4.metric("Otros/Divisas", f"{df_v['pago_otros'].sum():.2f}")
-            
-            st.write("---")
-            st.subheader("Detalle de Ventas")
+            col1, col2, col3, col4, col5, col6 = st.columns(6)
+            col1.metric("Efectivo", f"{df_v['pago_efectivo'].sum():.2f}")
+            col2.metric("Punto", f"{df_v['pago_punto'].sum():.2f}")
+            col3.metric("Móvil", f"{df_v['pago_movil'].sum():.2f}")
+            col4.metric("Zelle", f"${df_v['pago_zelle'].sum():.2f}")
+            col5.metric("Divisas", f"${df_v['pago_divisas'].sum():.2f}")
+            col6.metric("Otros", f"{df_v['pago_otros'].sum():.2f}")
+            st.markdown(f"### 💰 TOTAL DÍA: ${df_v['total_usd'].sum():.2f}")
             st.dataframe(df_v[["fecha", "producto", "cantidad", "total_usd"]], use_container_width=True)
         else:
-            st.info("No hay registros para este día.")
+            st.info("No hay ventas hoy.")
     except Exception as e:
         st.error(f"Error: {e}")
