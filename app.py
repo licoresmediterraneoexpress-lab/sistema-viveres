@@ -105,7 +105,7 @@ if opcion == "📦 Inventario":
                     db.table("inventario").insert({"nombre":n_nom,"stock":n_stk,"costo":n_cos,"precio_detal":n_pdet,"precio_mayor":n_pmay,"min_mayor":n_mmay}).execute()
                     st.rerun()
 
-# --- 5. VENTA RÁPIDA (SOLUCIÓN APIERROR + FACTURACIÓN) ---
+# --- 5. VENTA RÁPIDA (CON COLUMNA pago_divisas CORREGIDA) ---
 elif opcion == "🛒 Venta Rápida":
     st.header("🛒 Terminal de Ventas")
     
@@ -145,19 +145,15 @@ elif opcion == "🛒 Venta Rápida":
             c_a, c_b = st.columns([9, 1])
             c_a.info(f"**{x['p']}** x{x['c']} = ${x['t']:.2f}")
             if c_b.button("❌", key=f"del_{i}"):
-                st.session_state.car.pop(i)
-                st.rerun()
+                st.session_state.car.pop(i); st.rerun()
         
         sub_total_usd = sum(z['t'] for z in st.session_state.car)
         sub_total_bs = sub_total_usd * tasa
-        
-        st.write(f"Sub-total Sugerido: **{sub_total_bs:,.2f} Bs.**")
         total_final_bs = st.number_input("Monto Final a Cobrar (Bs.)", value=float(sub_total_bs), step=1.0)
         
         total_final_usd = round(total_final_bs / tasa, 2)
         ajuste_usd = round(total_final_usd - sub_total_usd, 2)
         
-        st.write("---")
         st.subheader("💳 Registro de Pagos")
         p1, p2, p3 = st.columns(3)
         ef_b = p1.number_input("Efectivo Bs", 0.0); pm_b = p1.number_input("Pago Móvil Bs", 0.0)
@@ -174,34 +170,35 @@ elif opcion == "🛒 Venta Rápida":
         if pago_total_bs >= total_final_bs - 0.1:
             if st.button("✅ FINALIZAR Y FACTURAR", use_container_width=True):
                 try:
+                    # Generamos el ticket antes de limpiar los datos
+                    st.session_state.pdf_b = crear_ticket(st.session_state.car, total_final_bs, sub_total_usd, tasa, ajuste_usd)
+                    
                     for x in st.session_state.car:
-                        # Registro en base de datos
                         db.table("ventas").insert({
                             "producto": str(x['p']), 
                             "cantidad": int(x['c']), 
                             "total_usd": float(x['t']), 
                             "costo_venta": round(float(x['costo_u'] * x['c']), 2), 
                             "propina": round(float(ajuste_usd / len(st.session_state.car)), 2),
-                            "p_efectivo": float(ef_b), "p_movil": float(pm_b), 
-                            "p_punto": float(pu_b), "p_zelle": float(ze_u), 
-                            "p_divisas": float(di_u),
+                            "p_efectivo": float(ef_b), 
+                            "p_movil": float(pm_b), 
+                            "p_punto": float(pu_b), 
+                            "p_zelle": float(ze_u), 
+                            "pago_divisas": float(di_u), # <--- AQUÍ EL NOMBRE CORRECTO
                             "fecha": datetime.now().isoformat()
                         }).execute()
                         
-                        # Actualizar Stock
                         s_act = int(df_p[df_p["nombre"] == x['p']].iloc[0]['stock']) - x['c']
                         db.table("inventario").update({"stock": s_act}).eq("nombre", x['p']).execute()
                     
-                    # Generar Ticket ANTES de vaciar el carrito
-                    st.session_state.pdf_b = crear_ticket(st.session_state.car, total_final_bs, sub_total_usd, tasa, ajuste_usd)
                     st.session_state.car = []
-                    st.success("¡Venta procesada con éxito!")
+                    st.success("¡Venta Guardada con éxito!")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Error de Base de Datos: {e}")
+                    st.error(f"Error: {e}")
 
     if st.session_state.pdf_b:
-        st.download_button("📥 Descargar Ticket (PDF)", st.session_state.pdf_b, "factura.pdf", mime="application/pdf")
+        st.download_button("📥 Descargar Ticket (PDF)", st.session_state.pdf_b, "factura.pdf")
 # --- 6. GASTOS ---
 elif opcion == "💸 Gastos":
     st.header("💸 Gastos Operativos")
@@ -225,6 +222,7 @@ elif opcion == "📊 Reporte de Utilidades":
 
     f_f = st.date_input("Fecha", date.today())
     v
+
 
 
 
