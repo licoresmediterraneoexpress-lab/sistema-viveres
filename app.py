@@ -1,52 +1,55 @@
 import streamlit as st
 import os
+import subprocess
+import sys
 
-# 1. INSTALACIÓN AUTOMÁTICA DE PIEZAS (Por si acaso)
-try:
-    from supabase import create_client, Client
-except ImportError:
-    st.error("Falta instalar la conexión. Por favor ejecuta: pip install supabase")
-    st.stop()
+# --- ESTO INSTALA LO QUE FALTA AUTOMÁTICAMENTE ---
+def instalar_herramientas():
+    try:
+        import supabase
+    except ImportError:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "supabase"])
+    try:
+        import pandas
+    except ImportError:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "pandas"])
 
-# 2. CONFIGURACIÓN DE TU BASE DE DATOS (Pega tus datos aquí)
-# Sustituye lo que está entre comillas por tus llaves reales
-URL_SUPABASE = "TU_URL_AQUÍ" 
-KEY_SUPABASE = "TU_LLAVE_AQUÍ"
+instalar_herramientas()
+from supabase import create_client
 
-try:
-    supabase = create_client(URL_SUPABASE, KEY_SUPABASE)
-except:
-    st.error("Error en las llaves de Supabase. Verifica que estén bien pegadas.")
+# --- CONFIGURACIÓN DE TU BASE DE DATOS ---
+# REEMPLAZA ESTO CON TUS DATOS DE SUPABASE
+URL_SUPABASE = "https://tu-proyecto.supabase.co" 
+KEY_SUPABASE = "tu-llave-larga-aqui"
 
-# 3. BUSCADOR DE LOGO AUTOMÁTICO
-# El código buscará cualquier imagen que se llame logo o tenga formato png/jpg
-posibles_logos = ["logo.png", "logo.jpg", "logo.jpeg", "LOGO.PNG"]
-logo_encontrado = None
+# --- DISEÑO (Azul Rey y Naranja) ---
+st.set_page_config(page_title="Sistema de Ventas", layout="wide")
 
-for nombre in posibles_logos:
-    if os.path.exists(nombre):
-        logo_encontrado = nombre
-        break
-
-# --- DISEÑO ---
-st.set_page_config(page_title="Mi Negocio", layout="wide")
-
-# Colores Azul Rey y Naranja
 st.markdown("""
     <style>
+    .stApp { background-color: white; }
     [data-testid="stSidebar"] { background-color: #0041C2; color: white; }
-    .stButton>button { background-color: #FF8C00; color: white; border-radius: 8px; }
+    .stButton>button { background-color: #FF8C00; color: white; border-radius: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- MOSTRAR LOGO ---
-if logo_encontrado:
-    st.sidebar.image(logo_encontrado, use_container_width=True)
-else:
-    st.sidebar.warning("⚠️ No encontré el logo. Asegúrate que esté en la carpeta.")
+# --- BUSCADOR DE LOGO INTELIGENTE ---
+logo_path = None
+# Busca archivos que se llamen logo en cualquier formato común
+for nombre in ["logo.png", "logo.jpg", "logo.jpeg", "LOGO.PNG", "LOGO.JPG"]:
+    if os.path.exists(nombre):
+        logo_path = nombre
+        break
 
-st.sidebar.title("🏪 MENÚ PRINCIPAL")
-opcion = st.sidebar.selectbox("Ir a:", ["Ventas", "Inventario", "Cierre"])
+if logo_path:
+    st.sidebar.image(logo_path, use_container_width=True)
+else:
+    st.sidebar.warning("⚠️ No encontré el logo. Asegúrate de que el archivo se llame logo.png o logo.jpg")
+
+# --- CONTENIDO ---
+st.sidebar.title("🏪 MENÚ")
+opcion = st.sidebar.selectbox("Selecciona:", ["Inicio", "Ventas", "Inventario"])
 
 st.title("🚀 Sistema de Ventas")
-st.write("Si ves esto, ¡el sistema ya funciona!")
+st.write(f"### Bienvenido al sistema")
+st.info("Si estás viendo esto, el error de 'supabase' se ha solucionado automáticamente.")
