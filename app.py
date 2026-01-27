@@ -162,44 +162,53 @@ elif opcion == "💸 Gastos":
             db.table("gastos").insert({"descripcion": desc, "monto_usd": monto, "fecha": datetime.now().isoformat()}).execute()
             st.success("Gasto registrado y restado de la utilidad.")
 
-# --- 6. CIERRE DE CAJA Y UTILIDADES ---
+# --- 6. CIERRE DE CAJA (ACTUALIZADO CON PAGO_OTROS) ---
 elif opcion == "📊 Cierre de Caja":
     st.header("📊 Cierre de Caja y Balance Diario")
-    f_rep = st.date_input("Consultar Fecha", date.today())
+    f_rep = st.date_input("Fecha a Consultar", date.today())
     
-    v_data = db.table("ventas").select("*").gte("fecha", f_rep.isoformat()).execute()
-    g_data = db.table("gastos").select("*").gte("fecha", f_rep.isoformat()).execute()
+    # Consultas a Supabase
+    v = db.table("ventas").select("*").gte("fecha", f_rep.isoformat()).execute()
+    g = db.table("gastos").select("*").gte("fecha", f_rep.isoformat()).execute()
     
-    if v_data.data:
-        df_v = pd.DataFrame(v_data.data)
-        df_g = pd.DataFrame(g_data.data) if g_data.data else pd.DataFrame()
+    if v.data:
+        df_v = pd.DataFrame(v.data)
+        df_g = pd.DataFrame(g.data) if g.data else pd.DataFrame()
         
-        st.subheader("💳 Ingresos por Método de Pago")
-        c1, c2, c3, c4, c5 = st.columns(5)
+        # 1. DESGLOSE POR MÉTODO DE PAGO (Aquí incluimos pago_otros)
+        st.subheader("💳 Detalle por Método de Pago")
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        
         c1.metric("Efectivo Bs", f"{df_v['pago_efectivo'].sum():,.2f}")
-        c2.metric("Pago Móvil Bs", f"{df_v['pago_movil'].sum():,.2f}")
+        c2.metric("P. Móvil Bs", f"{df_v['pago_movil'].sum():,.2f}")
         c3.metric("Punto Bs", f"{df_v['pago_punto'].sum():,.2f}")
-        c4.metric("Zelle $", f"${df_v['pago_zelle'].sum():,.2f}")
-        c5.metric("Divisas $", f"${df_v['pago_divisas'].sum():,.2f}")
+        c4.metric("Otros Bs", f"{df_v['pago_otros'].sum():,.2f}") # <-- SE AGREGA ESTE DATO
+        c5.metric("Zelle $", f"${df_v['pago_zelle'].sum():,.2f}")
+        c6.metric("Divisas $", f"${df_v['pago_divisas'].sum():,.2f}")
         
         st.divider()
-        # Cálculos de Utilidad
-        ing_total = df_v['total_usd'].sum()
-        cos_total = df_v['costo_venta'].sum()
-        gas_total = df_g['monto_usd'].sum() if not df_g.empty else 0
-        propina_total = df_v['propina'].sum()
-        uti_neta = ing_total - cos_total - gas_total
-
-        st.subheader("📈 Balance General")
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric("INGRESOS TOTALES", f"${ing_total:,.2f}")
-        k2.metric("COSTO MERCANCÍA", f"${cos_total:,.2f}")
-        k3.metric("GASTOS TOTALES", f"${gas_total:,.2f}")
-        k4.metric("UTILIDAD NETA", f"${uti_neta:,.2f}", delta=f"{((uti_neta/ing_total)*100 if ing_total > 0 else 0):.1f}%")
-
-        st.info(f"💰 **Sobrante por Redondeo (Propina):** ${propina_total:,.2f} USD (Diferencia de tasa/redondeo)")
         
-        st.write("### Detalle de Ventas")
-        st.dataframe(df_v[['fecha', 'producto', 'cantidad', 'total_usd', 'propina']], use_container_width=True)
+        # 2. CÁLCULO DE TOTALES Y UTILIDADES
+        t_usd = df_v['total_usd'].sum()
+        t_cos = df_v['costo_venta'].sum()
+        t_gas = df_g['monto_usd'].sum() if not df_g.empty else 0
+        t_pro = df_v['propina'].sum()
+        
+        # Balance General
+        st.subheader("📈 Balance de Ganancias")
+        k1, k2, k3, k4 = st.columns(4)
+        
+        k1.metric("VENTAS TOTALES", f"${t_usd:,.2f}")
+        k2.metric("COSTO MERCANCÍA", f"${t_cos:,.2f}")
+        k3.metric("GASTOS TOTALES", f"${t_gas:,.2f}")
+        k4.metric("UTILIDAD NETA", f"${t_usd - t_cos - t_gas:,.2f}")
+
+        st.info(f"💰 **Sobrante Redondeo (Propina):** ${t_pro:,.2f}")
+        
+        # 3. TABLA DETALLADA
+        with st.expander("Ver lista de ventas del día"):
+            st.dataframe(df_v[['fecha', 'producto', 'cantidad', 'total_usd']], use_container_width=True)
+            
     else:
-        st.info("No hay registros para la fecha seleccionada.")
+        st.info("No hay registros de ventas para esta fecha.")
+
