@@ -30,28 +30,20 @@ def generar_pdf(carrito, total_bs, total_usd, tasa):
     pdf.line(10, 30, 200, 30)
     pdf.ln(10)
     pdf.set_font("Arial", 'B', 12)
-    pdf.cell(80, 10, "Producto")
-    pdf.cell(30, 10, "Cant.")
-    pdf.cell(40, 10, "Precio ($)")
-    pdf.cell(40, 10, "Total ($)", ln=True)
+    pdf.cell(80, 10, "Producto"); pdf.cell(30, 10, "Cant."); pdf.cell(40, 10, "Precio ($)"); pdf.cell(40, 10, "Total ($)", ln=True)
     pdf.set_font("Arial", '', 12)
     for item in carrito:
-        pdf.cell(80, 10, item['p'])
-        pdf.cell(30, 10, str(item['c']))
-        pdf.cell(40, 10, f"{item['u']:.2f}")
-        pdf.cell(40, 10, f"{item['t']:.2f}", ln=True)
+        pdf.cell(80, 10, item['p']); pdf.cell(30, 10, str(item['c'])); pdf.cell(40, 10, f"{item['u']:.2f}"); pdf.cell(40, 10, f"{item['t']:.2f}", ln=True)
     pdf.ln(5)
     pdf.set_font("Arial", 'B', 14)
     pdf.cell(190, 10, f"TOTAL BS: {total_bs:,.2f}", ln=True, align='R')
     pdf.cell(190, 10, f"TOTAL USD: {total_usd:,.2f}", ln=True, align='R')
-    pdf.set_font("Arial", 'I', 8)
-    pdf.cell(190, 10, f"Tasa: {tasa} Bs/$", ln=True, align='C')
     return pdf.output(dest='S').encode('latin-1')
 
 with st.sidebar:
     st.markdown("<h2 style='color:#FF8C00;text-align:center;'>MEDITERRANEO</h2>", unsafe_allow_html=True)
     menu = st.radio("MENÚ", ["📦 Inventario", "🛒 Ventas", "📊 Reportes"])
-    if st.button("🗑️ Vaciar Carrito"):
+    if st.button("🗑️ Vaciar Todo el Carrito"):
         st.session_state.carrito = []
         st.rerun()
 
@@ -80,50 +72,66 @@ elif menu == "🛒 Ventas":
     if res.data:
         dfp = pd.DataFrame(res.data)
         c1, c2 = st.columns([3,1])
-        sel = c1.selectbox("Producto", dfp["nombre"])
-        cant = c2.number_input("Cant.", min_value=1)
+        sel = c1.selectbox("Seleccione Producto", dfp["nombre"])
+        cant = c2.number_input("Cantidad", min_value=1)
         info = dfp[dfp["nombre"]==sel].iloc[0]
         p_u = float(info.get("precio_mayor", 0)) if cant >= int(info.get("min_mayor", 1)) else float(info.get("precio_detal", 0))
-        if st.button("➕ Añadir"):
+        
+        if st.button("➕ Agregar al Carrito"):
             if info["stock"] >= cant:
-                st.session_state.carrito.append({"p":sel,"c":int(cant),"u":p_u,"t":p_u*cant}); st.rerun()
-            else: st.error("Sin stock")
+                st.session_state.carrito.append({"p":sel,"c":int(cant),"u":p_u,"t":p_u*cant})
+                st.rerun()
+            else: st.error("Sin stock suficiente")
 
     if st.session_state.carrito:
+        st.subheader("🛒 Carrito Actual")
+        # Mostrar carrito con opción de eliminar
+        for i, item in enumerate(st.session_state.carrito):
+            col_prod, col_cant, col_sub, col_del = st.columns([4, 2, 2, 1])
+            col_prod.write(f"**{item['p']}**")
+            col_cant.write(f"{item['c']} unid.")
+            col_sub.write(f"${item['t']:.2f}")
+            if col_del.button("❌", key=f"del_{i}"):
+                st.session_state.carrito.pop(i)
+                st.rerun()
+        
         dfc = pd.DataFrame(st.session_state.carrito)
-        st.table(dfc)
         tot_u = dfc["t"].sum(); tot_b = tot_u * tasa
-        st.subheader(f"Total: Bs. {tot_b:,.2f} (${tot_u:,.2f})")
-        col1, col2, col3 = st.columns(3)
-        e_b, m_b = col1.number_input("Efectivo Bs"), col1.number_input("Móvil Bs")
-        p_b, o_b = col2.number_input("Punto Bs"), col2.number_input("Otros Bs")
-        z_u, d_u = col3.number_input("Zelle $"), col3.number_input("Divisa $")
+        st.markdown(f"### **Total a Pagar: Bs. {tot_b:,.2f}**")
         
-        pagado = e_b + m_b + p_b + o_b + ((z_u + d_u)*tasa)
-        dif = tot_b - pagado
-        if dif > 0.1: st.warning(f"Faltan: Bs. {dif:,.2f}")
-        elif dif < -0.1: st.info(f"Vuelto: Bs. {abs(dif):,.2f}")
-        else: st.success("Pago Completo")
-        
-        if st.button("✅ FINALIZAR"):
-            if pagado >= (tot_b - 0.1):
-                pdf_data = generar_pdf(st.session_state.carrito, tot_b, tot_u, tasa)
-                for i, item in enumerate(st.session_state.carrito):
-                    v_data = {"fecha":datetime.now().isoformat(),"producto":item["p"],"cantidad":item["c"],"total_usd":item["t"],"tasa_cambio":tasa,
-                             "pago_efectivo":float(e_b/tasa) if i==0 else 0,"pago_punto":float(p_b/tasa) if i==0 else 0,
-                             "pago_movil":float(m_b/tasa) if i==0 else 0,"pago_zelle":float(z_u) if i==0 else 0,
-                             "pago_divisas":float(d_u) if i==0 else 0,"pago_otros":float(o_b/tasa) if i==0 else 0}
-                    supabase.table("ventas").insert(v_data).execute()
-                    stk = int(dfp[dfp["nombre"]==item["p"]].iloc[0]["stock"])
-                    supabase.table("inventario").update({"stock":stk-item["c"]}).eq("nombre",item["p"]).execute()
-                st.download_button("📥 Descargar Ticket PDF", pdf_data, "ticket.pdf", "application/pdf")
-                st.balloons(); st.session_state.carrito = []
-            else: st.error("Monto insuficiente")
+        with st.expander("💳 Registrar Pago"):
+            col1, col2, col3 = st.columns(3)
+            e_b, m_b = col1.number_input("Efectivo Bs"), col1.number_input("Móvil Bs")
+            p_b, o_b = col2.number_input("Punto Bs"), col2.number_input("Otros Bs")
+            z_u, d_u = col3.number_input("Zelle $"), col3.number_input("Divisa $")
+            
+            pagado = e_b + m_b + p_b + o_b + ((z_u + d_u)*tasa)
+            dif = tot_b - pagado
+            if dif > 0.1: st.warning(f"Faltan: Bs. {dif:,.2f}")
+            elif dif < -0.1: st.info(f"Vuelto: Bs. {abs(dif):,.2f}")
+            else: st.success("¡Pago Completo!")
+            
+            if st.button("✅ FINALIZAR Y GENERAR TICKET"):
+                if pagado >= (tot_b - 0.1):
+                    pdf_data = generar_pdf(st.session_state.carrito, tot_b, tot_u, tasa)
+                    for idx, item in enumerate(st.session_state.carrito):
+                        v_data = {"fecha":datetime.now().isoformat(),"producto":item["p"],"cantidad":item["c"],"total_usd":item["t"],"tasa_cambio":tasa,
+                                 "pago_efectivo":float(e_b/tasa) if idx==0 else 0,"pago_punto":float(p_b/tasa) if idx==0 else 0,
+                                 "pago_movil":float(m_b/tasa) if idx==0 else 0,"pago_zelle":float(z_u) if idx==0 else 0,
+                                 "pago_divisas":float(d_u) if idx==0 else 0,"pago_otros":float(o_b/tasa) if idx==0 else 0}
+                        supabase.table("ventas").insert(v_data).execute()
+                        # Actualizar Stock
+                        prod_row = dfp[dfp["nombre"]==item["p"]].iloc[0]
+                        supabase.table("inventario").update({"stock": int(prod_row["stock"] - item["c"])}).eq("nombre",item["p"]).execute()
+                    
+                    st.download_button("📥 DESCARGAR TICKET PDF", pdf_data, "ticket_mediterraneo.pdf", "application/pdf")
+                    st.balloons(); st.session_state.carrito = []
+                else: st.error("Monto insuficiente")
 
 # --- REPORTES ---
 elif menu == "📊 Reportes":
-    st.header("📊 Reportes")
-    f_sel = st.date_input("Fecha", date.today())
+    st.header("📊 Reportes de Ventas")
+    f_sel = st.date_input("Seleccione Fecha", date.today())
     try:
         ini, fin = datetime.combine(f_sel, datetime.min.time()).isoformat(), datetime.combine(f_sel, datetime.max.time()).isoformat()
         res = supabase.table("ventas").select("*").gte("fecha", ini).lte("fecha", fin).execute()
@@ -131,8 +139,10 @@ elif menu == "📊 Reportes":
             dfv = pd.DataFrame(res.data)
             out = io.BytesIO()
             with pd.ExcelWriter(out, engine='xlsxwriter') as wr: dfv.to_excel(wr, index=False)
-            st.download_button("📥 Descargar Excel", out.getvalue(), f"{f_sel}.xlsx")
+            st.download_button("📥 Descargar Excel del Día", out.getvalue(), f"ventas_{f_sel}.xlsx")
+            st.subheader("Resumen por Producto")
             st.table(dfv.groupby("producto").agg({"cantidad":"sum","total_usd":"sum"}))
+            st.subheader("Todas las Transacciones")
             st.dataframe(dfv, use_container_width=True)
-        else: st.info("Sin datos")
-    except Exception as e: st.error(f"Error: {e}")
+        else: st.info("No hay ventas registradas en esta fecha.")
+    except Exception as e: st.error(f"Error al cargar reportes: {e}")
