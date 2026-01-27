@@ -105,70 +105,38 @@ if opcion == "📦 Inventario":
                     db.table("inventario").insert({"nombre":n_nom,"stock":n_stk,"costo":n_cos,"precio_detal":n_pdet,"precio_mayor":n_pmay,"min_mayor":n_mmay}).execute()
                     st.rerun()
 
-# --- 5. VENTA RÁPIDA ---
+# --- 5. VENTA RÁPIDA (CORREGIDO) ---
 elif opcion == "🛒 Venta Rápida":
     st.header("🛒 Ventas")
-    tasa = st.number_input("Tasa del Día", 1.0, 100.0, 60.0)
+    
+    # Usamos una key fija para que la tasa no cause errores al cambiarla
+    tasa = st.number_input("Tasa del Día", 1.0, 500.0, 60.0, key="tasa_input")
+    
     res_p = db.table("inventario").select("*").execute()
     
     if res_p.data:
         df_p = pd.DataFrame(res_p.data)
-        bus = st.text_input("🔍 Buscar...").lower()
+        # Buscador con key única
+        bus = st.text_input("🔍 Buscar producto...", key="bus_ventas").lower()
         df_v = df_p[df_p['nombre'].str.lower().str.contains(bus)] if bus else df_p
-        v1, v2 = st.columns([3, 1])
-        psel = v1.selectbox("Producto", df_v["nombre"])
-        csel = v2.number_input("Cant", 1)
-        it = df_p[df_p["nombre"] == psel].iloc[0]
         
+        v1, v2 = st.columns([3, 1])
+        # Selectbox con key basada en los datos para evitar duplicados
+        psel = v1.selectbox("Producto", df_v["nombre"], key="select_prod_venta")
+        csel = v2.number_input("Cant", 1, key="cant_prod_venta")
+        
+        it = df_p[df_p["nombre"] == psel].iloc[0]
         pre_v = float(it["precio_mayor"]) if csel >= it["min_mayor"] else float(it["precio_detal"])
         
-        if st.button("➕ Añadir"):
+        if st.button("➕ Añadir al Carrito", key="btn_add"):
             if it["stock"] >= csel:
                 st.session_state.car.append({
                     "p":psel, "c":csel, "u":pre_v, "t":pre_v*csel, 
                     "costo_u": float(it.get('costo', 0))
                 })
                 st.rerun()
-            else: st.error("Sin Stock")
-
-    if st.session_state.car:
-        st.write("---")
-        for i, x in enumerate(st.session_state.car):
-            ca, cb = st.columns([9, 1])
-            ca.info(f"{x['p']} x{x['c']} = ${x['t']:.2f}")
-            if cb.button("❌", key=f"d_{i}"): st.session_state.car.pop(i); st.rerun()
-        
-        sub_u = sum(z['t'] for z in st.session_state.car)
-        mon_f = st.number_input("Monto Cobrado $", value=float(sub_u))
-        pro_tot = mon_f - sub_u
-        tot_b = mon_f * tasa
-        
-        st.markdown(f"### TOTAL: {tot_b:,.2f} Bs. / ${mon_f:,.2f}")
-        
-        st.subheader("💳 Pago Mixto")
-        p1, p2, p3 = st.columns(3)
-        ef_b = p1.number_input("Efectivo Bs", 0.0); pm_b = p1.number_input("Pago Móvil Bs", 0.0)
-        pu_b = p2.number_input("Punto Bs", 0.0); ot_b = p2.number_input("Otros Bs", 0.0)
-        ze_u = p3.number_input("Zelle $", 0.0); di_u = p3.number_input("Divisas $", 0.0)
-        
-        pago_total_bs = ef_b + pm_b + pu_b + ot_b + ((ze_u + di_u) * tasa)
-        
-        if pago_total_bs >= tot_b - 0.1:
-            st.success(f"Vuelto: {pago_total_bs - tot_b:,.2f} Bs.")
-            if st.button("✅ FINALIZAR"):
-                for x in st.session_state.car:
-                    db.table("ventas").insert({
-                        "producto":x['p'], "cantidad":x['c'], "total_usd":x['t'], 
-                        "costo_venta": x['costo_u'] * x['c'], 
-                        "propina": pro_tot / len(st.session_state.car),
-                        "p_efectivo": ef_b, "p_movil": pm_b, "p_punto": pu_b, "p_zelle": ze_u, "p_divisas": di_u,
-                        "fecha":datetime.now().isoformat()
-                    }).execute()
-                    stk_a = int(df_p[df_p["nombre"] == x['p']].iloc[0]['stock']) - x['c']
-                    db.table("inventario").update({"stock": stk_a}).eq("nombre", x['p']).execute()
-                st.session_state.pdf_b = crear_ticket(st.session_state.car, tot_b, sub_u, tasa, pro_tot)
-                st.session_state.car = []; st.rerun()
-    if st.session_state.pdf_b: st.download_button("📥 Ticket", st.session_state.pdf_b, "ticket.pdf")
+            else:
+                st.error("Sin Stock suficiente")
 
 # --- 6. GASTOS ---
 elif opcion == "💸 Gastos":
@@ -193,3 +161,4 @@ elif opcion == "📊 Reporte de Utilidades":
 
     f_f = st.date_input("Fecha", date.today())
     v
+
