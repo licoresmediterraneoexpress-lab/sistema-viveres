@@ -115,37 +115,4 @@ elif menu == "🛒 Ventas":
         elif restante_bs < -0.1:
             st.markdown(f'<div class="alerta-pago" style="background-color: #e5f7ff; color: #0041C2;">CAMBIO: Bs. {abs(restante_bs):,.2f}</div>', unsafe_allow_html=True)
         else:
-            st.markdown('<div class="alerta-pago" style="background-color: #e5ffe5; color: #008000;">¡PAGO COMPLETO!</div>', unsafe_allow_html=True)
-
-        if st.button("✅ FINALIZAR VENTA"):
-            if total_pagado_bs >= (total_bs - 0.1):
-                try:
-                    for i, item in enumerate(st.session_state.carrito):
-                        venta_data = {
-                            "fecha": datetime.now().isoformat(),
-                            "producto": item["producto"],
-                            "cantidad": int(item["cantidad"]),
-                            "total_usd": float(item["subtotal"]),
-                            "tasa_cambio": float(tasa),
-                            "pago_efectivo": float(ef_bs / tasa) if i == 0 else 0.0,
-                            "pago_punto": float(pu_bs / tasa) if i == 0 else 0.0,
-                            "pago_movil": float(mo_bs / tasa) if i == 0 else 0.0,
-                            "pago_zelle": float(ze_usd) if i == 0 else 0.0,
-                            "pago_divisas": float(di_usd) if i == 0 else 0.0,
-                            "pago_otros": float(ot_bs / tasa) if i == 0 else 0.0
-                        }
-                        supabase.table("ventas").insert(venta_data).execute()
-                        stk_act = int(df_prod[df_prod["nombre"] == item["producto"]].iloc[0]["stock"])
-                        supabase.table("inventario").update({"stock": stk_act - item["cantidad"]}).eq("nombre", item["producto"]).execute()
-                    
-                    st.balloons()
-                    st.success("🎉 ¡COMPRA EXITOSA!")
-                    time.sleep(2)
-                    st.session_state.carrito = []
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error: {e}")
-
-# --- MÓDULO: HISTORIAL Y EXCEL ---
-elif menu == "📊 Historial y Excel":
-    st.header("📊 Historial de Ventas
+            st.markdown('<div class="
