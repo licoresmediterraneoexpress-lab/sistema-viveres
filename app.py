@@ -93,14 +93,13 @@ elif opcion == "🛒 Venta Rápida":
     if res_p.data:
         df_p = pd.DataFrame(res_p.data)
         
-        # BUSCADOR INTELIGENTE (Filtra por secuencia de letras)
+        # BUSCADOR INTELIGENTE
         busc = st.text_input("🔍 Escribe letras del producto (ej: 'cer')").lower()
         df_f = df_p[df_p['nombre'].str.lower().str.contains(busc)] if busc else df_p
         
         c1, c2, c3 = st.columns([2, 1, 1])
         item_sel = c1.selectbox("Producto Seleccionado", df_f['nombre'])
         
-        # Datos del producto elegido
         p_data = df_p[df_p['nombre'] == item_sel].iloc[0]
         c2.write(f"**Stock:** {p_data['stock']}")
         c2.write(f"**Precio:** ${p_data['precio_detal']}")
@@ -140,7 +139,6 @@ elif opcion == "🛒 Venta Rápida":
         pu = col_p2.number_input("Punto Bs", 0.0); ot = col_p2.number_input("Otros Bs", 0.0)
         ze = col_p3.number_input("Zelle $", 0.0); di = col_p3.number_input("Divisas $", 0.0)
         
-        # Cálculo de Pagos
         pago_total_bs = ef + pm + pu + ot + ((ze + di) * tasa)
         diferencia = pago_total_bs - total_a_cobrar_bs
         
@@ -148,15 +146,13 @@ elif opcion == "🛒 Venta Rápida":
             st.success(f"✅ VUELTO: {diferencia:,.2f} Bs.")
         elif diferencia < -0.1:
             st.warning(f"⚠️ FALTA: {abs(diferencia):,.2f} Bs.")
-        else:
-            st.info("Pago Completo")
 
         # 4. Finalizar Venta
-        if st.button("🚀 FINALIZAR VENTA Y GENERAR TICKET", use_container_width=True):
+        if st.button("🚀 FINALIZAR VENTA Y GENERAR TICKET PDF", use_container_width=True):
             try:
-                # La propina es la ganancia extra por redondeo/tasa
                 propina_usd = (total_a_cobrar_bs / tasa) - sub_total_usd
                 items_ticket = st.session_state.car.copy()
+                ahora = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
                 
                 for x in st.session_state.car:
                     db.table("ventas").insert({
@@ -165,47 +161,56 @@ elif opcion == "🛒 Venta Rápida":
                         "pago_otros": ot, "pago_divisas": di, "costo_venta": x['costo_u'] * x['c'],
                         "propina": propina_usd / len(st.session_state.car), "fecha": datetime.now().isoformat()
                     }).execute()
-                    
-                    # Descontar inventario
                     stk_actual = df_p[df_p['nombre'] == x['p']].iloc[0]['stock']
                     db.table("inventario").update({"stock": int(stk_actual - x['c'])}).eq("nombre", x['p']).execute()
                 
-                # --- MENSAJE DE ÉXITO Y TICKET ---
-                st.success("🎉 VENTA FINALIZADA CON ÉXITO")
+                st.success("🎉 VENTA REGISTRADA")
                 st.balloons()
                 
-                st.markdown(f"""
-                <div style="background-color: #fff; padding: 20px; border: 2px dashed #000; color: #000; font-family: 'Courier New', Courier, monospace;">
-                    <h2 style="text-align: center; margin:0;">🚢 MEDITERRANEO</h2>
-                    <p style="text-align: center; font-size: 12px;">RIF: J-000000000</p>
-                    <p style="text-align: center;">{datetime.now().strftime('%d/%m/%Y %H:%M:%S')}</p>
-                    <hr>
-                    <table style="width:100%; font-size: 14px;">
-                        <tr><th align="left">PRODUCTO</th><th align="center">CANT</th><th align="right">TOTAL</th></tr>
-                """, unsafe_allow_html=True)
-                
+                # --- DISEÑO DEL TICKET PREMIUM ---
+                ticket_html = f"""
+                <div id="ticket" style="background-color: #fff; padding: 15px; border: 1px solid #ddd; color: #000; font-family: 'Courier New', Courier, monospace; width: 300px; margin: auto;">
+                    <h3 style="text-align: center; margin:0;">BODEGON Y LICORERIA MEDITERRANEO EXPRESS, C.A.</h3>
+                    <p style="text-align: center; font-size: 12px; margin: 2px;">RIF: J 404855807</p>
+                    <p style="text-align: center; font-size: 11px; margin: 2px;">BARRIO MATURIN CARRERA 11 CON CALLE 4</p>
+                    <p style="text-align: center; font-size: 12px;">{ahora}</p>
+                    <hr style="border-top: 1px dashed #000;">
+                    <table style="width:100%; font-size: 12px;">
+                        <tr><th align="left">DESCRIPCIÓN</th><th align="center">CT</th><th align="right">TOTAL</th></tr>
+                """
                 for item in items_ticket:
-                    st.markdown(f"""
-                        <tr style="font-size: 13px;">
-                            <td>{item['p']}</td><td align="center">{item['c']}</td><td align="right">${item['t']:.2f}</td>
-                        </tr>
-                    """, unsafe_allow_html=True)
+                    ticket_html += f"<tr><td>{item['p'][:15]}</td><td align="center">{item['c']}</td><td align="right">${item['t']:.2f}</td></tr>"
                 
-                st.markdown(f"""
+                ticket_html += f"""
                     </table>
-                    <hr>
-                    <h3 style="text-align: right; margin:0;">TOTAL $: ${sub_total_usd:,.2f}</h3>
-                    <h3 style="text-align: right; margin:0;">TOTAL Bs: {total_a_cobrar_bs:,.2f}</h3>
-                    <p style="text-align: center; margin-top: 10px;">*** GRACIAS POR SU COMPRA ***</p>
+                    <hr style="border-top: 1px dashed #000;">
+                    <h4 style="text-align: right; margin:2px;">TOTAL USD: ${sub_total_usd:,.2f}</h4>
+                    <h4 style="text-align: right; margin:2px;">TOTAL BS: {total_a_cobrar_bs:,.2f}</h4>
+                    <p style="text-align: center; font-size: 10px; margin-top: 10px;">*** NO VALIDO COMO FACTURA FISCAL ***</p>
                 </div>
-                """, unsafe_allow_html=True)
+                """
+                st.markdown(ticket_html, unsafe_allow_html=True)
                 
-                # Limpiar carrito
-                st.session_state.car = []
-                st.button("🔄 INICIAR NUEVA VENTA")
+                # Botón de Impresión/PDF (JavaScript)
+                if st.button("📥 GUARDAR TICKET (PDF / IMPRIMIR)"):
+                    st.components.v1.html(f"""
+                        <script>
+                        var win = window.open('', '', 'height=700,width=500');
+                        win.document.write('<html><head><title>Ticket_{ahora.replace("/","").replace(":","")}</title></head><body>');
+                        win.document.write('{ticket_html.replace("'", "\\'")}');
+                        win.document.write('</body></html>');
+                        win.document.close();
+                        win.print();
+                        </script>
+                    """, height=0)
+                
+                # Limpiar y Reiniciar
+                if st.button("🔄 NUEVA VENTA"):
+                    st.session_state.car = []
+                    st.rerun()
                 
             except Exception as e:
-                st.error(f"Error crítico: {e}")
+                st.error(f"Error: {e}")
 # --- 5. MÓDULO GASTOS ---
 elif opcion == "💸 Gastos":
     st.header("💸 Gastos Operativos")
@@ -265,6 +270,7 @@ elif opcion == "📊 Cierre de Caja":
             
     else:
         st.info("No hay registros de ventas para esta fecha.")
+
 
 
 
