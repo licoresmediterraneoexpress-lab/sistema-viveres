@@ -28,7 +28,6 @@ st.markdown("""
     [data-testid="stSidebar"] { background-color: #0041C2; color: white; }
     .stButton>button { background-color: #FF8C00; color: white; border-radius: 10px; font-weight: bold; width: 100%; }
     .titulo-negocio { color: #FF8C00; font-size: 26px; font-weight: bold; text-align: center; }
-    .alerta-pago { padding: 20px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 22px; margin: 10px 0px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -110,9 +109,8 @@ elif menu == "🛒 Ventas":
         total_pagado_bs = ef_bs + mo_bs + pu_bs + ot_bs + ((ze_usd + di_usd) * tasa)
         restante_bs = total_bs - total_pagado_bs
 
-        # --- SECCIÓN DE CALCULADORA (CORREGIDA) ---
         if restante_bs > 0.1:
-            st.error(f"FALTA POR COBRAR: Bs. {restante_bs:,.2f}")
+            st.warning(f"FALTA POR COBRAR: Bs. {restante_bs:,.2f}")
         elif restante_bs < -0.1:
             st.info(f"CAMBIO A ENTREGAR: Bs. {abs(restante_bs):,.2f}")
         else:
@@ -145,7 +143,9 @@ elif menu == "🛒 Ventas":
                     st.session_state.carrito = []
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Error: {e}")
+                    st.error(f"Error al guardar: {e}")
+            else:
+                st.error("Monto insuficiente.")
 
 # --- MÓDULO: HISTORIAL Y EXCEL ---
 elif menu == "📊 Historial y Excel":
@@ -155,24 +155,4 @@ elif menu == "📊 Historial y Excel":
     try:
         inicio = datetime.combine(fecha_sel, datetime.min.time()).isoformat()
         fin = datetime.combine(fecha_sel, datetime.max.time()).isoformat()
-        res = supabase.table("ventas").select("*").gte("fecha", inicio).lte("fecha", fin).execute()
-        
-        if res.data:
-            df_v = pd.DataFrame(res.data)
-            
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df_v.to_excel(writer, index=False, sheet_name='Ventas')
-            
-            st.download_button(
-                label="📥 Descargar Reporte en Excel",
-                data=output.getvalue(),
-                file_name=f"ventas_{fecha_sel}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-            
-            st.subheader("Resumen de Productos")
-            resumen = df_v.groupby('producto').agg({'cantidad': 'sum', 'total_usd': 'sum'}).reset_index()
-            st.table(resumen)
-            
-            st.subheader("Detalle por Transacción")
+        res = supabase.table("ventas").select("*").gte("fecha
