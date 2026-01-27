@@ -93,7 +93,7 @@ elif menu == "🛒 Ventas":
         st.table(df_car)
         total_usd = float(df_car["subtotal"].sum())
         total_bs = total_usd * tasa
-        st.markdown(f"## TOTAL A COBRAR: Bs. {total_bs:,.2f}", unsafe_allow_html=True)
+        st.markdown(f"## TOTAL A COBRAR: Bs. {total_bs:,.2f}")
 
         st.markdown("### 💳 Registro de Pagos")
         c1, c2, c3 = st.columns(3)
@@ -110,9 +110,69 @@ elif menu == "🛒 Ventas":
         total_pagado_bs = ef_bs + mo_bs + pu_bs + ot_bs + ((ze_usd + di_usd) * tasa)
         restante_bs = total_bs - total_pagado_bs
 
+        # --- SECCIÓN DE CALCULADORA (CORREGIDA) ---
         if restante_bs > 0.1:
-            st.markdown(f'<div class="alerta-pago" style="background-color: #ffe5e5; color: #cc0000;">FALTA: Bs. {restante_bs:,.2f}</div>', unsafe_allow_html=True)
+            st.error(f"FALTA POR COBRAR: Bs. {restante_bs:,.2f}")
         elif restante_bs < -0.1:
-            st.markdown(f'<div class="alerta-pago" style="background-color: #e5f7ff; color: #0041C2;">CAMBIO: Bs. {abs(restante_bs):,.2f}</div>', unsafe_allow_html=True)
+            st.info(f"CAMBIO A ENTREGAR: Bs. {abs(restante_bs):,.2f}")
         else:
-            st.markdown('<div class="
+            st.success("¡PAGO COMPLETO!")
+
+        if st.button("✅ FINALIZAR VENTA"):
+            if total_pagado_bs >= (total_bs - 0.1):
+                try:
+                    for i, item in enumerate(st.session_state.carrito):
+                        venta_data = {
+                            "fecha": datetime.now().isoformat(),
+                            "producto": item["producto"],
+                            "cantidad": int(item["cantidad"]),
+                            "total_usd": float(item["subtotal"]),
+                            "tasa_cambio": float(tasa),
+                            "pago_efectivo": float(ef_bs / tasa) if i == 0 else 0.0,
+                            "pago_punto": float(pu_bs / tasa) if i == 0 else 0.0,
+                            "pago_movil": float(mo_bs / tasa) if i == 0 else 0.0,
+                            "pago_zelle": float(ze_usd) if i == 0 else 0.0,
+                            "pago_divisas": float(di_usd) if i == 0 else 0.0,
+                            "pago_otros": float(ot_bs / tasa) if i == 0 else 0.0
+                        }
+                        supabase.table("ventas").insert(venta_data).execute()
+                        stk_act = int(df_prod[df_prod["nombre"] == item["producto"]].iloc[0]["stock"])
+                        supabase.table("inventario").update({"stock": stk_act - item["cantidad"]}).eq("nombre", item["producto"]).execute()
+                    
+                    st.balloons()
+                    st.success("🎉 ¡COMPRA EXITOSA!")
+                    time.sleep(2)
+                    st.session_state.carrito = []
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+# --- MÓDULO: HISTORIAL Y EXCEL ---
+elif menu == "📊 Historial y Excel":
+    st.header("📊 Historial de Ventas")
+    fecha_sel = st.date_input("Consultar Fecha", date.today())
+    
+    try:
+        inicio = datetime.combine(fecha_sel, datetime.min.time()).isoformat()
+        fin = datetime.combine(fecha_sel, datetime.max.time()).isoformat()
+        res = supabase.table("ventas").select("*").gte("fecha", inicio).lte("fecha", fin).execute()
+        
+        if res.data:
+            df_v = pd.DataFrame(res.data)
+            
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df_v.to_excel(writer, index=False, sheet_name='Ventas')
+            
+            st.download_button(
+                label="📥 Descargar Reporte en Excel",
+                data=output.getvalue(),
+                file_name=f"ventas_{fecha_sel}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            
+            st.subheader("Resumen de Productos")
+            resumen = df_v.groupby('producto').agg({'cantidad': 'sum', 'total_usd': 'sum'}).reset_index()
+            st.table(resumen)
+            
+            st.subheader("Detalle por Transacción")
