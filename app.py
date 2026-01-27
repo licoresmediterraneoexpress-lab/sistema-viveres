@@ -105,7 +105,7 @@ if opcion == "📦 Inventario":
                     db.table("inventario").insert({"nombre":n_nom,"stock":n_stk,"costo":n_cos,"precio_detal":n_pdet,"precio_mayor":n_pmay,"min_mayor":n_mmay}).execute()
                     st.rerun()
 
-# --- 5. VENTA RÁPIDA ---
+# --- 5. VENTA RÁPIDA (SOLUCIÓN DEFINITIVA AL BOTÓN) ---
 elif opcion == "🛒 Venta Rápida":
     st.header("🛒 Ventas")
     
@@ -114,46 +114,45 @@ elif opcion == "🛒 Venta Rápida":
     
     if res_p.data:
         df_p = pd.DataFrame(res_p.data)
-        bus = st.text_input("🔍 Buscar producto...", key="bus_ventas").lower()
         
-        # Filtrado dinámico
+        # 1. Definimos la función de añadir ANTES de los widgets
+        def añadir_al_carrito():
+            # Buscamos los datos usando las llaves (keys) de los widgets
+            producto_nombre = st.session_state.sel_prod_v
+            cantidad_v = st.session_state.cant_prod_v
+            
+            # Buscamos el producto en el dataframe
+            item_db = df_p[df_p["nombre"] == producto_nombre].iloc[0]
+            
+            if item_db["stock"] >= cantidad_v:
+                # Calculamos precio
+                es_mayor = cantidad_v >= item_db["min_mayor"]
+                precio_u = float(item_db["precio_mayor"]) if es_mayor else float(item_db["precio_detal"])
+                
+                nuevo_item = {
+                    "p": producto_nombre, "c": int(cantidad_v), "u": precio_u, 
+                    "t": precio_u * cantidad_v, "costo_u": float(item_db.get('costo', 0))
+                }
+                st.session_state.car.append(nuevo_item)
+                st.toast(f"✅ Añadido: {producto_nombre}")
+            else:
+                st.error("No hay suficiente stock")
+
+        # 2. Interfaz de usuario
+        bus = st.text_input("🔍 Buscar producto...", key="bus_ventas").lower()
         df_v = df_p[df_p['nombre'].str.lower().str.contains(bus)] if bus else df_p
         
         if not df_v.empty:
             v1, v2 = st.columns([3, 1])
-            
-            # --- AQUÍ VA LA CORRECCIÓN QUE TE DI ---
             psel = v1.selectbox("Producto", df_v["nombre"], key="sel_prod_v")
             csel = v2.number_input("Cant", min_value=1, value=1, step=1, key="cant_prod_v")
             
-            it = df_p[df_p["nombre"] == psel].iloc[0]
-            es_mayor = csel >= it["min_mayor"]
-            precio_v = float(it["precio_mayor"]) if es_mayor else float(it["precio_detal"])
-            
-            st.write(f"**Precio Unitario:** ${precio_v:.2f} {'(Precio Mayorista)' if es_mayor else ''}")
-            
-            if st.button("➕ Añadir al Carrito", use_container_width=True, key="btn_add_infalible"):
-                if it["stock"] >= csel:
-                    nuevo_item = {
-                        "p": psel, 
-                        "c": int(csel), 
-                        "u": float(precio_v), 
-                        "t": float(precio_v * csel), 
-                        "costo_u": float(it.get('costo', 0))
-                    }
-                    st.session_state.car.append(nuevo_item)
-                    st.success(f"Añadido: {psel}")
-                    st.rerun()
-                else:
-                    st.error(f"¡Error! Solo hay {int(it['stock'])} en stock.")
-            # --- FIN DE LA CORRECCIÓN ---
-            
+            # EL BOTÓN AHORA USA 'on_click'
+            st.button("➕ Añadir al Carrito", on_click=añadir_al_carrito, use_container_width=True)
         else:
-            st.warning("No se encontraron productos.")
+            st.warning("Producto no encontrado.")
     else:
         st.info("Inventario vacío.")
-
-    # El código de abajo (if st.session_state.car:) se queda igual...
 # --- 6. GASTOS ---
 elif opcion == "💸 Gastos":
     st.header("💸 Gastos Operativos")
@@ -177,6 +176,7 @@ elif opcion == "📊 Reporte de Utilidades":
 
     f_f = st.date_input("Fecha", date.today())
     v
+
 
 
 
