@@ -105,7 +105,7 @@ if opcion == "📦 Inventario":
                     db.table("inventario").insert({"nombre":n_nom,"stock":n_stk,"costo":n_cos,"precio_detal":n_pdet,"precio_mayor":n_pmay,"min_mayor":n_mmay}).execute()
                     st.rerun()
 
-# --- 5. VENTA RÁPIDA (VERSIÓN BOTÓN INFALIBLE) ---
+# --- 5. VENTA RÁPIDA ---
 elif opcion == "🛒 Venta Rápida":
     st.header("🛒 Ventas")
     
@@ -121,43 +121,39 @@ elif opcion == "🛒 Venta Rápida":
         
         if not df_v.empty:
             v1, v2 = st.columns([3, 1])
-            # Usamos el nombre como key para que Streamlit no se confunda
+            
+            # --- AQUÍ VA LA CORRECCIÓN QUE TE DI ---
             psel = v1.selectbox("Producto", df_v["nombre"], key="sel_prod_v")
-            csel = v2.number_input("Cant", 1, min_value=1, key="cant_prod_v")
+            csel = v2.number_input("Cant", min_value=1, value=1, step=1, key="cant_prod_v")
             
-            # Localizamos el producto seleccionado
             it = df_p[df_p["nombre"] == psel].iloc[0]
-            
-            # Cálculo de precio automático
             es_mayor = csel >= it["min_mayor"]
             precio_v = float(it["precio_mayor"]) if es_mayor else float(it["precio_detal"])
             
             st.write(f"**Precio Unitario:** ${precio_v:.2f} {'(Precio Mayorista)' if es_mayor else ''}")
             
-            # EL BOTÓN AHORA TIENE LÓGICA DE PERSISTENCIA
-            if st.button("➕ Añadir al Carrito", use_container_width=True):
+            if st.button("➕ Añadir al Carrito", use_container_width=True, key="btn_add_infalible"):
                 if it["stock"] >= csel:
                     nuevo_item = {
                         "p": psel, 
-                        "c": csel, 
-                        "u": precio_v, 
-                        "t": precio_v * csel, 
+                        "c": int(csel), 
+                        "u": float(precio_v), 
+                        "t": float(precio_v * csel), 
                         "costo_u": float(it.get('costo', 0))
                     }
                     st.session_state.car.append(nuevo_item)
                     st.success(f"Añadido: {psel}")
-                    st.rerun() # Esto fuerza a la app a mostrar el carrito actualizado de inmediato
+                    st.rerun()
                 else:
                     st.error(f"¡Error! Solo hay {int(it['stock'])} en stock.")
+            # --- FIN DE LA CORRECCIÓN ---
+            
         else:
             st.warning("No se encontraron productos.")
     else:
         st.info("Inventario vacío.")
 
-    # --- MOSTRAR CARRITO (Asegúrate de que este bloque siga abajo) ---
-    if st.session_state.car:
-        st.write("---")
-        # ... resto del código del carrito y pagos que ya tienes
+    # El código de abajo (if st.session_state.car:) se queda igual...
 # --- 6. GASTOS ---
 elif opcion == "💸 Gastos":
     st.header("💸 Gastos Operativos")
@@ -181,6 +177,7 @@ elif opcion == "📊 Reporte de Utilidades":
 
     f_f = st.date_input("Fecha", date.today())
     v
+
 
 
 
