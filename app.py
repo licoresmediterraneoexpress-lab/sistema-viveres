@@ -28,7 +28,7 @@ if 'ventas' not in st.session_state:
 
 # --- BARRA LATERAL ---
 with st.sidebar:
-    st.markdown('<div class="titulo-negocio">NOMBRE DE TU NEGOCIO</div>', unsafe_allow_html=True)
+    st.markdown('<div class="titulo-negocio">MEDITERRANEO EXPRESS</div>', unsafe_allow_html=True)
     st.write("---")
     menu = st.radio("MENÚ PRINCIPAL", ["Nueva Venta", "Inventario", "Reporte de Ventas"])
 
@@ -79,3 +79,4 @@ elif menu == "Reporte de Ventas":
         st.metric("Ventas Totales del Día", f"${df_ventas['Total'].sum()}")
     else:
         st.info("Aún no hay ventas registradas hoy.")
+
