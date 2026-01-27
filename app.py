@@ -24,44 +24,42 @@ with st.sidebar:
 
 if m == "📦 Stock":
     st.header("📦 Inventario")
-    with st.expander("➕ Nuevo"):
+    with st.expander("➕ Nuevo Producto"):
         with st.form("f1", clear_on_submit=True):
             n, s = st.text_input("Nombre"), st.number_input("Stock", 0)
-            pd_v, pm_v, mm = st.number_input("Detal"), st.number_input("Mayor"), st.number_input("Min. Mayor", 1)
-            if st.form_submit_button("Ok"):
+            pd_v, pm_v, mm = st.number_input("Precio Detal ($)"), st.number_input("Precio Mayor ($)"), st.number_input("Min. Mayor", 1)
+            if st.form_submit_button("Guardar"):
                 db.table("inventario").insert({"nombre":n,"stock":s,"precio_detal":pd_v,"precio_mayor":pm_v,"min_mayor":mm}).execute()
-                st.success("Listo"); st.rerun()
+                st.success("Guardado correctamente"); st.rerun()
     
     try:
         res = db.table("inventario").select("*").execute()
-        if res.data and len(res.data) > 0:
-            st.dataframe(pd.DataFrame(res.data), use_container_width=True)
-        else:
-            st.info("El inventario está vacío.")
-    except Exception as e:
-        st.error("Error al cargar datos. Verifica la conexión.")
+        if res.data: st.dataframe(pd.DataFrame(res.data), use_container_width=True)
+        else: st.info("Inventario vacío.")
+    except: st.error("Error al conectar con el inventario.")
 
 elif m == "🛒 Venta":
     st.header("🛒 Ventas")
-    t = st.number_input("Tasa BCV", 1.0, 100.0, 50.0)
+    # CORRECCIÓN TASA: Ahora permite hasta 1.000.000
+    t = st.number_input("Tasa del Día (Bs/$)", min_value=1.0, max_value=1000000.0, value=60.0, step=0.1)
+    
     try:
         r = db.table("inventario").select("*").execute()
-        if r.data and len(r.data) > 0:
+        if r.data:
             df = pd.DataFrame(r.data)
             c1, c2 = st.columns([3,1])
-            sel = c1.selectbox("Producto", df["nombre"])
-            can = c2.number_input("Cant", 1)
+            sel = c1.selectbox("Seleccione Producto", df["nombre"])
+            can = c2.number_input("Cantidad", 1)
             it = df[df["nombre"]==sel].iloc[0]
             p_u = float(it["precio_mayor"]) if can >= it["min_mayor"] else float(it["precio_detal"])
-            if st.button("➕ Añadir"):
+            if st.button("➕ Añadir al Carrito"):
                 if it["stock"] >= can:
                     st.session_state.car.append({"p":sel,"c":can,"u":p_u,"t":p_u*can}); st.rerun()
-                else: st.error("No hay stock")
-        else:
-            st.warning("No hay productos registrados en el inventario.")
-    except: st.error("Error en la base de datos.")
+                else: st.error("Stock insuficiente")
+    except: st.error("Error cargando productos.")
 
     if st.session_state.car:
+        st.write("---")
         for i, x in enumerate(st.session_state.car):
             ca, cb = st.columns([8, 1])
             ca.info(f"{x['p']} | {x['c']} x ${x['u']} = ${x['t']:.2f}")
@@ -69,32 +67,47 @@ elif m == "🛒 Venta":
                 st.session_state.car.pop(i); st.rerun()
         
         tot_u = sum(z['t'] for z in st.session_state.car); tot_b = tot_u * t
-        st.subheader(f"Total: Bs. {tot_b:,.2f} (${tot_u:,.2f})")
-        pag = st.number_input("Pagado Bs", 0.0)
-        if pag < tot_b: st.warning(f"Falta: {tot_b-pag:,.2f} Bs")
+        st.subheader(f"Total a Pagar: Bs. {tot_b:,.2f} (${tot_u:,.2f})")
+        
+        pag = st.number_input("Monto Recibido (Bs)", 0.0)
+        if pag < tot_b - 0.1: st.warning(f"Faltan: {tot_b-pag:,.2f} Bs")
         else: st.success(f"Vuelto: {pag-tot_b:,.2f} Bs")
 
-        if st.button("✅ FINALIZAR"):
+        if st.button("✅ FINALIZAR FACTURA"):
             if pag >= tot_b - 0.1:
-                for y in st.session_state.car:
-                    db.table("ventas").insert({"producto":y['p'],"cantidad":y['c'],"total_usd":y['t'],"tasa_cambio":t}).execute()
-                    # Actualizar stock buscando el item correcto
-                    r_stock = db.table("inventario").select("stock").eq("nombre", y['p']).execute()
-                    if r_stock.data:
-                        nuevo_s = int(r_stock.data[0]['stock']) - y['c']
-                        db.table("inventario").update({"stock": nuevo_s}).eq("nombre", y['p']).execute()
-                st.session_state.car = []; st.success("Venta realizada"); time.sleep(1); st.rerun()
+                try:
+                    for y in st.session_state.car:
+                        # Insertar venta (solo columnas básicas para evitar errores)
+                        db.table("ventas").insert({
+                            "producto": y['p'],
+                            "cantidad": y['c'],
+                            "total_usd": y['t'],
+                            "tasa_cambio": t,
+                            "fecha": datetime.now().isoformat()
+                        }).execute()
+                        
+                        # Restar Stock
+                        r_s = db.table("inventario").select("stock").eq("nombre", y['p']).execute()
+                        if r_s.data:
+                            n_s = int(r_s.data[0]['stock']) - y['c']
+                            db.table("inventario").update({"stock": n_s}).eq("nombre", y['p']).execute()
+                    
+                    st.session_state.car = []
+                    st.success("¡Factura procesada con éxito!")
+                    time.sleep(1); st.rerun()
+                except Exception as e:
+                    st.error(f"Error de base de datos: {e}")
+            else: st.error("El pago no está completo.")
 
 elif m == "📊 Total":
-    st.header("📊 Reportes")
-    f = st.date_input("Fecha", date.today())
+    st.header("📊 Reporte de Ventas")
     try:
-        res = db.table("ventas").select("*").execute()
+        res = db.table("ventas").select("*").order("fecha", desc=True).execute()
         if res.data:
             dfv = pd.DataFrame(res.data)
             st.dataframe(dfv, use_container_width=True)
             out = io.BytesIO()
             with pd.ExcelWriter(out, engine='xlsxwriter') as wr: dfv.to_excel(wr, index=False)
-            st.download_button("📥 Descargar Excel", out.getvalue(), "reporte.xlsx")
+            st.download_button("📥 Descargar Reporte Excel", out.getvalue(), "ventas.xlsx")
         else: st.info("No hay ventas registradas.")
     except: st.error("No se pudieron cargar los reportes.")
