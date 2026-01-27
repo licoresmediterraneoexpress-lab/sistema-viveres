@@ -105,38 +105,48 @@ if opcion == "📦 Inventario":
                     db.table("inventario").insert({"nombre":n_nom,"stock":n_stk,"costo":n_cos,"precio_detal":n_pdet,"precio_mayor":n_pmay,"min_mayor":n_mmay}).execute()
                     st.rerun()
 
-# --- 5. VENTA RÁPIDA (CORREGIDO) ---
+# --- 5. VENTA RÁPIDA (CORRECCIÓN DEFINITIVA DE INDEXERROR) ---
 elif opcion == "🛒 Venta Rápida":
     st.header("🛒 Ventas")
     
-    # Usamos una key fija para que la tasa no cause errores al cambiarla
     tasa = st.number_input("Tasa del Día", 1.0, 500.0, 60.0, key="tasa_input")
-    
     res_p = db.table("inventario").select("*").execute()
     
     if res_p.data:
         df_p = pd.DataFrame(res_p.data)
-        # Buscador con key única
         bus = st.text_input("🔍 Buscar producto...", key="bus_ventas").lower()
+        
+        # Filtramos la lista según la búsqueda
         df_v = df_p[df_p['nombre'].str.lower().str.contains(bus)] if bus else df_p
         
-        v1, v2 = st.columns([3, 1])
-        # Selectbox con key basada en los datos para evitar duplicados
-        psel = v1.selectbox("Producto", df_v["nombre"], key="select_prod_venta")
-        csel = v2.number_input("Cant", 1, key="cant_prod_venta")
-        
-        it = df_p[df_p["nombre"] == psel].iloc[0]
-        pre_v = float(it["precio_mayor"]) if csel >= it["min_mayor"] else float(it["precio_detal"])
-        
-        if st.button("➕ Añadir al Carrito", key="btn_add"):
-            if it["stock"] >= csel:
-                st.session_state.car.append({
-                    "p":psel, "c":csel, "u":pre_v, "t":pre_v*csel, 
-                    "costo_u": float(it.get('costo', 0))
-                })
-                st.rerun()
+        if not df_v.empty:
+            v1, v2 = st.columns([3, 1])
+            psel = v1.selectbox("Producto", df_v["nombre"], key="select_prod_venta")
+            csel = v2.number_input("Cant", 1, key="cant_prod_venta")
+            
+            # Buscamos el producto en el dataframe original (df_p) para asegurar que lo encuentre
+            match = df_p[df_p["nombre"] == psel]
+            
+            if not match.empty:
+                it = match.iloc[0]
+                # Lógica de precio (detal o mayor)
+                pre_v = float(it["precio_mayor"]) if csel >= it["min_mayor"] else float(it["precio_detal"])
+                
+                if st.button("➕ Añadir al Carrito", key="btn_add"):
+                    if it["stock"] >= csel:
+                        st.session_state.car.append({
+                            "p": psel, "c": csel, "u": pre_v, "t": pre_v * csel, 
+                            "costo_u": float(it.get('costo', 0))
+                        })
+                        st.rerun()
+                    else:
+                        st.error(f"Solo quedan {int(it['stock'])} unidades.")
             else:
-                st.error("Sin Stock suficiente")
+                st.warning("Producto no encontrado en la base de datos.")
+        else:
+            st.error("No hay productos que coincidan con tu búsqueda.")
+    else:
+        st.info("El inventario está vacío. Agrega productos primero.")
 
 # --- 6. GASTOS ---
 elif opcion == "💸 Gastos":
@@ -161,4 +171,5 @@ elif opcion == "📊 Reporte de Utilidades":
 
     f_f = st.date_input("Fecha", date.today())
     v
+
 
