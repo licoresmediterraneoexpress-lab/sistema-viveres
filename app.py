@@ -27,7 +27,7 @@ st.markdown("""
     [data-testid="stSidebar"] { background-color: #0041C2; color: white; }
     .stButton>button { background-color: #FF8C00; color: white; border-radius: 10px; font-weight: bold; width: 100%; }
     .titulo-negocio { color: #FF8C00; font-size: 26px; font-weight: bold; text-align: center; }
-    .alerta-pago { padding: 20px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 20px; }
+    .alerta-pago { padding: 20px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 22px; margin: 10px 0px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -49,8 +49,8 @@ if menu == "📦 Inventario":
                 nom = st.text_input("Nombre del Producto")
                 sto = st.number_input("Stock Inicial", min_value=0, step=1)
             with col2:
-                p_detal = st.number_input("Precio Detal", min_value=0.0, format="%.2f")
-                p_mayor = st.number_input("Precio Mayor", min_value=0.0, format="%.2f")
+                p_detal = st.number_input("Precio Detal ($)", min_value=0.0, format="%.2f")
+                p_mayor = st.number_input("Precio Mayor ($)", min_value=0.0, format="%.2f")
                 m_mayor = st.number_input("Mínimo para Mayor", min_value=1, step=1)
             if st.form_submit_button("Guardar en Sistema"):
                 if nom:
@@ -65,7 +65,7 @@ if menu == "📦 Inventario":
 # --- MÓDULO: VENTAS ---
 elif menu == "🛒 Ventas":
     st.header("🛒 Módulo de Ventas")
-    tasa = st.number_input("Tasa de Cambio", min_value=1.0, value=50.0)
+    tasa = st.number_input("Tasa de Cambio (BCV)", min_value=1.0, value=50.0, step=0.1)
     
     res = supabase.table("inventario").select("*").execute()
     if res.data:
@@ -92,65 +92,73 @@ elif menu == "🛒 Ventas":
         st.table(df_car)
         total_usd = float(df_car["subtotal"].sum())
         total_bs = total_usd * tasa
-        st.subheader(f"TOTAL A COBRAR: ${total_usd:.2f} | Bs. {total_bs:.2f}")
+        
+        st.markdown(f"## TOTAL A COBRAR: Bs. {total_bs:,.2f}  <small>(o ${total_usd:,.2f})</small>", unsafe_allow_html=True)
 
-        st.markdown("### 💳 Registro de Pagos Mixtos")
+        st.markdown("### 💳 Registro de Pagos (Bolívares y Dólares)")
         c1, c2, c3 = st.columns(3)
         with c1:
-            ef = st.number_input("Efectivo", min_value=0.0, key="p_ef")
-            mo = st.number_input("Pago Móvil", min_value=0.0, key="p_mo")
+            ef_bs = st.number_input("Efectivo (Bs.)", min_value=0.0)
+            mo_bs = st.number_input("Pago Móvil (Bs.)", min_value=0.0)
         with c2:
-            ze = st.number_input("Zelle ($)", min_value=0.0, key="p_ze")
-            di = st.number_input("Divisas ($)", min_value=0.0, key="p_di")
+            pu_bs = st.number_input("Punto de Venta (Bs.)", min_value=0.0)
+            ot_bs = st.number_input("Otros (Bs.)", min_value=0.0)
         with c3:
-            pu = st.number_input("Punto de Venta", min_value=0.0, key="p_pu")
-            ot = st.number_input("Otros", min_value=0.0, key="p_ot")
+            ze_usd = st.number_input("Zelle ($)", min_value=0.0)
+            di_usd = st.number_input("Divisas ($)", min_value=0.0)
 
-        # --- CALCULADORA DE RESTANTE EN TIEMPO REAL ---
-        sumatoria_pagos = ef + mo + ze + di + pu + ot
-        restante = total_usd - sumatoria_pagos
+        # --- CÁLCULOS DE CONVERSIÓN ---
+        # Sumamos lo que entró en Bs directamente
+        total_entrado_bs = ef_bs + mo_bs + pu_bs + ot_bs
+        # Convertimos lo que entró en USD a Bs
+        total_entrado_usd_en_bs = (ze_usd + di_usd) * tasa
+        
+        total_pagado_bs = total_entrado_bs + total_entrado_usd_en_bs
+        restante_bs = total_bs - total_pagado_bs
 
-        if restante > 0.01:
-            st.markdown(f'<div class="alerta-pago" style="background-color: #ffe5e5; color: #cc0000;">FALTA POR PAGAR: ${restante:.2f} | Bs. {restante*tasa:.2f}</div>', unsafe_allow_html=True)
-        elif restante < -0.01:
-            st.markdown(f'<div class="alerta-pago" style="background-color: #e5f7ff; color: #0041C2;">CAMBIO / VUELTO: ${abs(restante):.2f} | Bs. {abs(restante*tasa):.2f}</div>', unsafe_allow_html=True)
+        if restante_bs > 0.1:
+            st.markdown(f'<div class="alerta-pago" style="background-color: #ffe5e5; color: #cc0000;">FALTA POR COBRAR: Bs. {restante_bs:,.2f}</div>', unsafe_allow_html=True)
+        elif restante_bs < -0.1:
+            st.markdown(f'<div class="alerta-pago" style="background-color: #e5f7ff; color: #0041C2;">CAMBIO A DAR: Bs. {abs(restante_bs):,.2f}</div>', unsafe_allow_html=True)
         else:
             st.markdown(f'<div class="alerta-pago" style="background-color: #e5ffe5; color: #008000;">¡PAGO COMPLETO!</div>', unsafe_allow_html=True)
 
         if st.button("✅ FINALIZAR VENTA"):
-            if sumatoria_pagos >= (total_usd - 0.01):
+            if total_pagado_bs >= (total_bs - 0.1):
                 try:
                     for i, item in enumerate(st.session_state.carrito):
+                        # Guardamos en la DB: los Bs los dividimos por tasa para que tu reporte siga siendo en USD (estándar)
+                        # o los guardas como gustes, pero aquí mantenemos la estructura de tus columnas
                         venta_data = {
                             "fecha": datetime.now().isoformat(),
                             "producto": item["producto"],
                             "cantidad": int(item["cantidad"]),
                             "total_usd": float(item["subtotal"]),
                             "tasa_cambio": float(tasa),
-                            "pago_efectivo": float(ef) if i == 0 else 0.0,
-                            "pago_punto": float(pu) if i == 0 else 0.0,
-                            "pago_movil": float(mo) if i == 0 else 0.0,
-                            "pago_zelle": float(ze) if i == 0 else 0.0,
-                            "pago_divisas": float(di) if i == 0 else 0.0, # NUEVA COLUMNA
-                            "pago_otros": float(ot) if i == 0 else 0.0
+                            "pago_efectivo": float(ef_bs / tasa) if i == 0 else 0.0,
+                            "pago_punto": float(pu_bs / tasa) if i == 0 else 0.0,
+                            "pago_movil": float(mo_bs / tasa) if i == 0 else 0.0,
+                            "pago_zelle": float(ze_usd) if i == 0 else 0.0,
+                            "pago_divisas": float(di_usd) if i == 0 else 0.0,
+                            "pago_otros": float(ot_bs / tasa) if i == 0 else 0.0
                         }
                         supabase.table("ventas").insert(venta_data).execute()
                         stk_act = int(df_prod[df_prod["nombre"] == item["producto"]].iloc[0]["stock"])
                         supabase.table("inventario").update({"stock": stk_act - item["cantidad"]}).eq("nombre", item["producto"]).execute()
                     
                     st.balloons()
-                    st.success("🎉 ¡COMPRA EXITOSA!")
+                    st.success("🎉 ¡VENTA COMPLETADA CON ÉXITO!")
                     time.sleep(2)
                     st.session_state.carrito = []
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error: {e}")
             else:
-                st.error("Aún falta dinero para completar el total.")
+                st.error("El monto ingresado es insuficiente.")
 
 # --- MÓDULO: CIERRE DE CAJA ---
 elif menu == "📊 Cierre de Caja":
-    st.header("📊 Cierre de Caja")
+    st.header("📊 Resumen de Cierre")
     fecha_sel = st.date_input("Día", date.today())
     try:
         inicio = datetime.combine(fecha_sel, datetime.min.time()).isoformat()
@@ -158,16 +166,16 @@ elif menu == "📊 Cierre de Caja":
         res = supabase.table("ventas").select("*").gte("fecha", inicio).lte("fecha", fin).execute()
         if res.data:
             df_v = pd.DataFrame(res.data)
+            st.subheader("Totales en Dólares (Equivalente)")
             col1, col2, col3, col4, col5, col6 = st.columns(6)
-            col1.metric("Efectivo", f"{df_v['pago_efectivo'].sum():.2f}")
-            col2.metric("Punto", f"{df_v['pago_punto'].sum():.2f}")
-            col3.metric("Móvil", f"{df_v['pago_movil'].sum():.2f}")
+            col1.metric("Efectivo", f"${df_v['pago_efectivo'].sum():.2f}")
+            col2.metric("Punto", f"${df_v['pago_punto'].sum():.2f}")
+            col3.metric("Móvil", f"${df_v['pago_movil'].sum():.2f}")
             col4.metric("Zelle", f"${df_v['pago_zelle'].sum():.2f}")
             col5.metric("Divisas", f"${df_v['pago_divisas'].sum():.2f}")
-            col6.metric("Otros", f"{df_v['pago_otros'].sum():.2f}")
-            st.markdown(f"### 💰 TOTAL DÍA: ${df_v['total_usd'].sum():.2f}")
-            st.dataframe(df_v[["fecha", "producto", "cantidad", "total_usd"]], use_container_width=True)
+            col6.metric("Otros", f"${df_v['pago_otros'].sum():.2f}")
+            st.markdown(f"### 💰 TOTAL VENDIDO: ${df_v['total_usd'].sum():.2f}")
         else:
-            st.info("No hay ventas hoy.")
+            st.info("No hay ventas registradas.")
     except Exception as e:
         st.error(f"Error: {e}")
