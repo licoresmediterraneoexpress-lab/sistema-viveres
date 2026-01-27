@@ -6,8 +6,9 @@ from supabase import create_client
 st.set_page_config(page_title="Sistema de Negocio", layout="wide")
 
 # 🔑 TUS LLAVES (Verifica que sean las correctas)
-URL_SUPABASE = "TU_URL_AQUÍ"
-KEY_SUPABASE = "TU_LLAVE_AQUÍ"
+URL_SUPABASE = "https://orrfldqwpjkkooeuqnmp.supabase.co"
+KEY_SUPABASE = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9ycmZsZHF3cGpra29vZXVxbm1wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkzMDg5MDEsImV4cCI6MjA4NDg4NDkwMX0.va4XR7_lDF2QV9SBXTusmAa_bgqV9oKwiIhC23hsC7E"
+
 
 try:
     supabase = create_client(URL_SUPABASE, KEY_SUPABASE)
@@ -25,7 +26,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 with st.sidebar:
-    st.markdown('<div class="titulo-negocio">NOMBRE DE TU NEGOCIO</div>', unsafe_allow_html=True)
+    st.markdown('<div class="titulo-negocio">MEDITERRANEO EXPRESS</div>', unsafe_allow_html=True)
     menu = st.radio("SECCIONES", ["📦 Inventario", "🛒 Ventas"])
 
 # --- SECCIÓN INVENTARIO ---
@@ -69,3 +70,4 @@ if menu == "📦 Inventario":
         st.dataframe(df[columnas_visibles], use_container_width=True)
     else:
         st.info("El inventario está vacío.")
+
