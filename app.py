@@ -1,35 +1,43 @@
 import streamlit as st
 import os
 
-# CONFIGURACIÓN VISUAL INMEDIATA (Para que veas que funciona)
+# 1. CONFIGURACIÓN DE PÁGINA
 st.set_page_config(page_title="Sistema de Ventas", layout="wide")
 
+# 2. ESTILO PERSONALIZADO (Azul Rey y Naranja)
 st.markdown("""
     <style>
     .stApp { background-color: white; }
-    [data-testid="stSidebar"] { background-color: #0041C2; color: white; }
-    .stButton>button { background-color: #FF8C00; color: white; }
+    [data-testid="stSidebar"] { 
+        background-color: #0041C2; 
+    }
+    .titulo-negocio {mediterrano express
+        color: #FF8C00;
+        font-size: 24px;
+        font-weight: bold;
+        text-align: center;
+        padding: 10px;
+        border: 2px solid #FF8C00;
+        border-radius: 10px;
+        margin-bottom: 20px;
+    }
+    .stButton>button { background-color: #FF8C00; color: white; width: 100%; }
     </style>
     """, unsafe_allow_html=True)
 
-# BUSCADOR DE LOGO (Busca logo.png o logo.jpg)
-logo_path = None
-for nombre in ["logo.png", "logo.jpg", "logo.jpeg"]:
-    if os.path.exists(nombre):
-        logo_path = nombre
-        break
+# 3. BARRA LATERAL (Donde iba el logo, ahora va el nombre)
+with st.sidebar:
+    st.markdown('<div class="titulo-negocio">NOMBRE DE TU NEGOCIO</div>', unsafe_allow_html=True)
+    st.title("🏪 MENÚ")
+    opcion = st.radio("Ir a:", ["Ventas", "Inventario", "Reportes"])
 
-if logo_path:
-    st.sidebar.image(logo_path, use_container_width=True)
-else:
-    st.sidebar.warning("⚠️ No veo el archivo logo.png")
+# 4. CUERPO DEL SISTEMA
+st.title(f"🚀 Bienvenido a {opcion}")
 
-st.title("🚀 Sistema de Ventas")
-
-# INTENTO DE CONEXIÓN SEGURO
+# INTENTO DE IMPORTAR SUPABASE SOLO CUANDO SE NECESITA
 try:
     from supabase import create_client
-    st.success("✅ Conexión con Supabase lista.")
+    st.success("✅ Conexión establecida")
 except ImportError:
-    st.error("⚠️ Todavía falta instalar una pieza.")
-    st.info("Por favor, ve a la pantalla negra y escribe: pip install supabase")
+    st.error("⚠️ Falta una pieza técnica (supabase).")
+    st.info("Para arreglarlo, escribe en la pantalla negra: python -m pip install supabase")
