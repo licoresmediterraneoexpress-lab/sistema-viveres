@@ -145,36 +145,45 @@ elif opcion == "🛒 Venta Rápida":
         elif vuelto < -0.1:
             st.warning(f"⚠️ FALTA POR COBRAR: {abs(vuelto):,.2f} Bs.")
 
-        if st.button("🚀 CONFIRMAR Y FINALIZAR VENTA", use_container_width=True):
+       if st.button("🚀 CONFIRMAR Y FINALIZAR VENTA", use_container_width=True):
             try:
-                # REPARACIÓN AQUÍ: Definimos y usamos propina_usd correctamente
-                propina_usd = (float(total_cobrado_bs) / float(tasa)) - sub_total_usd
-                
-                for x in st.session_state.car:
-                    db.table("ventas").insert({
-                        "producto": x['p'], 
-                        "cantidad": x['c'], 
-                        "total_usd": x['t'], 
-                        "tasa_cambio": tasa,
-                        "pago_efectivo": ef, 
-                        "pago_punto": pu, 
-                        "pago_movil": pm, 
-                        "pago_zelle": ze, 
-                        "pago_otros": ot, 
-                        "pago_divisas": di, 
-                        "costo_venta": x['costo_u'] * x['c'],
-                        "propina": propina_usd / len(st.session_state.car), # Ahora sí está definida
-                        "fecha": datetime.now().isoformat()
-                    }).execute()
+                with st.spinner("Procesando venta..."):
+                    propina_usd = (float(total_cobrado_bs) / float(tasa)) - sub_total_usd
                     
-                    stk_original = df_p[df_p['nombre'] == x['p']].iloc[0]['stock']
-                    db.table("inventario").update({"stock": int(stk_original - x['c'])}).eq("nombre", x['p']).execute()
-                
+                    for x in st.session_state.car:
+                        db.table("ventas").insert({
+                            "producto": x['p'], 
+                            "cantidad": x['c'], 
+                            "total_usd": x['t'], 
+                            "tasa_cambio": tasa,
+                            "pago_efectivo": ef, 
+                            "pago_punto": pu, 
+                            "pago_movil": pm, 
+                            "pago_zelle": ze, 
+                            "pago_otros": ot, 
+                            "pago_divisas": di, 
+                            "costo_venta": x['costo_u'] * x['c'],
+                            "propina": propina_usd / len(st.session_state.car),
+                            "fecha": datetime.now().isoformat()
+                        }).execute()
+                        
+                        # Descontar Stock
+                        stk_original = df_p[df_p['nombre'] == x['p']].iloc[0]['stock']
+                        db.table("inventario").update({"stock": int(stk_original - x['c'])}).eq("nombre", x['p']).execute()
+                    
+                # --- ALERTA VISUAL DE SEGURIDAD ---
                 st.balloons()
+                st.success(f"✅ ¡VENTA FINALIZADA CON ÉXITO! Total: ${sub_total_usd:,.2f} ({total_cobrado_bs:,.2f} Bs.)")
+                
+                # Pausa breve para que el usuario vea el mensaje antes de limpiar
+                import time
+                time.sleep(2) 
+                
                 st.session_state.car = []
                 st.rerun()
+                
             except Exception as e:
-                st.error(f"Error al procesar: {e}")
+                st.error(f"❌ Error al procesar: {e}")
 
 # --- 5. MÓDULO GASTOS ---
 elif opcion == "💸 Gastos":
@@ -235,6 +244,7 @@ elif opcion == "📊 Cierre de Caja":
             
     else:
         st.info("No hay registros de ventas para esta fecha.")
+
 
 
 
