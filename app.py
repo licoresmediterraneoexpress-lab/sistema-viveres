@@ -105,7 +105,7 @@ if opcion == "📦 Inventario":
                     db.table("inventario").insert({"nombre":n_nom,"stock":n_stk,"costo":n_cos,"precio_detal":n_pdet,"precio_mayor":n_pmay,"min_mayor":n_mmay}).execute()
                     st.rerun()
 
-# --- 5. VENTA RÁPIDA (CON COLUMNA pago_divisas CORREGIDA) ---
+# --- 5. VENTA RÁPIDA (OPTIMIZADO CON TUS COLUMNAS REALES) ---
 elif opcion == "🛒 Venta Rápida":
     st.header("🛒 Terminal de Ventas")
     
@@ -152,13 +152,17 @@ elif opcion == "🛒 Venta Rápida":
         total_final_bs = st.number_input("Monto Final a Cobrar (Bs.)", value=float(sub_total_bs), step=1.0)
         
         total_final_usd = round(total_final_bs / tasa, 2)
+        # El "ajuste" por redondeo lo distribuimos en las ventas
         ajuste_usd = round(total_final_usd - sub_total_usd, 2)
         
         st.subheader("💳 Registro de Pagos")
         p1, p2, p3 = st.columns(3)
-        ef_b = p1.number_input("Efectivo Bs", 0.0); pm_b = p1.number_input("Pago Móvil Bs", 0.0)
-        pu_b = p2.number_input("Punto Bs", 0.0); ot_b = p2.number_input("Otros Bs", 0.0)
-        ze_u = p3.number_input("Zelle $", 0.0); di_u = p3.number_input("Divisas $", 0.0)
+        ef_b = p1.number_input("Efectivo Bs", 0.0)
+        pm_b = p1.number_input("Pago Móvil Bs", 0.0)
+        pu_b = p2.number_input("Punto Bs", 0.0)
+        ot_b = p2.number_input("Otros Bs", 0.0)
+        ze_u = p3.number_input("Zelle $", 0.0)
+        di_u = p3.number_input("Divisas $", 0.0)
         
         pago_total_bs = ef_b + pm_b + pu_b + ot_b + ((ze_u + di_u) * tasa)
         restante_bs = total_final_bs - pago_total_bs
@@ -170,35 +174,38 @@ elif opcion == "🛒 Venta Rápida":
         if pago_total_bs >= total_final_bs - 0.1:
             if st.button("✅ FINALIZAR Y FACTURAR", use_container_width=True):
                 try:
-                    # Generamos el ticket antes de limpiar los datos
+                    # 1. Generar PDF (bytearray directo)
                     st.session_state.pdf_b = crear_ticket(st.session_state.car, total_final_bs, sub_total_usd, tasa, ajuste_usd)
                     
+                    # 2. Guardar cada item en Supabase con tus columnas exactas
                     for x in st.session_state.car:
                         db.table("ventas").insert({
-                            "producto": str(x['p']), 
-                            "cantidad": int(x['c']), 
-                            "total_usd": float(x['t']), 
-                            "costo_venta": round(float(x['costo_u'] * x['c']), 2), 
-                            "propina": round(float(ajuste_usd / len(st.session_state.car)), 2),
-                            "p_efectivo": float(ef_b), 
-                            "p_movil": float(pm_b), 
-                            "p_punto": float(pu_b), 
-                            "p_zelle": float(ze_u), 
-                            "pago_divisas": float(di_u), # <--- AQUÍ EL NOMBRE CORRECTO
-                            "fecha": datetime.now().isoformat()
+                            "fecha": datetime.now().isoformat(),
+                            "producto": str(x['p']),
+                            "cantidad": int(x['c']),
+                            "total_usd": float(x['t']),
+                            "tasa_cambio": float(tasa),
+                            "pago_efectivo": float(ef_b),
+                            "pago_punto": float(pu_b),
+                            "pago_movil": float(pm_b),
+                            "pago_zelle": float(ze_u),
+                            "pago_otros": float(ot_b),
+                            "pago_divisas": float(di_u),
+                            "costo_venta": round(float(x['costo_u'] * x['c']), 2)
                         }).execute()
                         
+                        # 3. Actualizar Inventario
                         s_act = int(df_p[df_p["nombre"] == x['p']].iloc[0]['stock']) - x['c']
                         db.table("inventario").update({"stock": s_act}).eq("nombre", x['p']).execute()
                     
                     st.session_state.car = []
-                    st.success("¡Venta Guardada con éxito!")
+                    st.success("Venta procesada con éxito")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Error: {e}")
+                    st.error(f"Error en base de datos: {e}")
 
     if st.session_state.pdf_b:
-        st.download_button("📥 Descargar Ticket (PDF)", st.session_state.pdf_b, "factura.pdf")
+        st.download_button("📥 Descargar Ticket (PDF)", st.session_state.pdf_b, "factura.pdf", mime="application/pdf")
 # --- 6. GASTOS ---
 elif opcion == "💸 Gastos":
     st.header("💸 Gastos Operativos")
@@ -222,6 +229,7 @@ elif opcion == "📊 Reporte de Utilidades":
 
     f_f = st.date_input("Fecha", date.today())
     v
+
 
 
 
