@@ -24,7 +24,6 @@ st.markdown("""
     .stApp {background-color: #FFFFFF;}
     [data-testid='stSidebar'] {background-color: #0041C2;}
     .stButton>button {background-color: #FF8C00; color: white; border-radius: 8px; font-weight: bold; width: 100%;}
-    .stMetric {background: #F0F7FF; padding: 10px; border-radius: 10px; border-left: 5px solid #0041C2;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -41,8 +40,6 @@ def crear_ticket(carrito, total_bs, total_usd, tasa, propina_usd):
     for i in carrito:
         pdf.cell(80, 7, str(i['p']), 1); pdf.cell(20, 7, str(i['c']), 1); pdf.cell(45, 7, f"{i['u']:.2f}", 1); pdf.cell(45, 7, f"{i['t']:.2f}", 1, ln=True)
     pdf.ln(5)
-    if propina_usd > 0:
-        pdf.cell(190, 7, f"RECARGO / SERVICIO: ${propina_usd:.2f}", ln=True, align='R')
     pdf.cell(190, 7, f"TOTAL BS: {total_bs:,.2f}", ln=True, align='R')
     pdf.cell(190, 7, f"TOTAL USD: {(total_usd + propina_usd):,.2f}", ln=True, align='R')
     return pdf.output(dest='S').encode('latin-1')
@@ -50,12 +47,11 @@ def crear_ticket(carrito, total_bs, total_usd, tasa, propina_usd):
 # --- 3. MENÚ ---
 with st.sidebar:
     st.markdown("<h2 style='color:white;text-align:center;'>MEDITERRANEO</h2>", unsafe_allow_html=True)
-    opcion = st.radio("MÓDULOS", ["📦 Inventario", "🛒 Venta Rápida", "💸 Gastos", "📊 Reporte de Utilidades"])
-    st.markdown("---")
+    opcion = st.radio("MÓDULOS", ["📦 Inventario", "🛒 Venta Rápida", "💸 Gastos", "📊 Reporte"])
     if st.button("🗑️ Vaciar Carrito"):
         st.session_state.car = []; st.rerun()
 
-# --- 4. MÓDULO: INVENTARIO ---
+# --- 4. INVENTARIO ---
 if opcion == "📦 Inventario":
     st.header("📦 Gestión de Inventario")
     clave = st.sidebar.text_input("Clave de Seguridad", type="password")
@@ -63,8 +59,7 @@ if opcion == "📦 Inventario":
     df_inv = pd.DataFrame(res_inv.data) if res_inv.data else pd.DataFrame()
 
     if not df_inv.empty:
-        costo_temp = df_inv['costo'] if 'costo' in df_inv.columns else 0
-        df_inv['valor_inv'] = df_inv['stock'] * costo_temp
+        df_inv['valor_inv'] = df_inv['stock'] * df_inv.get('costo', 0)
         st.metric("Inversión en Mercancía ($)", f"{df_inv['valor_inv'].sum():,.2f} USD")
 
     t1, t2 = st.tabs(["📋 Listado", "🆕 Nuevo"])
@@ -72,163 +67,98 @@ if opcion == "📦 Inventario":
         if not df_inv.empty:
             busq = st.text_input("🔍 Buscar...")
             df_m = df_inv[df_inv['nombre'].str.contains(busq, case=False)] if busq else df_inv
-            cols = ["nombre", "stock", "precio_detal", "precio_mayor", "min_mayor"]
-            if 'costo' in df_inv.columns: cols.insert(2, "costo")
-            st.dataframe(df_m[cols], use_container_width=True, hide_index=True)
+            st.dataframe(df_m[["nombre", "stock", "costo", "precio_detal", "precio_mayor"]], use_container_width=True, hide_index=True)
             
             if clave == CLAVE_ADMIN:
-                st.write("---")
                 sel = st.selectbox("Editar Item", df_inv["nombre"])
                 it = df_inv[df_inv["nombre"] == sel].iloc[0]
-                c1, c2, c3 = st.columns(3)
-                en = c1.text_input("Nombre", it["nombre"])
-                es = c1.number_input("Stock", value=int(it["stock"]))
-                ec = c2.number_input("Costo Compra $", value=float(it.get('costo', 0)))
-                epd = c2.number_input("Precio Detal $", value=float(it["precio_detal"]))
-                epm = c3.number_input("Precio Mayor $", value=float(it["precio_mayor"]))
-                emm = c3.number_input("Mínimo Mayorista", value=int(it["min_mayor"]))
-                if st.button("💾 Guardar"):
-                    db.table("inventario").update({"nombre":en, "stock":es, "costo":ec, "precio_detal":epd, "precio_mayor":epm, "min_mayor":emm}).eq("id", it["id"]).execute()
-                    st.rerun()
+                with st.form("edit_f"):
+                    en = st.text_input("Nombre", it["nombre"])
+                    es = st.number_input("Stock", value=int(it["stock"]))
+                    ec = st.number_input("Costo", value=float(it.get('costo', 0)))
+                    if st.form_submit_button("Actualizar"):
+                        db.table("inventario").update({"nombre":en, "stock":es, "costo":ec}).eq("id", it["id"]).execute()
+                        st.rerun()
 
     with t2:
         if clave == CLAVE_ADMIN:
             with st.form("nuevo_p"):
-                f1, f2 = st.columns(2)
-                n_nom = f1.text_input("Nombre")
-                n_stk = f1.number_input("Stock Inicial", 0)
-                n_cos = f2.number_input("Costo $")
-                n_pdet = f2.number_input("Precio Detal $")
-                n_pmay = f2.number_input("Precio Mayor $")
-                n_mmay = f2.number_input("Cant. Mayorista", 1)
+                n_nom = st.text_input("Nombre")
+                n_stk = st.number_input("Stock Inicial", 0)
+                n_cos = st.number_input("Costo $")
+                n_pdet = st.number_input("Precio Detal $")
                 if st.form_submit_button("Registrar"):
-                    db.table("inventario").insert({"nombre":n_nom,"stock":n_stk,"costo":n_cos,"precio_detal":n_pdet,"precio_mayor":n_pmay,"min_mayor":n_mmay}).execute()
+                    db.table("inventario").insert({"nombre":n_nom,"stock":n_stk,"costo":n_cos,"precio_detal":n_pdet,"precio_mayor":n_pdet,"min_mayor":12}).execute()
                     st.rerun()
 
-# --- 5. MÓDULO DE VENTA RÁPIDA (CÓDIGO COMPLETO Y CORREGIDO) ---
+# --- 5. VENTA RÁPIDA ---
 elif opcion == "🛒 Venta Rápida":
     st.header("🛒 Terminal de Ventas")
-    
-    # 1. Configuración de Tasa
-    tasa = st.number_input("Tasa del Día (Bs/$)", 1.0, 1000.0, 60.0, key="tasa_input")
-    
-    # Obtener inventario actualizado
+    tasa = st.number_input("Tasa del Día (Bs/$)", 1.0, 1000.0, 60.0)
     res_p = db.table("inventario").select("*").execute()
     
     if res_p.data:
         df_p = pd.DataFrame(res_p.data)
+        def add_car():
+            p = df_p[df_p["nombre"] == st.session_state.ps].iloc[0]
+            if p["stock"] >= st.session_state.cs:
+                precio = float(p["precio_mayor"]) if st.session_state.cs >= p["min_mayor"] else float(p["precio_detal"])
+                st.session_state.car.append({"p": p["nombre"], "c": st.session_state.cs, "u": precio, "t": round(precio * st.session_state.cs, 2), "costo_u": float(p.get('costo', 0))})
+                st.toast("Añadido")
         
-        # Función interna para añadir productos (Evita errores de recarga)
-        def añadir_al_carrito():
-            p_nom = st.session_state.sel_prod_v
-            cant_v = st.session_state.cant_prod_v
-            item_db = df_p[df_p["nombre"] == p_nom].iloc[0]
-            if item_db["stock"] >= cant_v:
-                es_mayor = cant_v >= item_db["min_mayor"]
-                precio_u = float(item_db["precio_mayor"]) if es_mayor else float(item_db["precio_detal"])
-                st.session_state.car.append({
-                    "p": p_nom, "c": int(cant_v), "u": precio_u, 
-                    "t": round(precio_u * cant_v, 2), "costo_u": float(item_db.get('costo', 0))
-                })
-                st.toast(f"✅ {p_nom} añadido")
-            else: 
-                st.error("Sin stock suficiente")
+        c1, c2 = st.columns([3,1])
+        c1.selectbox("Producto", df_p["nombre"], key="ps")
+        c2.number_input("Cant", 1, key="cs")
+        st.button("➕ Añadir", on_click=add_car)
 
-        # Buscador y Selector
-        bus = st.text_input("🔍 Buscar producto...", key="bus_ventas").lower()
-        df_v = df_p[df_p['nombre'].str.lower().str.contains(bus)] if bus else df_p
-        
-        if not df_v.empty:
-            v1, v2 = st.columns([3, 1])
-            psel = v1.selectbox("Producto", df_v["nombre"], key="sel_prod_v")
-            csel = v2.number_input("Cant", min_value=1, value=1, key="cant_prod_v")
-            st.button("➕ Añadir al Carrito", on_click=añadir_al_carrito, use_container_width=True)
-        else:
-            st.warning("No se encontraron productos.")
-
-    # --- 2. RESUMEN Y PROCESAMIENTO DE PAGO ---
     if st.session_state.car:
         st.write("---")
-        st.subheader("📋 Resumen de Compra")
+        sub_total_usd = sum(x['t'] for x in st.session_state.car)
+        st.write(f"Total sugerido: **{sub_total_usd * tasa:,.2f} Bs.**")
+        total_bs = st.number_input("A cobrar (Bs.)", value=float(sub_total_usd * tasa))
+        total_usd_final = round(total_bs / tasa, 2)
         
-        for i, x in enumerate(st.session_state.car):
-            c_a, c_b = st.columns([9, 1])
-            c_a.info(f"**{x['p']}** x{x['c']} = ${x['t']:.2f}")
-            if c_b.button("❌", key=f"del_{i}"):
-                st.session_state.car.pop(i)
-                st.rerun()
-        
-        # Cálculos de Montos
-        sub_total_usd = sum(z['t'] for z in st.session_state.car)
-        sub_total_bs = sub_total_usd * tasa
-        
-        st.write(f"Sub-total Sugerido: **{sub_total_bs:,.2f} Bs.**")
-        total_final_bs = st.number_input("Monto Final a Cobrar (Bs.)", value=float(sub_total_bs), step=1.0)
-        
-        total_final_usd = round(total_final_bs / tasa, 2)
-        ajuste_usd_total = round(total_final_usd - sub_total_usd, 2)
-        
-        # Registro de Pagos Mixtos
-        st.subheader("💳 Registro de Pagos")
         p1, p2, p3 = st.columns(3)
-        ef_b = p1.number_input("Efectivo Bs", 0.0, key="p_ef")
-        pm_b = p1.number_input("Pago Móvil Bs", 0.0, key="p_pm")
-        pu_b = p2.number_input("Punto Bs", 0.0, key="p_pu")
-        ot_b = p2.number_input("Otros Bs", 0.0, key="p_ot")
-        ze_u = p3.number_input("Zelle $", 0.0, key="p_ze")
-        di_u = p3.number_input("Divisas $", 0.0, key="p_di")
+        ef = p1.number_input("Efec. Bs", 0.0); pm = p1.number_input("P. Móvil Bs", 0.0)
+        pu = p2.number_input("Punto Bs", 0.0); ot = p2.number_input("Otros Bs", 0.0)
+        ze = p3.number_input("Zelle $", 0.0); di = p3.number_input("Divisas $", 0.0)
         
-        pago_total_bs = ef_b + pm_b + pu_b + ot_b + ((ze_u + di_u) * tasa)
-        restante_bs = total_final_bs - pago_total_bs
-        
-        if restante_bs > 0.1:
-            st.warning(f"⚠️ Faltante: **{restante_bs:,.2f} Bs.**")
-        elif restante_bs <= -0.1:
-            st.success(f"💰 Vuelto: **{abs(restante_bs):,.2f} Bs.**")
-        else:
-            st.success("✅ Cuenta saldada")
+        pagado_bs = ef + pm + pu + ot + ((ze + di) * tasa)
+        st.write(f"Diferencia: {total_bs - pagado_bs:,.2f} Bs.")
 
-        # 3. FINALIZAR VENTA
-        if pago_total_bs >= total_final_bs - 0.1:
-            if st.button("✅ FINALIZAR Y FACTURAR", use_container_width=True):
-                try:
-                    # Generar Ticket (Manejando el error de bytearray internamente)
-                    res_pdf = crear_ticket(st.session_state.car, total_final_bs, sub_total_usd, tasa, ajuste_usd_total)
-                    
-                    # Verificamos si es necesario
+        if st.button("✅ FINALIZAR"):
+            try:
+                st.session_state.pdf_b = crear_ticket(st.session_state.car, total_bs, sub_total_usd, tasa, total_usd_final - sub_total_usd)
+                for x in st.session_state.car:
+                    db.table("ventas").insert({
+                        "producto": x['p'], "cantidad": x['c'], "total_usd": x['t'], "tasa_cambio": tasa,
+                        "pago_efectivo": ef, "pago_punto": pu, "pago_movil": pm, "pago_zelle": ze, "pago_otros": ot, "pago_divisas": di,
+                        "costo_venta": x['costo_u'] * x['c'], "fecha": datetime.now().isoformat()
+                    }).execute()
+                    n_stk = int(df_p[df_p["nombre"] == x['p']].iloc[0]['stock']) - x['c']
+                    db.table("inventario").update({"stock": n_stk}).eq("nombre", x['p']).execute()
+                st.session_state.car = []
+                st.rerun()
+            except Exception as e: st.error(f"Error: {e}")
+
+    if st.session_state.pdf_b:
+        st.download_button("📥 Descargar Ticket", st.session_state.pdf_b, "ticket.pdf", "application/pdf")
+
 # --- 6. GASTOS ---
 elif opcion == "💸 Gastos":
     st.header("💸 Gastos Operativos")
     with st.form("gas"):
         d = st.text_input("Descripción"); m = st.number_input("Monto $")
         if st.form_submit_button("Guardar"):
-            db.table("gastos").insert({"descripcion":d, "monto":m, "fecha":datetime.now().isoformat()}).execute()
+            db.table("gastos").insert({"descripcion":d, "monto_usd":m, "fecha":datetime.now().isoformat()}).execute()
             st.success("Gasto anotado")
 
-# --- 7. REPORTE DE UTILIDADES ---
-elif opcion == "📊 Reporte de Utilidades":
-    st.header("📊 Resultado del Negocio")
-    
-    # Barra lateral para borrado
-    clave_r = st.sidebar.text_input("Clave Admin para borrar", type="password")
-    if clave_r == CLAVE_ADMIN:
-        if st.sidebar.button("🚨 VACIAR TODAS LAS VENTAS"):
-            db.table("ventas").delete().neq("id", 0).execute()
-            st.sidebar.success("Historial eliminado.")
-            st.rerun()
-
-    f_f = st.date_input("Fecha", date.today())
-    v
-
-
-
-
-
-
-
-
-
-
-
-
-
+# --- 7. REPORTE ---
+elif opcion == "📊 Reporte":
+    st.header("📊 Reporte de Ventas")
+    f = st.date_input("Fecha", date.today())
+    res = db.table("ventas").select("*").gte("fecha", f.isoformat()).execute()
+    if res.data:
+        df = pd.DataFrame(res.data)
+        st.metric("Ventas del Día", f"${df['total_usd'].sum():,.2f}")
+        st.dataframe(df)
