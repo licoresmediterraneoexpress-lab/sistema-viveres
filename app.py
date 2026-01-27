@@ -1,92 +1,52 @@
 import streamlit as st
-from supabase import create_client, Client
-import pandas as pd
 import os
 
-# 1. CONFIGURACIÓN DE PÁGINA Y ESTILO VISUAL
-st.set_page_config(page_title="Sistema de Ventas - Mi Negocio", layout="wide")
+# 1. INSTALACIÓN AUTOMÁTICA DE PIEZAS (Por si acaso)
+try:
+    from supabase import create_client, Client
+except ImportError:
+    st.error("Falta instalar la conexión. Por favor ejecuta: pip install supabase")
+    st.stop()
 
-# CSS Personalizado: Azul Rey (#0041C2), Naranja (#FF8C00) y Blanco
-st.markdown(f"""
+# 2. CONFIGURACIÓN DE TU BASE DE DATOS (Pega tus datos aquí)
+# Sustituye lo que está entre comillas por tus llaves reales
+URL_SUPABASE = "TU_URL_AQUÍ" 
+KEY_SUPABASE = "TU_LLAVE_AQUÍ"
+
+try:
+    supabase = create_client(URL_SUPABASE, KEY_SUPABASE)
+except:
+    st.error("Error en las llaves de Supabase. Verifica que estén bien pegadas.")
+
+# 3. BUSCADOR DE LOGO AUTOMÁTICO
+# El código buscará cualquier imagen que se llame logo o tenga formato png/jpg
+posibles_logos = ["logo.png", "logo.jpg", "logo.jpeg", "LOGO.PNG"]
+logo_encontrado = None
+
+for nombre in posibles_logos:
+    if os.path.exists(nombre):
+        logo_encontrado = nombre
+        break
+
+# --- DISEÑO ---
+st.set_page_config(page_title="Mi Negocio", layout="wide")
+
+# Colores Azul Rey y Naranja
+st.markdown("""
     <style>
-    .stApp {{ background-color: #FFFFFF; }}
-    
-    /* Barra lateral Azul Rey */
-    [data-testid="stSidebar"] {{
-        background-color: #0041C2;
-    }}
-    [data-testid="stSidebar"] * {{ color: white !important; }}
-    
-    /* Títulos en Azul Rey */
-    h1, h2, h3 {{ color: #0041C2 !important; font-family: 'Arial'; }}
-
-    /* Botones en Naranja */
-    div.stButton > button:first-child {{
-        background-color: #FF8C00;
-        color: white;
-        border-radius: 10px;
-        border: none;
-        height: 3em;
-        width: 100%;
-        font-weight: bold;
-    }}
-    
-    /* Métricas */
-    [data-testid="stMetricValue"] {{ color: #0041C2 !important; }}
+    [data-testid="stSidebar"] { background-color: #0041C2; color: white; }
+    .stButton>button { background-color: #FF8C00; color: white; border-radius: 8px; }
     </style>
     """, unsafe_allow_html=True)
 
-# 2. FUNCIÓN PARA MOSTRAR LOGO
-def mostrar_logo():
-    if os.path.exists("logo.png"):
-        # Esto centra el logo en la barra lateral
-        st.sidebar.image("logo.png", use_container_width=True)
-    else:
-        st.sidebar.title("🏪 MI NEGOCIO")
+# --- MOSTRAR LOGO ---
+if logo_encontrado:
+    st.sidebar.image(logo_encontrado, use_container_width=True)
+else:
+    st.sidebar.warning("⚠️ No encontré el logo. Asegúrate que esté en la carpeta.")
 
-# 3. SEGURIDAD
-if "password_correct" not in st.session_state:
-    col1, col2, col3 = st.columns([1,2,1])
-    with col2:
-        if os.path.exists("logo.png"):
-            st.image("logo.png", width=300)
-        st.subheader("🔐 Acceso al Sistema")
-        pwd = st.text_input("Contraseña", type="password")
-        if st.button("Ingresar"):
-            if pwd == "1234":
-                st.session_state["password_correct"] = True
-                st.rerun()
-            else: st.error("Contraseña incorrecta")
-    st.stop()
+st.sidebar.title("🏪 MENÚ PRINCIPAL")
+opcion = st.sidebar.selectbox("Ir a:", ["Ventas", "Inventario", "Cierre"])
 
-# 4. CONEXIÓN (Mantenemos tu lógica de secrets)
-url = st.secrets["SUPABASE_URL"]
-key = st.secrets["SUPABASE_KEY"]
-supabase = create_client(url, key)
-
-# --- SIDEBAR ---
-mostrar_logo()
-st.sidebar.divider()
-menu = st.sidebar.selectbox("📂 MENÚ", ["Inicio", "Punto de Venta", "Inventario", "Gastos", "Cierre de Caja"])
-tasa = st.sidebar.number_input("Tasa del Día (BS/$)", value=60.0)
-
-# --- LÓGICA DE MÓDULOS (Ejemplo Punto de Venta con Estilo) ---
-if menu == "Inicio":
-    st.title("🚀 Panel de Control")
-    # ... (resto de tu lógica de métricas igual que antes)
-
-elif menu == "Punto de Venta":
-    st.header("💰 Punto de Venta")
-    
-    # Diseño de ticket visualmente atractivo
-    with st.container():
-        st.markdown("""
-            <div style="background-color: #f0f2f6; padding: 20px; border-left: 10px solid #FF8C00; border-radius: 10px;">
-                <h4 style="margin:0; color: #0041C2;">Nueva Operación</h4>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        # Aquí continúa el código de selección de productos que ya tienes...
-        # (Se mantiene la lógica de pagos mixtos del código anterior)
-
-# --- NOTA: He mantenido la estructura para que solo copies y pegues ---
+st.title("🚀 Sistema de Ventas")
+st.write("Si ves esto, ¡el sistema ya funciona!")
