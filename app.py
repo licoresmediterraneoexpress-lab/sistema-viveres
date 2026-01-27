@@ -14,16 +14,15 @@ CLAVE_ADMIN = "1234"
 def init_db(): return create_client(URL, KEY)
 db = init_db()
 
-# Inicialización de estados
+# Estado del carrito
 if 'car' not in st.session_state: st.session_state.car = []
 
-# Estilos visuales
+# Estilos Pro
 st.markdown("""
 <style>
     .stApp {background-color: #FFFFFF;}
     [data-testid='stSidebar'] {background-color: #0041C2;}
-    .stButton>button {background-color: #FF8C00; color: white; border-radius: 8px; font-weight: bold; width: 100%;}
-    .metric-box {background-color: #f0f2f6; padding: 15px; border-radius: 10px; border-left: 5px solid #FF8C00;}
+    .stButton>button {background-color: #FF8C00; color: white; border-radius: 8px; font-weight: bold;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -80,79 +79,106 @@ if opcion == "📦 Inventario":
                         db.table("inventario").insert(data).execute()
                     st.success("¡Base de datos actualizada!"); st.rerun()
 
-# --- 4. MÓDULO VENTA RÁPIDA ---
 elif opcion == "🛒 Venta Rápida":
     st.header("🛒 Terminal de Ventas")
     tasa = st.number_input("Tasa del Día (Bs/$)", 1.0, 500.0, 60.0)
-    
     res_p = db.table("inventario").select("*").execute()
+    
     if res_p.data:
         df_p = pd.DataFrame(res_p.data)
-        
-        # Buscador Inteligente
-        busc = st.text_input("🔍 Buscar producto...", placeholder="Escribe el nombre aquí...").lower()
+        # BUSCADOR INTELIGENTE
+        busc = st.text_input("🔍 Escribe para buscar producto...").lower()
         df_f = df_p[df_p['nombre'].str.lower().str.contains(busc)] if busc else df_p
         
-        col1, col2 = st.columns([3, 1])
-        item_sel = col1.selectbox("Selecciona", df_f['nombre'])
-        cant_sel = col2.number_input("Cantidad", 1)
+        c1, c2 = st.columns([3, 1])
+        ps = c1.selectbox("Producto", df_f['nombre'])
+        cs = c2.number_input("Cantidad", 1)
         
-        if st.button("➕ AÑADIR"):
-            p = df_p[df_p['nombre'] == item_sel].iloc[0]
-            if p['stock'] >= cant_sel:
-                precio = float(p['precio_mayor']) if cant_sel >= p['min_mayor'] else float(p['precio_detal'])
-                st.session_state.car.append({
-                    "p": p['nombre'], "c": cant_sel, "u": precio, 
-                    "t": round(precio * cant_sel, 2), "costo_u": float(p['costo'])
-                })
-                st.toast(f"Añadido: {item_sel}")
-            else: st.error("Sin stock")
+        if st.button("➕ AÑADIR AL CARRITO"):
+            p = df_p[df_p['nombre'] == ps].iloc[0]
+            precio = float(p['precio_mayor']) if cs >= p['min_mayor'] else float(p['precio_detal'])
+            st.session_state.car.append({
+                "p": ps, "c": cs, "u": precio, 
+                "t": round(precio*cs, 2), "costo_u": float(p['costo'])
+            })
+            st.rerun()
 
     if st.session_state.car:
-        st.write("---")
-        st.subheader("🛒 Carrito de Compras")
+        st.divider()
         sub_total_usd = sum(x['t'] for x in st.session_state.car)
-        for i, it in enumerate(st.session_state.car):
-            st.text(f"• {it['p']} x{it['c']} = ${it['t']:.2f}")
-        
         total_bs_sug = sub_total_usd * tasa
-        st.markdown(f"### Total a pagar: **{total_bs_sug:,.2f} Bs.** (${sub_total_usd:,.2f})")
+        st.write(f"### Total sugerido: **{total_bs_sug:,.2f} Bs.** (${sub_total_usd:,.2f})")
         
-        total_cobrado_bs = st.number_input("MONTO FINAL COBRADO (Bs.)", value=float(total_bs_sug))
+        # Ajuste de monto final (Propina/Redondeo)
+        total_cobrado_bs = st.number_input("MONTO FINAL A COBRAR (Bs.)", value=float(total_bs_sug))
         
-        # Pagos Mixtos
-        st.write("#### 💳 Registro de Pago")
+        st.write("#### 💳 Registro de Pagos Mixtos")
         c1, c2, c3 = st.columns(3)
-        ef_b = c1.number_input("Efec. Bs", 0.0); pm_b = c1.number_input("P. Móvil Bs", 0.0)
-        pu_b = c2.number_input("Punto Bs", 0.0); ot_b = c2.number_input("Otros Bs", 0.0)
-        ze_u = c3.number_input("Zelle $", 0.0); di_u = c3.number_input("Divisas $", 0.0)
+        ef = c1.number_input("Efectivo Bs", 0.0); pm = c1.number_input("Pago Móvil Bs", 0.0)
+        pu = c2.number_input("Punto Bs", 0.0); ot = c2.number_input("Otros Bs", 0.0)
+        ze = c3.number_input("Zelle $", 0.0); di = c3.number_input("Divisas $", 0.0)
         
-        pago_total_bs = ef_b + pm_b + pu_b + ot_b + ((ze_u + di_u) * tasa)
-        diferencia = total_cobrado_bs - pago_total_bs
+        pago_total_bs = ef + pm + pu + ot + ((ze + di) * tasa)
+        diff = total_cobrado_bs - pago_total_bs
         
-        if diferencia > 0.1: st.warning(f"Faltan cobrar: {diferencia:,.2f} Bs.")
-        elif diferencia < -0.1: st.success(f"DAR VUELTO: {abs(diferencia):,.2f} Bs.")
-        else: st.success("CUENTA SALDADA")
+        if diff > 0.1: st.warning(f"Faltan cobrar: {diff:,.2f} Bs.")
+        elif diff < -0.1: st.success(f"DAR VUELTO: {abs(diff):,.2f} Bs.")
 
-        if st.button("🚀 FINALIZAR Y REGISTRAR VENTA"):
+        if st.button("🚀 FINALIZAR VENTA"):
             try:
+                # La propina es la diferencia entre lo que marcaba el carrito y lo que cobraste
                 propina_usd = (total_cobrado_bs / tasa) - sub_total_usd
                 for x in st.session_state.car:
                     db.table("ventas").insert({
                         "producto": x['p'], "cantidad": x['c'], "total_usd": x['t'], "tasa_cambio": tasa,
-                        "pago_efectivo": ef_b, "pago_punto": pu_b, "pago_movil": pm_b, "pago_zelle": ze_u, 
-                        "pago_otros": ot_b, "pago_divisas": di_u, "costo_venta": x['costo_u'] * x['c'],
+                        "pago_efectivo": ef, "pago_punto": pu, "pago_movil": pm, "pago_zelle": ze, 
+                        "pago_otros": ot, "pago_divisas": di, "costo_venta": x['costo_u'] * x['c'],
                         "propina": propina_usd / len(st.session_state.car), "fecha": datetime.now().isoformat()
                     }).execute()
-                    # Descontar stock
-                    stk_actual = df_p[df_p['nombre'] == x['p']].iloc[0]['stock']
-                    db.table("inventario").update({"stock": int(stk_actual - x['c'])}).eq("nombre", x['p']).execute()
-                
-                st.balloons()
-                st.success("✅ VENTA FINALIZADA CON ÉXITO")
-                st.session_state.car = []
+                    # Actualizar stock
+                    stk = df_p[df_p['nombre'] == x['p']].iloc[0]['stock']
+                    db.table("inventario").update({"stock": int(stk - x['c'])}).eq("nombre", x['p']).execute()
+                st.balloons(); st.session_state.car = []; st.rerun()
             except Exception as e: st.error(f"Error: {e}")
+elif opcion == "📊 Cierre de Caja":
+    st.header("📊 Resumen y Cierre de Caja")
+    fecha_sel = st.date_input("Día a consultar", date.today())
+    
+    # Cargar ventas y gastos
+    res_v = db.table("ventas").select("*").gte("fecha", fecha_sel.isoformat()).execute()
+    res_g = db.table("gastos").select("*").gte("fecha", fecha_sel.isoformat()).execute()
+    
+    if res_v.data:
+        df_v = pd.DataFrame(res_v.data)
+        df_g = pd.DataFrame(res_g.data) if res_g.data else pd.DataFrame()
 
+        # 1. Desglose de ingresos
+        st.subheader("💰 Ingresos por Método")
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Efectivo Bs", f"{df_v['pago_efectivo'].sum():,.2f}")
+        c2.metric("P. Móvil Bs", f"{df_v['pago_movil'].sum():,.2f}")
+        c3.metric("Punto Bs", f"{df_v['pago_punto'].sum():,.2f}")
+        c4.metric("Zelle $", f"{df_v['pago_zelle'].sum():,.2f}")
+        c5.metric("Divisas $", f"{df_v['pago_divisas'].sum():,.2f}")
+
+        # 2. Utilidad
+        st.divider()
+        ingreso_total = df_v['total_usd'].sum()
+        costo_total = df_v['costo_venta'].sum()
+        gastos_total = df_g['monto_usd'].sum() if not df_g.empty else 0
+        utilidad_neta = ingreso_total - costo_total - gastos_total
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write("### 📈 Utilidades")
+            st.metric("Utilidad Bruta", f"${ingreso_total:,.2f}")
+            st.metric("Utilidad Neta (Real)", f"${utilidad_neta:,.2f}", delta=f"${utilidad_neta:,.2f}")
+        with col2:
+            st.write("### 💸 Gastos y Propinas")
+            st.write(f"**Gastos del día:** ${gastos_total:,.2f}")
+            st.write(f"**Acumulado Propinas (Redondeo):** ${df_v['propina'].sum():,.2f}")
+    else:
+        st.info("No hay ventas registradas en esta fecha.")
 # --- 5. REPORTES ---
 elif opcion == "📊 Reporte de Utilidades":
     st.header("📊 Resultado Financiero")
@@ -179,3 +205,4 @@ elif opcion == "📊 Reporte de Utilidades":
         st.info(f"💰 **Sobrante por Redondeo (Propina):** ${propina:,.2f}")
         st.write("### Detalle de Transacciones")
         st.dataframe(df_v[['fecha', 'producto', 'cantidad', 'total_usd', 'propina']], use_container_width=True)
+
