@@ -34,15 +34,20 @@ if menu == "📦 Inventario":
             c1, c2 = st.columns(2)
             n = c1.text_input("Nombre")
             s = c1.number_input("Stock", min_value=0)
-            pd = c2.number_input("Precio Detal ($)", min_value=0.0)
-            pm = c2.number_input("Precio Mayor ($)", min_value=0.0)
-            mm = c2.number_input("Min. Mayor", min_value=1)
+            pd_val = c2.number_input("Precio Detal ($)", min_value=0.0)
+            pm_val = c2.number_input("Precio Mayor ($)", min_value=0.0)
+            mm_val = c2.number_input("Min. Mayor", min_value=1)
             if st.form_submit_button("Guardar"):
-                supabase.table("inventario").insert({"nombre":n,"stock":int(s),"precio_detal":float(pd),"precio_mayor":float(pm),"min_mayor":int(mm)}).execute()
+                supabase.table("inventario").insert({"nombre":n,"stock":int(s),"precio_detal":float(pd_val),"precio_mayor":float(pm_val),"min_mayor":int(mm_val)}).execute()
                 st.success("Guardado"); st.rerun()
     
     res = supabase.table("inventario").select("*").execute()
-    if res.data: st.dataframe(pd.DataFrame(res.data)[["nombre","stock","precio_detal","precio_mayor","min_mayor"]], use_container_width=True)
+    if res.data:
+        df_inv = pd.DataFrame(res.data)
+        # Mostrar solo las columnas que existan para evitar el error AttributeError
+        cols_deseadas = ["nombre","stock","precio_detal","precio_mayor","min_mayor"]
+        cols_finales = [c for c in cols_deseadas if c in df_inv.columns]
+        st.dataframe(df_inv[cols_finales], use_container_width=True)
 
 # --- VENTAS ---
 elif menu == "🛒 Ventas":
@@ -56,7 +61,12 @@ elif menu == "🛒 Ventas":
         cant = c2.number_input("Cant.", min_value=1)
         
         info = dfp[dfp["nombre"]==sel].iloc[0]
-        p_u = float(info["precio_mayor"]) if cant >= info["min_mayor"] else float(info["precio_detal"])
+        # Verificación de seguridad para precios
+        p_detal = float(info.get("precio_detal", 0))
+        p_mayor = float(info.get("precio_mayor", 0))
+        m_mayor = int(info.get("min_mayor", 1))
+        
+        p_u = p_mayor if cant >= m_mayor else p_detal
         
         if st.button("➕ Añadir"):
             if info["stock"] >= cant:
@@ -113,6 +123,6 @@ elif menu == "📊 Reportes":
             st.subheader("Resumen Productos")
             st.table(dfv.groupby("producto").agg({"cantidad":"sum","total_usd":"sum"}))
             st.subheader("Ventas Detalladas")
-            st.dataframe(dfv[["fecha","producto","cantidad","total_usd"]], use_container_width=True)
+            st.dataframe(dfv, use_container_width=True)
         else: st.info("Sin datos")
     except Exception as e: st.error(f"Error: {e}")
