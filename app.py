@@ -82,7 +82,6 @@ if opcion == "📦 Inventario":
 elif opcion == "🛒 Venta Rápida":
     st.header("🛒 Terminal de Ventas")
     
-    # 1. Ajustes Rápidos
     with st.expander("⚙️ Ajustes de Tasa"):
         tasa = st.number_input("Tasa del Día (Bs/$)", 1.0, 500.0, 60.0)
     
@@ -90,15 +89,12 @@ elif opcion == "🛒 Venta Rápida":
     if res_p.data:
         df_p = pd.DataFrame(res_p.data)
         
-        # 2. Buscador Dinámico
         busc = st.text_input("🔍 Escribe el nombre del producto...", placeholder="Ej: Harina, Refresco...").lower()
         df_f = df_p[df_p['nombre'].str.lower().str.contains(busc)] if busc else df_p
         
-        # 3. Selección y Cantidad con Info de Stock
         c1, c2, c3 = st.columns([2, 1, 1])
         item_sel = c1.selectbox("Producto Encontrado", df_f['nombre'])
         
-        # Info del producto seleccionado en tiempo real
         p_data = df_p[df_p['nombre'] == item_sel].iloc[0]
         c2.write(f"**Stock:** {p_data['stock']}")
         c2.write(f"**Precio:** ${p_data['precio_detal']}")
@@ -110,28 +106,25 @@ elif opcion == "🛒 Venta Rápida":
                 precio = float(p_data['precio_mayor']) if cant_sel >= p_data['min_mayor'] else float(p_data['precio_detal'])
                 st.session_state.car.append({
                     "p": item_sel, "c": cant_sel, "u": precio, 
-                    "t": round(precio * cant_sel, 2), "costo_u": float(p_data['costo'])
+                    "t": round(float(precio) * int(cant_sel), 2), "costo_u": float(p_data['costo'])
                 })
                 st.toast(f"Añadido: {item_sel}")
                 st.rerun()
             else:
                 st.error("No hay stock suficiente.")
 
-    # 4. Carrito Visual (Tipo Factura)
     if st.session_state.car:
         st.markdown("### 📋 Detalle de Compra")
         df_carrito = pd.DataFrame(st.session_state.car)
         st.table(df_carrito[['p', 'c', 'u', 't']].rename(columns={'p':'Producto', 'c':'Cant', 'u':'Precio $', 't':'Total $'}))
         
-        sub_total_usd = sum(x['t'] for x in st.session_state.car)
+        sub_total_usd = sum(float(x['t']) for x in st.session_state.car)
         total_bs_sug = sub_total_usd * tasa
         
-        # Métricas de Cobro
         m1, m2 = st.columns(2)
         m1.metric("TOTAL A PAGAR $", f"${sub_total_usd:,.2f}")
         m2.metric("TOTAL EN BOLÍVARES", f"{total_bs_sug:,.2f} Bs")
         
-        # 5. Registro de Pagos (Compacto)
         st.divider()
         st.write("#### 💸 Registro de Cobro")
         total_cobrado_bs = st.number_input("MONTO FINAL RECIBIDO (Bs.)", value=float(total_bs_sug))
@@ -154,16 +147,26 @@ elif opcion == "🛒 Venta Rápida":
 
         if st.button("🚀 CONFIRMAR Y FINALIZAR VENTA", use_container_width=True):
             try:
-                propina_u = (total_cobrado_bs / tasa) - sub_total_usd
+                # REPARACIÓN AQUÍ: Definimos y usamos propina_usd correctamente
+                propina_usd = (float(total_cobrado_bs) / float(tasa)) - sub_total_usd
+                
                 for x in st.session_state.car:
                     db.table("ventas").insert({
-                        "producto": x['p'], "cantidad": x['c'], "total_usd": x['t'], "tasa_cambio": tasa,
-                        "pago_efectivo": ef, "pago_punto": pu, "pago_movil": pm, "pago_zelle": ze, 
-                        "pago_otros": ot, "pago_divisas": di, "costo_venta": x['costo_u'] * x['c'],
-                        "propina": propina_usd / len(st.session_state.car), "fecha": datetime.now().isoformat()
+                        "producto": x['p'], 
+                        "cantidad": x['c'], 
+                        "total_usd": x['t'], 
+                        "tasa_cambio": tasa,
+                        "pago_efectivo": ef, 
+                        "pago_punto": pu, 
+                        "pago_movil": pm, 
+                        "pago_zelle": ze, 
+                        "pago_otros": ot, 
+                        "pago_divisas": di, 
+                        "costo_venta": x['costo_u'] * x['c'],
+                        "propina": propina_usd / len(st.session_state.car), # Ahora sí está definida
+                        "fecha": datetime.now().isoformat()
                     }).execute()
                     
-                    # Descontar Stock
                     stk_original = df_p[df_p['nombre'] == x['p']].iloc[0]['stock']
                     db.table("inventario").update({"stock": int(stk_original - x['c'])}).eq("nombre", x['p']).execute()
                 
@@ -232,5 +235,6 @@ elif opcion == "📊 Cierre de Caja":
             
     else:
         st.info("No hay registros de ventas para esta fecha.")
+
 
 
