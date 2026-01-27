@@ -145,7 +145,7 @@ elif opcion == "🛒 Venta Rápida":
         elif vuelto < -0.1:
             st.warning(f"⚠️ FALTA POR COBRAR: {abs(vuelto):,.2f} Bs.")
 
-       if st.button("🚀 CONFIRMAR Y FINALIZAR VENTA", use_container_width=True):
+     if st.button("🚀 CONFIRMAR Y FINALIZAR VENTA", use_container_width=True):
             try:
                 with st.spinner("Procesando venta..."):
                     propina_usd = (float(total_cobrado_bs) / float(tasa)) - sub_total_usd
@@ -244,6 +244,7 @@ elif opcion == "📊 Cierre de Caja":
             
     else:
         st.info("No hay registros de ventas para esta fecha.")
+
 
 
 
