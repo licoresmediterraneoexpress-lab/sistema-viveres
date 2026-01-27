@@ -35,11 +35,11 @@ if m == "📦 Stock":
     try:
         res = db.table("inventario").select("*").execute()
         if res.data: st.dataframe(pd.DataFrame(res.data), use_container_width=True)
-    except Exception as e: st.error(f"Error: {e}")
+    except Exception as e: st.error(f"Error cargando stock: {e}")
 
 elif m == "🛒 Venta":
     st.header("🛒 Ventas")
-    t = st.number_input("Tasa del Día (Bs/$)", min_value=1.0, max_value=1000000.0, value=60.0, step=0.1)
+    t = st.number_input("Tasa del Día (Bs/$)", min_value=1.0, value=60.0, step=0.1)
     
     try:
         r = db.table("inventario").select("*").execute()
@@ -65,7 +65,7 @@ elif m == "🛒 Venta":
                 st.session_state.car.pop(i); st.rerun()
         
         tot_u = sum(z['t'] for z in st.session_state.car); tot_b = tot_u * t
-        st.markdown(f"### Total a Pagar: **Bs. {tot_b:,.2f}** (${tot_u:,.2f})")
+        st.markdown(f"### Total a Pagar: **Bs. {tot_b:,.2f}**")
         
         st.subheader("💳 Registro de Pago Mixto")
         col1, col2, col3 = st.columns(3)
@@ -79,28 +79,4 @@ elif m == "🛒 Venta":
         total_pagado_bs = p_ef_bs + p_pm_bs + p_pu_bs + p_ot_bs + ((p_ze_us + p_di_us) * t)
         dif = tot_b - total_pagado_bs
 
-        if dif > 0.1: st.warning(f"Faltan: {dif:,.2f} Bs.")
-        elif dif < -0.1: st.success(f"Vuelto: {abs(dif):,.2f} Bs.")
-        else: st.success("¡Pago Completo!")
-
-        if st.button("✅ FINALIZAR FACTURA"):
-            if total_pagado_bs >= (tot_b - 0.1):
-                try:
-                    for y in st.session_state.car:
-                        db.table("ventas").insert({
-                            "producto": y['p'], "cantidad": y['c'], "total_usd": y['t'], "tasa_cambio": t,
-                            "p_efectivo": p_ef_bs, "p_movil": p_pm_bs, "p_punto": p_pu_bs,
-                            "p_zelle": p_ze_us, "p_divisas": p_di_us
-                        }).execute()
-                        # Actualizar stock
-                        r_s = db.table("inventario").select("stock").eq("nombre", y['p']).execute()
-                        if r_s.data:
-                            n_s = int(r_s.data[0]['stock']) - y['c']
-                            db.table("inventario").update({"stock": n_s}).eq("nombre", y['p']).execute()
-                    st.session_state.car = []; st.success("¡Venta Exitosa!"); time.sleep(1); st.rerun()
-                except Exception as e: st.error(f"Fallo al guardar: {e}")
-
-elif m == "📊 Total":
-    st.header("📊 Reportes")
-    try:
-        res = db.table("ventas").select("*").execute()
+        if dif > 0.1: st.warning(f"Faltan: {
