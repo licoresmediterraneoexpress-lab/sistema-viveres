@@ -30,19 +30,19 @@ if m == "📦 Stock":
             pd_v, pm_v, mm = st.number_input("Precio Detal ($)"), st.number_input("Precio Mayor ($)"), st.number_input("Min. Mayor", 1)
             if st.form_submit_button("Guardar"):
                 db.table("inventario").insert({"nombre":n,"stock":s,"precio_detal":pd_v,"precio_mayor":pm_v,"min_mayor":mm}).execute()
-                st.success("Guardado correctamente"); st.rerun()
+                st.success("Guardado"); st.rerun()
     
     try:
         res = db.table("inventario").select("*").execute()
         if res.data: st.dataframe(pd.DataFrame(res.data), use_container_width=True)
         else: st.info("Inventario vacío.")
-    except: st.error("Error al conectar con el inventario.")
+    except Exception as e: st.error(f"Error en Stock: {e}")
 
 elif m == "🛒 Venta":
     st.header("🛒 Ventas")
-    # CORRECCIÓN TASA: Ahora permite hasta 1.000.000
     t = st.number_input("Tasa del Día (Bs/$)", min_value=1.0, max_value=1000000.0, value=60.0, step=0.1)
     
+    # Intentar cargar productos con error detallado
     try:
         r = db.table("inventario").select("*").execute()
         if r.data:
@@ -50,13 +50,22 @@ elif m == "🛒 Venta":
             c1, c2 = st.columns([3,1])
             sel = c1.selectbox("Seleccione Producto", df["nombre"])
             can = c2.number_input("Cantidad", 1)
+            
+            # Buscamos la fila del producto seleccionado
             it = df[df["nombre"]==sel].iloc[0]
+            
+            # Calculamos precio
             p_u = float(it["precio_mayor"]) if can >= it["min_mayor"] else float(it["precio_detal"])
+            
             if st.button("➕ Añadir al Carrito"):
                 if it["stock"] >= can:
-                    st.session_state.car.append({"p":sel,"c":can,"u":p_u,"t":p_u*can}); st.rerun()
+                    st.session_state.car.append({"p":sel,"c":can,"u":p_u,"t":p_u*can})
+                    st.rerun()
                 else: st.error("Stock insuficiente")
-    except: st.error("Error cargando productos.")
+        else:
+            st.warning("No hay productos registrados. Ve a la sección 'Stock' primero.")
+    except Exception as e:
+        st.error(f"DETALLE DEL ERROR: {e}")
 
     if st.session_state.car:
         st.write("---")
@@ -67,47 +76,33 @@ elif m == "🛒 Venta":
                 st.session_state.car.pop(i); st.rerun()
         
         tot_u = sum(z['t'] for z in st.session_state.car); tot_b = tot_u * t
-        st.subheader(f"Total a Pagar: Bs. {tot_b:,.2f} (${tot_u:,.2f})")
+        st.subheader(f"Total: Bs. {tot_b:,.2f} (${tot_u:,.2f})")
         
         pag = st.number_input("Monto Recibido (Bs)", 0.0)
         if pag < tot_b - 0.1: st.warning(f"Faltan: {tot_b-pag:,.2f} Bs")
         else: st.success(f"Vuelto: {pag-tot_b:,.2f} Bs")
 
-        if st.button("✅ FINALIZAR FACTURA"):
+        if st.button("✅ FINALIZAR"):
             if pag >= tot_b - 0.1:
                 try:
                     for y in st.session_state.car:
-                        # Insertar venta (solo columnas básicas para evitar errores)
-                        db.table("ventas").insert({
-                            "producto": y['p'],
-                            "cantidad": y['c'],
-                            "total_usd": y['t'],
-                            "tasa_cambio": t,
-                            "fecha": datetime.now().isoformat()
-                        }).execute()
-                        
-                        # Restar Stock
+                        db.table("ventas").insert({"producto":y['p'],"cantidad":y['c'],"total_usd":y['t'],"tasa_cambio":t}).execute()
+                        # Actualizar stock
                         r_s = db.table("inventario").select("stock").eq("nombre", y['p']).execute()
                         if r_s.data:
                             n_s = int(r_s.data[0]['stock']) - y['c']
                             db.table("inventario").update({"stock": n_s}).eq("nombre", y['p']).execute()
-                    
-                    st.session_state.car = []
-                    st.success("¡Factura procesada con éxito!")
-                    time.sleep(1); st.rerun()
-                except Exception as e:
-                    st.error(f"Error de base de datos: {e}")
-            else: st.error("El pago no está completo.")
+                    st.session_state.car = []; st.success("Venta Ok"); time.sleep(1); st.rerun()
+                except Exception as e: st.error(f"Fallo al guardar venta: {e}")
 
 elif m == "📊 Total":
-    st.header("📊 Reporte de Ventas")
+    st.header("📊 Reportes")
     try:
-        res = db.table("ventas").select("*").order("fecha", desc=True).execute()
+        res = db.table("ventas").select("*").execute()
         if res.data:
             dfv = pd.DataFrame(res.data)
             st.dataframe(dfv, use_container_width=True)
             out = io.BytesIO()
             with pd.ExcelWriter(out, engine='xlsxwriter') as wr: dfv.to_excel(wr, index=False)
-            st.download_button("📥 Descargar Reporte Excel", out.getvalue(), "ventas.xlsx")
-        else: st.info("No hay ventas registradas.")
-    except: st.error("No se pudieron cargar los reportes.")
+            st.download_button("📥 Excel", out.getvalue(), "ventas.xlsx")
+    except Exception as e: st.error(f"Error reportes: {e}")
