@@ -105,7 +105,7 @@ if opcion == "📦 Inventario":
                     db.table("inventario").insert({"nombre":n_nom,"stock":n_stk,"costo":n_cos,"precio_detal":n_pdet,"precio_mayor":n_pmay,"min_mayor":n_mmay}).execute()
                     st.rerun()
 
-# --- 5. VENTA RÁPIDA (CON PAGOS MIXTOS Y FACTURACIÓN) ---
+# --- 5. VENTA RÁPIDA (AJUSTE EN BOLÍVARES) ---
 elif opcion == "🛒 Venta Rápida":
     st.header("🛒 Terminal de Ventas")
     
@@ -115,7 +115,6 @@ elif opcion == "🛒 Venta Rápida":
     if res_p.data:
         df_p = pd.DataFrame(res_p.data)
         
-        # Función de añadir (La que arreglamos)
         def añadir_al_carrito():
             p_nom = st.session_state.sel_prod_v
             cant_v = st.session_state.cant_prod_v
@@ -138,9 +137,7 @@ elif opcion == "🛒 Venta Rápida":
             psel = v1.selectbox("Producto", df_v["nombre"], key="sel_prod_v")
             csel = v2.number_input("Cant", min_value=1, value=1, key="cant_prod_v")
             st.button("➕ Añadir al Carrito", on_click=añadir_al_carrito, use_container_width=True)
-        else: st.warning("No se encontraron productos.")
 
-    # --- VISUALIZACIÓN DE CARRITO Y PAGOS ---
     if st.session_state.car:
         st.write("---")
         st.subheader("📋 Resumen de Compra")
@@ -151,13 +148,21 @@ elif opcion == "🛒 Venta Rápida":
                 st.session_state.car.pop(i)
                 st.rerun()
         
-        sub_u = sum(z['t'] for z in st.session_state.car)
-        col_f1, col_f2 = st.columns(2)
-        mon_f = col_f1.number_input("Monto Final Cobrado ($)", value=float(sub_u))
-        pro_tot = mon_f - sub_u
-        tot_b = mon_f * tasa
+        # --- LÓGICA DE CÁLCULO EN BOLÍVARES ---
+        sub_total_usd = sum(z['t'] for z in st.session_state.car)
+        sub_total_bs = sub_total_usd * tasa
         
-        st.markdown(f"### TOTAL A COBRAR: {tot_b:,.2f} Bs. / ${mon_f:,.2f}")
+        st.write(f"Sub-total Sugerido: **{sub_total_bs:,.2f} Bs.** (${sub_total_usd:,.2f})")
+        
+        # El usuario modifica el monto en BOLÍVARES
+        total_final_bs = st.number_input("Monto Final a Cobrar (Bs.)", value=float(sub_total_bs), step=1.0)
+        
+        # Calculamos los equivalentes para la base de datos
+        total_final_usd = total_final_bs / tasa
+        ajuste_usd = total_final_usd - sub_total_usd # Esto es la propina o descuento en USD
+        
+        st.markdown(f"## TOTAL: {total_final_bs:,.2f} Bs.")
+        st.caption(f"Equivalente a: ${total_final_usd:,.2f}")
         
         # --- SECCIÓN DE PAGOS MIXTOS ---
         st.write("---")
@@ -169,8 +174,8 @@ elif opcion == "🛒 Venta Rápida":
         
         pago_total_bs = ef_b + pm_b + pu_b + ot_b + ((ze_u + di_u) * tasa)
         
-        if pago_total_bs >= tot_b - 0.1:
-            vuelto = pago_total_bs - tot_b
+        if pago_total_bs >= total_final_bs - 0.1:
+            vuelto = pago_total_bs - total_final_bs
             st.success(f"💰 Vuelto: {vuelto:,.2f} Bs.")
             
             if st.button("✅ FINALIZAR Y FACTURAR", use_container_width=True):
@@ -178,16 +183,14 @@ elif opcion == "🛒 Venta Rápida":
                     db.table("ventas").insert({
                         "producto":x['p'], "cantidad":x['c'], "total_usd":x['t'], 
                         "costo_venta": x['costo_u'] * x['c'], 
-                        "propina": pro_tot / len(st.session_state.car),
+                        "propina": ajuste_usd / len(st.session_state.car), # Se guarda el ajuste en USD
                         "p_efectivo": ef_b, "p_movil": pm_b, "p_punto": pu_b, "p_zelle": ze_u, "p_divisas": di_u,
                         "fecha":datetime.now().isoformat()
                     }).execute()
-                    # Actualizar Stock
                     s_act = int(df_p[df_p["nombre"] == x['p']].iloc[0]['stock']) - x['c']
                     db.table("inventario").update({"stock": s_act}).eq("nombre", x['p']).execute()
                 
-                # Generar PDF
-                st.session_state.pdf_b = crear_ticket(st.session_state.car, tot_b, sub_u, tasa, pro_tot)
+                st.session_state.pdf_b = crear_ticket(st.session_state.car, total_final_bs, sub_total_usd, tasa, ajuste_usd)
                 st.session_state.car = []
                 st.rerun()
 
@@ -216,6 +219,7 @@ elif opcion == "📊 Reporte de Utilidades":
 
     f_f = st.date_input("Fecha", date.today())
     v
+
 
 
 
