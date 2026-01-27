@@ -105,54 +105,94 @@ if opcion == "📦 Inventario":
                     db.table("inventario").insert({"nombre":n_nom,"stock":n_stk,"costo":n_cos,"precio_detal":n_pdet,"precio_mayor":n_pmay,"min_mayor":n_mmay}).execute()
                     st.rerun()
 
-# --- 5. VENTA RÁPIDA (SOLUCIÓN DEFINITIVA AL BOTÓN) ---
+# --- 5. VENTA RÁPIDA (CON PAGOS MIXTOS Y FACTURACIÓN) ---
 elif opcion == "🛒 Venta Rápida":
-    st.header("🛒 Ventas")
+    st.header("🛒 Terminal de Ventas")
     
-    tasa = st.number_input("Tasa del Día", 1.0, 1000.0, 60.0, key="tasa_input")
+    tasa = st.number_input("Tasa del Día (Bs/$)", 1.0, 1000.0, 60.0, key="tasa_input")
     res_p = db.table("inventario").select("*").execute()
     
     if res_p.data:
         df_p = pd.DataFrame(res_p.data)
         
-        # 1. Definimos la función de añadir ANTES de los widgets
+        # Función de añadir (La que arreglamos)
         def añadir_al_carrito():
-            # Buscamos los datos usando las llaves (keys) de los widgets
-            producto_nombre = st.session_state.sel_prod_v
-            cantidad_v = st.session_state.cant_prod_v
-            
-            # Buscamos el producto en el dataframe
-            item_db = df_p[df_p["nombre"] == producto_nombre].iloc[0]
-            
-            if item_db["stock"] >= cantidad_v:
-                # Calculamos precio
-                es_mayor = cantidad_v >= item_db["min_mayor"]
+            p_nom = st.session_state.sel_prod_v
+            cant_v = st.session_state.cant_prod_v
+            item_db = df_p[df_p["nombre"] == p_nom].iloc[0]
+            if item_db["stock"] >= cant_v:
+                es_mayor = cant_v >= item_db["min_mayor"]
                 precio_u = float(item_db["precio_mayor"]) if es_mayor else float(item_db["precio_detal"])
-                
-                nuevo_item = {
-                    "p": producto_nombre, "c": int(cantidad_v), "u": precio_u, 
-                    "t": precio_u * cantidad_v, "costo_u": float(item_db.get('costo', 0))
-                }
-                st.session_state.car.append(nuevo_item)
-                st.toast(f"✅ Añadido: {producto_nombre}")
-            else:
-                st.error("No hay suficiente stock")
+                st.session_state.car.append({
+                    "p": p_nom, "c": int(cant_v), "u": precio_u, 
+                    "t": precio_u * cant_v, "costo_u": float(item_db.get('costo', 0))
+                })
+                st.toast(f"✅ {p_nom} añadido")
+            else: st.error("Sin stock suficiente")
 
-        # 2. Interfaz de usuario
         bus = st.text_input("🔍 Buscar producto...", key="bus_ventas").lower()
         df_v = df_p[df_p['nombre'].str.lower().str.contains(bus)] if bus else df_p
         
         if not df_v.empty:
             v1, v2 = st.columns([3, 1])
             psel = v1.selectbox("Producto", df_v["nombre"], key="sel_prod_v")
-            csel = v2.number_input("Cant", min_value=1, value=1, step=1, key="cant_prod_v")
-            
-            # EL BOTÓN AHORA USA 'on_click'
+            csel = v2.number_input("Cant", min_value=1, value=1, key="cant_prod_v")
             st.button("➕ Añadir al Carrito", on_click=añadir_al_carrito, use_container_width=True)
-        else:
-            st.warning("Producto no encontrado.")
-    else:
-        st.info("Inventario vacío.")
+        else: st.warning("No se encontraron productos.")
+
+    # --- VISUALIZACIÓN DE CARRITO Y PAGOS ---
+    if st.session_state.car:
+        st.write("---")
+        st.subheader("📋 Resumen de Compra")
+        for i, x in enumerate(st.session_state.car):
+            c_a, c_b = st.columns([9, 1])
+            c_a.info(f"**{x['p']}** x{x['c']} = ${x['t']:.2f}")
+            if c_b.button("❌", key=f"del_{i}"):
+                st.session_state.car.pop(i)
+                st.rerun()
+        
+        sub_u = sum(z['t'] for z in st.session_state.car)
+        col_f1, col_f2 = st.columns(2)
+        mon_f = col_f1.number_input("Monto Final Cobrado ($)", value=float(sub_u))
+        pro_tot = mon_f - sub_u
+        tot_b = mon_f * tasa
+        
+        st.markdown(f"### TOTAL A COBRAR: {tot_b:,.2f} Bs. / ${mon_f:,.2f}")
+        
+        # --- SECCIÓN DE PAGOS MIXTOS ---
+        st.write("---")
+        st.subheader("💳 Registro de Pago")
+        p1, p2, p3 = st.columns(3)
+        ef_b = p1.number_input("Efectivo Bs", 0.0); pm_b = p1.number_input("Pago Móvil Bs", 0.0)
+        pu_b = p2.number_input("Punto Bs", 0.0); ot_b = p2.number_input("Otros Bs", 0.0)
+        ze_u = p3.number_input("Zelle $", 0.0); di_u = p3.number_input("Divisas $", 0.0)
+        
+        pago_total_bs = ef_b + pm_b + pu_b + ot_b + ((ze_u + di_u) * tasa)
+        
+        if pago_total_bs >= tot_b - 0.1:
+            vuelto = pago_total_bs - tot_b
+            st.success(f"💰 Vuelto: {vuelto:,.2f} Bs.")
+            
+            if st.button("✅ FINALIZAR Y FACTURAR", use_container_width=True):
+                for x in st.session_state.car:
+                    db.table("ventas").insert({
+                        "producto":x['p'], "cantidad":x['c'], "total_usd":x['t'], 
+                        "costo_venta": x['costo_u'] * x['c'], 
+                        "propina": pro_tot / len(st.session_state.car),
+                        "p_efectivo": ef_b, "p_movil": pm_b, "p_punto": pu_b, "p_zelle": ze_u, "p_divisas": di_u,
+                        "fecha":datetime.now().isoformat()
+                    }).execute()
+                    # Actualizar Stock
+                    s_act = int(df_p[df_p["nombre"] == x['p']].iloc[0]['stock']) - x['c']
+                    db.table("inventario").update({"stock": s_act}).eq("nombre", x['p']).execute()
+                
+                # Generar PDF
+                st.session_state.pdf_b = crear_ticket(st.session_state.car, tot_b, sub_u, tasa, pro_tot)
+                st.session_state.car = []
+                st.rerun()
+
+    if st.session_state.pdf_b:
+        st.download_button("📥 Descargar Último Ticket (PDF)", st.session_state.pdf_b, "factura.pdf", mime="application/pdf")
 # --- 6. GASTOS ---
 elif opcion == "💸 Gastos":
     st.header("💸 Gastos Operativos")
@@ -176,6 +216,7 @@ elif opcion == "📊 Reporte de Utilidades":
 
     f_f = st.date_input("Fecha", date.today())
     v
+
 
 
 
