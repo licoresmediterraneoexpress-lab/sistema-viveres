@@ -105,7 +105,7 @@ if opcion == "📦 Inventario":
                     db.table("inventario").insert({"nombre":n_nom,"stock":n_stk,"costo":n_cos,"precio_detal":n_pdet,"precio_mayor":n_pmay,"min_mayor":n_mmay}).execute()
                     st.rerun()
 
-# --- 5. VENTA RÁPIDA (BS + MONITOR DE PAGOS) ---
+# --- 5. VENTA RÁPIDA (SOLUCIÓN APIERROR + FACTURACIÓN) ---
 elif opcion == "🛒 Venta Rápida":
     st.header("🛒 Terminal de Ventas")
     
@@ -124,7 +124,7 @@ elif opcion == "🛒 Venta Rápida":
                 precio_u = float(item_db["precio_mayor"]) if es_mayor else float(item_db["precio_detal"])
                 st.session_state.car.append({
                     "p": p_nom, "c": int(cant_v), "u": precio_u, 
-                    "t": precio_u * cant_v, "costo_u": float(item_db.get('costo', 0))
+                    "t": round(precio_u * cant_v, 2), "costo_u": float(item_db.get('costo', 0))
                 })
                 st.toast(f"✅ {p_nom} añadido")
             else: st.error("Sin stock suficiente")
@@ -148,21 +148,17 @@ elif opcion == "🛒 Venta Rápida":
                 st.session_state.car.pop(i)
                 st.rerun()
         
-        # --- CÁLCULOS EN BOLÍVARES ---
         sub_total_usd = sum(z['t'] for z in st.session_state.car)
         sub_total_bs = sub_total_usd * tasa
         
         st.write(f"Sub-total Sugerido: **{sub_total_bs:,.2f} Bs.**")
         total_final_bs = st.number_input("Monto Final a Cobrar (Bs.)", value=float(sub_total_bs), step=1.0)
         
-        # Conversión para base de datos
-        total_final_usd = total_final_bs / tasa
-        ajuste_usd = total_final_usd - sub_total_usd
+        total_final_usd = round(total_final_bs / tasa, 2)
+        ajuste_usd = round(total_final_usd - sub_total_usd, 2)
         
-        # --- SECCIÓN DE PAGOS MIXTOS CON MONITOR ---
         st.write("---")
         st.subheader("💳 Registro de Pagos")
-        
         p1, p2, p3 = st.columns(3)
         ef_b = p1.number_input("Efectivo Bs", 0.0); pm_b = p1.number_input("Pago Móvil Bs", 0.0)
         pu_b = p2.number_input("Punto Bs", 0.0); ot_b = p2.number_input("Otros Bs", 0.0)
@@ -171,34 +167,41 @@ elif opcion == "🛒 Venta Rápida":
         pago_total_bs = ef_b + pm_b + pu_b + ot_b + ((ze_u + di_u) * tasa)
         restante_bs = total_final_bs - pago_total_bs
         
-        # Monitor Dinámico
-        if restante_bs > 0.1:
-            st.warning(f"⚠️ Faltante por cobrar: **{restante_bs:,.2f} Bs.**")
-        elif restante_bs <= -0.1:
-            st.success(f"💰 Vuelto a entregar: **{abs(restante_bs):,.2f} Bs.**")
-        else:
-            st.success("✅ Cuenta saldada")
+        if restante_bs > 0.1: st.warning(f"⚠️ Faltante: **{restante_bs:,.2f} Bs.**")
+        elif restante_bs <= -0.1: st.success(f"💰 Vuelto: **{abs(restante_bs):,.2f} Bs.**")
+        else: st.success("✅ Cuenta saldada")
 
-        # Botón de Finalizar (solo si está pagado)
         if pago_total_bs >= total_final_bs - 0.1:
             if st.button("✅ FINALIZAR Y FACTURAR", use_container_width=True):
-                for x in st.session_state.car:
-                    db.table("ventas").insert({
-                        "producto":x['p'], "cantidad":x['c'], "total_usd":x['t'], 
-                        "costo_venta": x['costo_u'] * x['c'], 
-                        "propina": ajuste_usd / len(st.session_state.car),
-                        "p_efectivo": ef_b, "p_movil": pm_b, "p_punto": pu_b, "p_zelle": ze_u, "p_divisas": di_u,
-                        "fecha":datetime.now().isoformat()
-                    }).execute()
-                    s_act = int(df_p[df_p["nombre"] == x['p']].iloc[0]['stock']) - x['c']
-                    db.table("inventario").update({"stock": s_act}).eq("nombre", x['p']).execute()
-                
-                st.session_state.pdf_b = crear_ticket(st.session_state.car, total_final_bs, sub_total_usd, tasa, ajuste_usd)
-                st.session_state.car = []
-                st.rerun()
+                try:
+                    for x in st.session_state.car:
+                        # Registro en base de datos
+                        db.table("ventas").insert({
+                            "producto": str(x['p']), 
+                            "cantidad": int(x['c']), 
+                            "total_usd": float(x['t']), 
+                            "costo_venta": round(float(x['costo_u'] * x['c']), 2), 
+                            "propina": round(float(ajuste_usd / len(st.session_state.car)), 2),
+                            "p_efectivo": float(ef_b), "p_movil": float(pm_b), 
+                            "p_punto": float(pu_b), "p_zelle": float(ze_u), 
+                            "p_divisas": float(di_u),
+                            "fecha": datetime.now().isoformat()
+                        }).execute()
+                        
+                        # Actualizar Stock
+                        s_act = int(df_p[df_p["nombre"] == x['p']].iloc[0]['stock']) - x['c']
+                        db.table("inventario").update({"stock": s_act}).eq("nombre", x['p']).execute()
+                    
+                    # Generar Ticket ANTES de vaciar el carrito
+                    st.session_state.pdf_b = crear_ticket(st.session_state.car, total_final_bs, sub_total_usd, tasa, ajuste_usd)
+                    st.session_state.car = []
+                    st.success("¡Venta procesada con éxito!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error de Base de Datos: {e}")
 
     if st.session_state.pdf_b:
-        st.download_button("📥 Descargar Ticket (PDF)", st.session_state.pdf_b, "factura.pdf")
+        st.download_button("📥 Descargar Ticket (PDF)", st.session_state.pdf_b, "factura.pdf", mime="application/pdf")
 # --- 6. GASTOS ---
 elif opcion == "💸 Gastos":
     st.header("💸 Gastos Operativos")
@@ -222,6 +225,7 @@ elif opcion == "📊 Reporte de Utilidades":
 
     f_f = st.date_input("Fecha", date.today())
     v
+
 
 
 
