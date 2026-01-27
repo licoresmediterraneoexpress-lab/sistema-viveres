@@ -80,6 +80,7 @@ if opcion == "📦 Inventario":
                     st.rerun()
 
 elif opcion == "🛒 Venta Rápida":
+    import time # Esto asegura que el tiempo funcione sin tocar el inicio del archivo
     st.header("🛒 Terminal de Ventas")
     
     with st.expander("⚙️ Ajustes de Tasa"):
@@ -88,117 +89,83 @@ elif opcion == "🛒 Venta Rápida":
     res_p = db.table("inventario").select("*").execute()
     if res_p.data:
         df_p = pd.DataFrame(res_p.data)
-        
-        busc = st.text_input("🔍 Escribe el nombre del producto...", placeholder="Ej: Harina, Refresco...").lower()
+        busc = st.text_input("🔍 Buscar producto...").lower()
         df_f = df_p[df_p['nombre'].str.lower().str.contains(busc)] if busc else df_p
         
         c1, c2, c3 = st.columns([2, 1, 1])
-        item_sel = c1.selectbox("Producto Encontrado", df_f['nombre'])
-        
+        item_sel = c1.selectbox("Producto", df_f['nombre'])
         p_data = df_p[df_p['nombre'] == item_sel].iloc[0]
         c2.write(f"**Stock:** {p_data['stock']}")
         c2.write(f"**Precio:** ${p_data['precio_detal']}")
-        
         cant_sel = c3.number_input("Cantidad", 1, max_value=int(p_data['stock']) if p_data['stock'] > 0 else 1)
         
-        if st.button("➕ AÑADIR AL CARRITO", use_container_width=True):
-            if p_data['stock'] >= cant_sel:
-                precio = float(p_data['precio_mayor']) if cant_sel >= p_data['min_mayor'] else float(p_data['precio_detal'])
-                st.session_state.car.append({
-                    "p": item_sel, "c": cant_sel, "u": precio, 
-                    "t": round(float(precio) * int(cant_sel), 2), "costo_u": float(p_data['costo'])
-                })
-                st.toast(f"Añadido: {item_sel}")
-                st.rerun()
-            else:
-                st.error("No hay stock suficiente.")
+        if st.button("➕ AÑADIR AL CARRITO"):
+            precio = float(p_data['precio_mayor']) if cant_sel >= p_data['min_mayor'] else float(p_data['precio_detal'])
+            st.session_state.car.append({
+                "p": item_sel, "c": cant_sel, "u": precio, 
+                "t": round(float(precio) * int(cant_sel), 2), "costo_u": float(p_data['costo'])
+            })
+            st.rerun()
 
     if st.session_state.car:
-        st.markdown("### 📋 Detalle de Compra")
+        st.markdown("### 📋 Carrito Actual")
         df_carrito = pd.DataFrame(st.session_state.car)
         st.table(df_carrito[['p', 'c', 'u', 't']].rename(columns={'p':'Producto', 'c':'Cant', 'u':'Precio $', 't':'Total $'}))
         
         sub_total_usd = sum(float(x['t']) for x in st.session_state.car)
         total_bs_sug = sub_total_usd * tasa
         
-        m1, m2 = st.columns(2)
-        m1.metric("TOTAL A PAGAR $", f"${sub_total_usd:,.2f}")
-        m2.metric("TOTAL EN BOLÍVARES", f"{total_bs_sug:,.2f} Bs")
+        st.write(f"#### Total: ${sub_total_usd:,.2f} / {total_bs_sug:,.2f} Bs.")
+        total_cobrado_bs = st.number_input("Monto Recibido (Bs.)", value=float(total_bs_sug))
         
-        st.divider()
-        st.write("#### 💸 Registro de Cobro")
-        total_cobrado_bs = st.number_input("MONTO FINAL RECIBIDO (Bs.)", value=float(total_bs_sug))
+        c1, c2, c3 = st.columns(3)
+        ef = c1.number_input("Efectivo Bs", 0.0); pm = c1.number_input("Pago Móvil Bs", 0.0)
+        pu = c2.number_input("Punto Bs", 0.0); ot = c2.number_input("Otros Bs", 0.0)
+        ze = c3.number_input("Zelle $", 0.0); di = c3.number_input("Divisas $", 0.0)
         
-        col_p1, col_p2, col_p3 = st.columns(3)
-        ef = col_p1.number_input("Efectivo Bs", 0.0)
-        pm = col_p1.number_input("Pago Móvil Bs", 0.0)
-        pu = col_p2.number_input("Punto Bs", 0.0)
-        ot = col_p2.number_input("Otros Bs", 0.0)
-        ze = col_p3.number_input("Zelle $", 0.0)
-        di = col_p3.number_input("Divisas $", 0.0)
-        
-        pago_total_bs = ef + pm + pu + ot + ((ze + di) * tasa)
-        vuelto = pago_total_bs - total_cobrado_bs
-        
-        if vuelto > 0.1:
-            st.success(f"✅ VUELTO AL CLIENTE: {vuelto:,.2f} Bs.")
-        elif vuelto < -0.1:
-            st.warning(f"⚠️ FALTA POR COBRAR: {abs(vuelto):,.2f} Bs.")
-
-# --- ESTE BLOQUE DEBE ESTAR ALINEADO DENTRO DEL "if st.session_state.car:" ---
-        if st.button("🚀 CONFIRMAR Y FINALIZAR VENTA", use_container_width=True):
+        if st.button("🚀 FINALIZAR VENTA Y VER RECIBO", use_container_width=True):
             try:
-                with st.spinner("Procesando venta..."):
-                    propina_usd = (float(total_cobrado_bs) / float(tasa)) - sub_total_usd
-                    
-                    for x in st.session_state.car:
-                        db.table("ventas").insert({
-                            "producto": x['p'], 
-                            "cantidad": x['c'], 
-                            "total_usd": x['t'], 
-                            "tasa_cambio": tasa,
-                            "pago_efectivo": ef, 
-                            "pago_punto": pu, 
-                            "pago_movil": pm, 
-                            "pago_zelle": ze, 
-                            "pago_otros": ot, 
-                            "pago_divisas": di, 
-                            "costo_venta": x['costo_u'] * x['c'],
-                            "propina": propina_usd / len(st.session_state.car),
-                            "fecha": datetime.now().isoformat()
-                        }).execute()
-                        
-                        # Descontar Stock
-                        stk_original = df_p[df_p['nombre'] == x['p']].iloc[0]['stock']
-                        db.table("inventario").update({"stock": int(stk_original - x['c'])}).eq("nombre", x['p']).execute()
-                    
-                # Alerta visual de éxito
+                propina_usd = (float(total_cobrado_bs) / float(tasa)) - sub_total_usd
+                # Guardamos copia para el recibo antes de limpiar el carrito
+                recibo_items = st.session_state.car.copy()
+                
+                for x in st.session_state.car:
+                    db.table("ventas").insert({
+                        "producto": x['p'], "cantidad": x['c'], "total_usd": x['t'], "tasa_cambio": tasa,
+                        "pago_efectivo": ef, "pago_punto": pu, "pago_movil": pm, "pago_zelle": ze, 
+                        "pago_otros": ot, "pago_divisas": di, "costo_venta": x['costo_u'] * x['c'],
+                        "propina": propina_usd / len(st.session_state.car), "fecha": datetime.now().isoformat()
+                    }).execute()
+                    stk_orig = df_p[df_p['nombre'] == x['p']].iloc[0]['stock']
+                    db.table("inventario").update({"stock": int(stk_orig - x['c'])}).eq("nombre", x['p']).execute()
+                
+                # MOSTRAR RECIBO EN PANTALLA
                 st.balloons()
-                st.success(f"✅ ¡VENTA FINALIZADA CON ÉXITO! Total: ${sub_total_usd:,.2f}")
-                
-                # Pausa para ver el mensaje
-                import time
-                time.sleep(2) 
-                
-                st.session_state.car = []
-                st.rerun()
-                
-            except Exception as e:
-                st.error(f"❌ Error al procesar: {e}")
+                with st.container():
+                    st.markdown("""
+                    <div style="background-color: #fdfdfd; padding: 20px; border: 2px dashed #333; color: #000; font-family: monospace;">
+                        <h2 style="text-align: center;">🚢 MEDITERRANEO RECIBO</h2>
+                        <p style="text-align: center;">Fecha: """ + datetime.now().strftime("%d/%m/%Y %H:%M") + """</p>
+                        <hr>
+                    """, unsafe_allow_html=True)
                     
-                # --- ALERTA VISUAL DE SEGURIDAD ---
-                st.balloons()
-                st.success(f"✅ ¡VENTA FINALIZADA CON ÉXITO! Total: ${sub_total_usd:,.2f} ({total_cobrado_bs:,.2f} Bs.)")
+                    for item in recibo_items:
+                        st.markdown(f"**{item['p']}** (x{item['c']}) --- ${item['t']:.2f}", unsafe_allow_html=True)
+                    
+                    st.markdown(f"""
+                        <hr>
+                        <h3 style="text-align: right;">TOTAL: ${sub_total_usd:,.2f}</h3>
+                        <h3 style="text-align: right;">TOTAL Bs: {total_cobrado_bs:,.2f}</h3>
+                        <p style="text-align: center;">¡Gracias por su compra!</p>
+                    </div>
+                    """, unsafe_allow_html=True)
                 
-                # Pausa breve para que el usuario vea el mensaje antes de limpiar
-                import time
-                time.sleep(2) 
-                
-                st.session_state.car = []
-                st.rerun()
-                
+                if st.button("NUEVA VENTA"):
+                    st.session_state.car = []
+                    st.rerun()
+                    
             except Exception as e:
-                st.error(f"❌ Error al procesar: {e}")
+                st.error(f"Error: {e}")
 
 # --- 5. MÓDULO GASTOS ---
 elif opcion == "💸 Gastos":
@@ -259,6 +226,7 @@ elif opcion == "📊 Cierre de Caja":
             
     else:
         st.info("No hay registros de ventas para esta fecha.")
+
 
 
 
