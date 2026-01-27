@@ -148,7 +148,7 @@ elif opcion == "🛒 Venta Rápida":
             st.warning(f"⚠️ FALTA: {abs(diferencia):,.2f} Bs.")
 
         # 4. Finalizar Venta
-        if st.button("🚀 FINALIZAR VENTA Y GENERAR TICKET PDF", use_container_width=True):
+        if st.button("🚀 FINALIZAR VENTA Y GENERAR TICKET", use_container_width=True):
             try:
                 propina_usd = (total_a_cobrar_bs / tasa) - sub_total_usd
                 items_ticket = st.session_state.car.copy()
@@ -167,44 +167,33 @@ elif opcion == "🛒 Venta Rápida":
                 st.success("🎉 VENTA REGISTRADA")
                 st.balloons()
                 
-                # --- DISEÑO DEL TICKET PREMIUM ---
+                # --- DISEÑO DEL TICKET ---
                 ticket_html = f"""
-                <div id="ticket" style="background-color: #fff; padding: 15px; border: 1px solid #ddd; color: #000; font-family: 'Courier New', Courier, monospace; width: 300px; margin: auto;">
-                    <h3 style="text-align: center; margin:0;">BODEGON Y LICORERIA MEDITERRANEO EXPRESS, C.A.</h3>
-                    <p style="text-align: center; font-size: 12px; margin: 2px;">RIF: J 404855807</p>
-                    <p style="text-align: center; font-size: 11px; margin: 2px;">BARRIO MATURIN CARRERA 11 CON CALLE 4</p>
-                    <p style="text-align: center; font-size: 12px;">{ahora}</p>
-                    <hr style="border-top: 1px dashed #000;">
-                    <table style="width:100%; font-size: 12px;">
-                        <tr><th align="left">DESCRIPCIÓN</th><th align="center">CT</th><th align="right">TOTAL</th></tr>
+                <div style='background-color: #fff; padding: 15px; border: 1px solid #ddd; color: #000; font-family: "Courier New", Courier, monospace; width: 300px; margin: auto;'>
+                    <h3 style='text-align: center; margin:0;'>BODEGON Y LICORERIA MEDITERRANEO EXPRESS, C.A.</h3>
+                    <p style='text-align: center; font-size: 12px; margin: 2px;'>RIF: J 404855807</p>
+                    <p style='text-align: center; font-size: 11px; margin: 2px;'>BARRIO MATURIN CARRERA 11 CON CALLE 4</p>
+                    <p style='text-align: center; font-size: 12px;'>{ahora}</p>
+                    <hr style='border-top: 1px dashed #000;'>
+                    <table style='width:100%; font-size: 12px;'>
+                        <tr><th align='left'>DESCRIPCIÓN</th><th align='center'>CT</th><th align='right'>TOTAL</th></tr>
                 """
                 for item in items_ticket:
-                    ticket_html += f"<tr><td>{item['p'][:15]}</td><td align="center">{item['c']}</td><td align="right">${item['t']:.2f}</td></tr>"
+                    ticket_html += f"<tr><td>{item['p'][:15]}</td><td align='center'>{item['c']}</td><td align='right'>${item['t']:.2f}</td></tr>"
                 
                 ticket_html += f"""
                     </table>
-                    <hr style="border-top: 1px dashed #000;">
-                    <h4 style="text-align: right; margin:2px;">TOTAL USD: ${sub_total_usd:,.2f}</h4>
-                    <h4 style="text-align: right; margin:2px;">TOTAL BS: {total_a_cobrar_bs:,.2f}</h4>
-                    <p style="text-align: center; font-size: 10px; margin-top: 10px;">*** NO VALIDO COMO FACTURA FISCAL ***</p>
+                    <hr style='border-top: 1px dashed #000;'>
+                    <h4 style='text-align: right; margin:2px;'>TOTAL USD: ${sub_total_usd:,.2f}</h4>
+                    <h4 style='text-align: right; margin:2px;'>TOTAL BS: {total_a_cobrar_bs:,.2f}</h4>
+                    <p style='text-align: center; font-size: 10px; margin-top: 10px;'>*** NO VALIDO COMO FACTURA FISCAL ***</p>
                 </div>
                 """
                 st.markdown(ticket_html, unsafe_allow_html=True)
                 
-                # Botón de Impresión/PDF (JavaScript)
-                if st.button("📥 GUARDAR TICKET (PDF / IMPRIMIR)"):
-                    st.components.v1.html(f"""
-                        <script>
-                        var win = window.open('', '', 'height=700,width=500');
-                        win.document.write('<html><head><title>Ticket_{ahora.replace("/","").replace(":","")}</title></head><body>');
-                        win.document.write('{ticket_html.replace("'", "\\'")}');
-                        win.document.write('</body></html>');
-                        win.document.close();
-                        win.print();
-                        </script>
-                    """, height=0)
+                # Botón de Impresión Directa
+                st.download_button("📥 DESCARGAR TICKET (TEXTO)", data=ticket_html.replace('</div>','').replace('<hr>','-'*20), file_name=f"ticket_{int(time.time())}.txt")
                 
-                # Limpiar y Reiniciar
                 if st.button("🔄 NUEVA VENTA"):
                     st.session_state.car = []
                     st.rerun()
@@ -270,6 +259,7 @@ elif opcion == "📊 Cierre de Caja":
             
     else:
         st.info("No hay registros de ventas para esta fecha.")
+
 
 
 
