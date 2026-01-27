@@ -145,7 +145,8 @@ elif opcion == "🛒 Venta Rápida":
         elif vuelto < -0.1:
             st.warning(f"⚠️ FALTA POR COBRAR: {abs(vuelto):,.2f} Bs.")
 
-     if st.button("🚀 CONFIRMAR Y FINALIZAR VENTA", use_container_width=True):
+# --- ESTE BLOQUE DEBE ESTAR ALINEADO DENTRO DEL "if st.session_state.car:" ---
+        if st.button("🚀 CONFIRMAR Y FINALIZAR VENTA", use_container_width=True):
             try:
                 with st.spinner("Procesando venta..."):
                     propina_usd = (float(total_cobrado_bs) / float(tasa)) - sub_total_usd
@@ -170,6 +171,20 @@ elif opcion == "🛒 Venta Rápida":
                         # Descontar Stock
                         stk_original = df_p[df_p['nombre'] == x['p']].iloc[0]['stock']
                         db.table("inventario").update({"stock": int(stk_original - x['c'])}).eq("nombre", x['p']).execute()
+                    
+                # Alerta visual de éxito
+                st.balloons()
+                st.success(f"✅ ¡VENTA FINALIZADA CON ÉXITO! Total: ${sub_total_usd:,.2f}")
+                
+                # Pausa para ver el mensaje
+                import time
+                time.sleep(2) 
+                
+                st.session_state.car = []
+                st.rerun()
+                
+            except Exception as e:
+                st.error(f"❌ Error al procesar: {e}")
                     
                 # --- ALERTA VISUAL DE SEGURIDAD ---
                 st.balloons()
@@ -244,6 +259,7 @@ elif opcion == "📊 Cierre de Caja":
             
     else:
         st.info("No hay registros de ventas para esta fecha.")
+
 
 
 
