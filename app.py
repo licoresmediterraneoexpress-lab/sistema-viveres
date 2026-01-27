@@ -105,49 +105,59 @@ if opcion == "📦 Inventario":
                     db.table("inventario").insert({"nombre":n_nom,"stock":n_stk,"costo":n_cos,"precio_detal":n_pdet,"precio_mayor":n_pmay,"min_mayor":n_mmay}).execute()
                     st.rerun()
 
-# --- 5. VENTA RÁPIDA (CORRECCIÓN DEFINITIVA DE INDEXERROR) ---
+# --- 5. VENTA RÁPIDA (VERSIÓN BOTÓN INFALIBLE) ---
 elif opcion == "🛒 Venta Rápida":
     st.header("🛒 Ventas")
     
-    tasa = st.number_input("Tasa del Día", 1.0, 500.0, 60.0, key="tasa_input")
+    tasa = st.number_input("Tasa del Día", 1.0, 1000.0, 60.0, key="tasa_input")
     res_p = db.table("inventario").select("*").execute()
     
     if res_p.data:
         df_p = pd.DataFrame(res_p.data)
         bus = st.text_input("🔍 Buscar producto...", key="bus_ventas").lower()
         
-        # Filtramos la lista según la búsqueda
+        # Filtrado dinámico
         df_v = df_p[df_p['nombre'].str.lower().str.contains(bus)] if bus else df_p
         
         if not df_v.empty:
             v1, v2 = st.columns([3, 1])
-            psel = v1.selectbox("Producto", df_v["nombre"], key="select_prod_venta")
-            csel = v2.number_input("Cant", 1, key="cant_prod_venta")
+            # Usamos el nombre como key para que Streamlit no se confunda
+            psel = v1.selectbox("Producto", df_v["nombre"], key="sel_prod_v")
+            csel = v2.number_input("Cant", 1, min_value=1, key="cant_prod_v")
             
-            # Buscamos el producto en el dataframe original (df_p) para asegurar que lo encuentre
-            match = df_p[df_p["nombre"] == psel]
+            # Localizamos el producto seleccionado
+            it = df_p[df_p["nombre"] == psel].iloc[0]
             
-            if not match.empty:
-                it = match.iloc[0]
-                # Lógica de precio (detal o mayor)
-                pre_v = float(it["precio_mayor"]) if csel >= it["min_mayor"] else float(it["precio_detal"])
-                
-                if st.button("➕ Añadir al Carrito", key="btn_add"):
-                    if it["stock"] >= csel:
-                        st.session_state.car.append({
-                            "p": psel, "c": csel, "u": pre_v, "t": pre_v * csel, 
-                            "costo_u": float(it.get('costo', 0))
-                        })
-                        st.rerun()
-                    else:
-                        st.error(f"Solo quedan {int(it['stock'])} unidades.")
-            else:
-                st.warning("Producto no encontrado en la base de datos.")
+            # Cálculo de precio automático
+            es_mayor = csel >= it["min_mayor"]
+            precio_v = float(it["precio_mayor"]) if es_mayor else float(it["precio_detal"])
+            
+            st.write(f"**Precio Unitario:** ${precio_v:.2f} {'(Precio Mayorista)' if es_mayor else ''}")
+            
+            # EL BOTÓN AHORA TIENE LÓGICA DE PERSISTENCIA
+            if st.button("➕ Añadir al Carrito", use_container_width=True):
+                if it["stock"] >= csel:
+                    nuevo_item = {
+                        "p": psel, 
+                        "c": csel, 
+                        "u": precio_v, 
+                        "t": precio_v * csel, 
+                        "costo_u": float(it.get('costo', 0))
+                    }
+                    st.session_state.car.append(nuevo_item)
+                    st.success(f"Añadido: {psel}")
+                    st.rerun() # Esto fuerza a la app a mostrar el carrito actualizado de inmediato
+                else:
+                    st.error(f"¡Error! Solo hay {int(it['stock'])} en stock.")
         else:
-            st.error("No hay productos que coincidan con tu búsqueda.")
+            st.warning("No se encontraron productos.")
     else:
-        st.info("El inventario está vacío. Agrega productos primero.")
+        st.info("Inventario vacío.")
 
+    # --- MOSTRAR CARRITO (Asegúrate de que este bloque siga abajo) ---
+    if st.session_state.car:
+        st.write("---")
+        # ... resto del código del carrito y pagos que ya tienes
 # --- 6. GASTOS ---
 elif opcion == "💸 Gastos":
     st.header("💸 Gastos Operativos")
@@ -171,5 +181,6 @@ elif opcion == "📊 Reporte de Utilidades":
 
     f_f = st.date_input("Fecha", date.today())
     v
+
 
 
