@@ -25,7 +25,6 @@ st.markdown("""
     [data-testid="stSidebar"] { background-color: #0041C2; color: white; }
     .stButton>button { background-color: #FF8C00; color: white; border-radius: 10px; font-weight: bold; }
     .titulo-negocio { color: #FF8C00; font-size: 26px; font-weight: bold; text-align: center; }
-    .metric-card { background-color: #f0f2f6; padding: 20px; border-radius: 10px; border-left: 5px solid #0041C2; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -50,7 +49,11 @@ if menu == "📦 Inventario":
                 p_mayor = st.number_input("Precio Mayor", min_value=0.0)
                 m_mayor = st.number_input("Mínimo para Mayor", min_value=1)
             if st.form_submit_button("Guardar en Sistema"):
-                supabase.table("inventario").insert({"nombre": nom, "stock": sto, "precio_detal": p_detal, "precio_mayor": p_mayor, "min_mayor": m_mayor}).execute()
+                supabase.table("inventario").insert({
+                    "nombre": nom, "stock": int(sto), 
+                    "precio_detal": float(p_detal), "precio_mayor": float(p_mayor), 
+                    "min_mayor": int(m_mayor)
+                }).execute()
                 st.success("¡Producto guardado!")
                 st.rerun()
     
@@ -73,13 +76,15 @@ elif menu == "🛒 Ventas":
             cantidad = st.number_input("Cant.", min_value=1, value=1)
         
         p_info = df_prod[df_prod["nombre"] == seleccion].iloc[0]
-        precio_usar = p_info["precio_mayor"] if cantidad >= p_info["min_mayor"] else p_info["precio_detal"]
+        precio_usar = float(p_info["precio_mayor"]) if cantidad >= p_info["min_mayor"] else float(p_info["precio_detal"])
         
         if st.button("➕ Agregar al Carrito"):
             if p_info["stock"] >= cantidad:
                 st.session_state.carrito.append({
-                    "producto": seleccion, "cantidad": cantidad, 
-                    "precio_u": precio_usar, "subtotal": precio_usar * cantidad
+                    "producto": seleccion, 
+                    "cantidad": int(cantidad), 
+                    "precio_u": float(precio_usar), 
+                    "subtotal": float(precio_usar * cantidad)
                 })
                 st.rerun()
             else:
@@ -88,7 +93,7 @@ elif menu == "🛒 Ventas":
     if st.session_state.carrito:
         df_car = pd.DataFrame(st.session_state.carrito)
         st.table(df_car)
-        total_usd = df_car["subtotal"].sum()
+        total_usd = float(df_car["subtotal"].sum())
         st.subheader(f"Total: ${total_usd:.2f} | Bs. {total_usd * tasa:.2f}")
 
         st.markdown("### 💳 Métodos de Pago")
@@ -101,56 +106,53 @@ elif menu == "🛒 Ventas":
         
         if st.button("✅ Finalizar Venta"):
             total_pagado = p_efectivo + p_punto + p_movil + p_zelle + p_otros
-            if total_pagado >= total_usd:
+            if total_pagado >= (total_usd - 0.01): # Margen pequeño por decimales
                 try:
                     for i, item in enumerate(st.session_state.carrito):
-                        # Solo asignamos los montos de pago al primer item de la venta para no duplicar totales en el cierre
                         venta = {
                             "fecha": datetime.now().isoformat(),
                             "producto": item["producto"],
-                            "cantidad": item["cantidad"],
-                            "total_usd": item["subtotal"],
-                            "tasa_cambio": tasa,
-                            "pago_efectivo": p_efectivo if i == 0 else 0,
-                            "pago_punto": p_punto if i == 0 else 0,
-                            "pago_movil": p_movil if i == 0 else 0,
-                            "pago_zelle": p_zelle if i == 0 else 0,
-                            "pago_otros": p_otros if i == 0 else 0
+                            "cantidad": int(item["cantidad"]),
+                            "total_usd": float(item["subtotal"]),
+                            "tasa_cambio": float(tasa),
+                            "pago_efectivo": float(p_efectivo) if i == 0 else 0.0,
+                            "pago_punto": float(p_punto) if i == 0 else 0.0,
+                            "pago_movil": float(p_movil) if i == 0 else 0.0,
+                            "pago_zelle": float(p_zelle) if i == 0 else 0.0,
+                            "pago_otros": float(p_otros) if i == 0 else 0.0
                         }
                         supabase.table("ventas").insert(venta).execute()
-                        # Actualizar Stock
-                        stock_actual = df_prod[df_prod["nombre"] == item["producto"]].iloc[0]["stock"]
-                        supabase.table("inventario").update({"stock": stock_actual - item["cantidad"]}).eq("nombre", item["producto"]).execute()
+                        
+                        # Actualizar Stock con conversión forzada a int
+                        stock_actual = int(df_prod[df_prod["nombre"] == item["producto"]].iloc[0]["stock"])
+                        supabase.table("inventario").update({"stock": int(stock_actual - item["cantidad"])}).eq("nombre", item["producto"]).execute()
                     
                     st.success("Venta Exitosa")
                     st.session_state.carrito = []
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Error: {e}")
+                    st.error(f"Error técnico: {e}")
             else:
                 st.error("Monto insuficiente.")
 
-# --- SECCIÓN CIERRE DE CAJA (NUEVO) ---
+# --- SECCIÓN CIERRE DE CAJA ---
 elif menu == "📊 Cierre de Caja":
     st.header("📊 Resumen de Cierre de Caja")
     fecha_consulta = st.date_input("Seleccione el día", date.today())
     
     try:
-        # Consultamos las ventas del día seleccionado
         res = supabase.table("ventas").select("*").gte("fecha", fecha_consulta.isoformat()).lt("fecha", pd.to_datetime(fecha_consulta + pd.Timedelta(days=1)).isoformat()).execute()
         
         if res.data:
             df_ventas = pd.DataFrame(res.data)
             
-            # Sumatorias por tipo de pago
-            total_efectivo = df_ventas["pago_efectivo"].sum()
-            total_punto = df_ventas["pago_punto"].sum()
-            total_movil = df_ventas["pago_movil"].sum()
-            total_zelle = df_ventas["pago_zelle"].sum()
-            total_otros = df_ventas["pago_otros"].sum()
+            total_efectivo = float(df_ventas["pago_efectivo"].sum())
+            total_punto = float(df_ventas["pago_punto"].sum())
+            total_movil = float(df_ventas["pago_movil"].sum())
+            total_zelle = float(df_ventas["pago_zelle"].sum())
+            total_otros = float(df_ventas["pago_otros"].sum())
             gran_total = total_efectivo + total_punto + total_movil + total_zelle + total_otros
             
-            # Visualización en Tarjetas
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("💵 Efectivo", f"${total_efectivo:.2f}")
@@ -165,7 +167,6 @@ elif menu == "📊 Cierre de Caja":
             st.write("---")
             st.subheader("Detalle de Transacciones")
             st.dataframe(df_ventas[["fecha", "producto", "cantidad", "total_usd"]], use_container_width=True)
-            
         else:
             st.info("No hay ventas registradas en la fecha seleccionada.")
     except Exception as e:
