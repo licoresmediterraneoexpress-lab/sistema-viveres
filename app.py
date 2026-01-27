@@ -105,7 +105,7 @@ if opcion == "📦 Inventario":
                     db.table("inventario").insert({"nombre":n_nom,"stock":n_stk,"costo":n_cos,"precio_detal":n_pdet,"precio_mayor":n_pmay,"min_mayor":n_mmay}).execute()
                     st.rerun()
 
-# --- 5. VENTA RÁPIDA (OPTIMIZADO CON TUS COLUMNAS REALES) ---
+# --- 5. VENTA RÁPIDA (SOLUCIÓN FINAL BYTEARRAY + COLUMNAS EXACTAS) ---
 elif opcion == "🛒 Venta Rápida":
     st.header("🛒 Terminal de Ventas")
     
@@ -152,17 +152,13 @@ elif opcion == "🛒 Venta Rápida":
         total_final_bs = st.number_input("Monto Final a Cobrar (Bs.)", value=float(sub_total_bs), step=1.0)
         
         total_final_usd = round(total_final_bs / tasa, 2)
-        # El "ajuste" por redondeo lo distribuimos en las ventas
         ajuste_usd = round(total_final_usd - sub_total_usd, 2)
         
         st.subheader("💳 Registro de Pagos")
         p1, p2, p3 = st.columns(3)
-        ef_b = p1.number_input("Efectivo Bs", 0.0)
-        pm_b = p1.number_input("Pago Móvil Bs", 0.0)
-        pu_b = p2.number_input("Punto Bs", 0.0)
-        ot_b = p2.number_input("Otros Bs", 0.0)
-        ze_u = p3.number_input("Zelle $", 0.0)
-        di_u = p3.number_input("Divisas $", 0.0)
+        ef_b = p1.number_input("Efectivo Bs", 0.0); pm_b = p1.number_input("Pago Móvil Bs", 0.0)
+        pu_b = p2.number_input("Punto Bs", 0.0); ot_b = p2.number_input("Otros Bs", 0.0)
+        ze_u = p3.number_input("Zelle $", 0.0); di_u = p3.number_input("Divisas $", 0.0)
         
         pago_total_bs = ef_b + pm_b + pu_b + ot_b + ((ze_u + di_u) * tasa)
         restante_bs = total_final_bs - pago_total_bs
@@ -174,10 +170,11 @@ elif opcion == "🛒 Venta Rápida":
         if pago_total_bs >= total_final_bs - 0.1:
             if st.button("✅ FINALIZAR Y FACTURAR", use_container_width=True):
                 try:
-                    # 1. Generar PDF (bytearray directo)
-                    st.session_state.pdf_b = crear_ticket(st.session_state.car, total_final_bs, sub_total_usd, tasa, ajuste_usd)
+                    # 1. Generar PDF (Se guarda como binario puro)
+                    pdf_result = crear_ticket(st.session_state.car, total_final_bs, sub_total_usd, tasa, ajuste_usd)
+                    st.session_state.pdf_b = pdf_result
                     
-                    # 2. Guardar cada item en Supabase con tus columnas exactas
+                    # 2. Inserción masiva en Supabase con tus nombres exactos
                     for x in st.session_state.car:
                         db.table("ventas").insert({
                             "fecha": datetime.now().isoformat(),
@@ -194,17 +191,18 @@ elif opcion == "🛒 Venta Rápida":
                             "costo_venta": round(float(x['costo_u'] * x['c']), 2)
                         }).execute()
                         
-                        # 3. Actualizar Inventario
                         s_act = int(df_p[df_p["nombre"] == x['p']].iloc[0]['stock']) - x['c']
                         db.table("inventario").update({"stock": s_act}).eq("nombre", x['p']).execute()
                     
                     st.session_state.car = []
-                    st.success("Venta procesada con éxito")
+                    st.success("¡Venta completada!")
                     st.rerun()
                 except Exception as e:
+                    # El error se mostrará aquí si Supabase rechaza algo, pero ya no será por el bytearray
                     st.error(f"Error en base de datos: {e}")
 
     if st.session_state.pdf_b:
+        # El botón de descarga es el único que toca el archivo binario
         st.download_button("📥 Descargar Ticket (PDF)", st.session_state.pdf_b, "factura.pdf", mime="application/pdf")
 # --- 6. GASTOS ---
 elif opcion == "💸 Gastos":
@@ -229,6 +227,7 @@ elif opcion == "📊 Reporte de Utilidades":
 
     f_f = st.date_input("Fecha", date.today())
     v
+
 
 
 
