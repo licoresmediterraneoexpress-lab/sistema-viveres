@@ -39,7 +39,6 @@ with st.sidebar:
     if st.button("🗑️ Vaciar Carrito"):
         st.session_state.car = []
         st.rerun()
-
 # --- 3. MÓDULO INVENTARIO PROFESIONAL ---
 if opcion == "📦 Inventario":
     import time
@@ -80,15 +79,15 @@ if opcion == "📦 Inventario":
             )
 
         # 3. Buscador y Alertas de Stock Crítico
-        bus_inv = col_bus.text_input("🔍 Buscar producto o marca...", placeholder="Ej: Harina, Polar, Mantequilla...")
+        bus_inv = col_bus.text_input("🔍 Buscar producto...", placeholder="Ej: Harina, Polar...")
         
         # Filtrado dinámico
         df_m = df_inv[df_inv['nombre'].str.contains(bus_inv, case=False)] if bus_inv else df_inv
         
-        # Identificar stock bajo (menos de 10 unidades)
+        # Identificar stock bajo
         bajo_stock = df_m[df_m['stock'] <= 10]
         if not bajo_stock.empty:
-            st.error(f"⚠️ ATENCIÓN: Tienes {len(bajo_stock)} productos con stock crítico (menos de 10 unidades).")
+            st.error(f"⚠️ ATENCIÓN: Tienes {len(bajo_stock)} productos con stock crítico.")
 
         # 4. Tabla Maestra Estilizada
         def alert_stock(stk):
@@ -98,13 +97,14 @@ if opcion == "📦 Inventario":
 
         df_m['Estado'] = df_m['stock'].apply(alert_stock)
         
+        # CIERRE CORRECTO DE LA TABLA (Aquí estaba el error)
         st.dataframe(
             df_m[['Estado', 'nombre', 'stock', 'costo', 'precio_detal', 'precio_mayor', 'min_mayor']],
             use_container_width=True,
             hide_index=True
         )
 
-    # --- 5. FORMULARIO DE REGISTRO (CORRECCIÓN API ERROR) ---
+    # --- 5. FORMULARIO DE REGISTRO ---
     st.divider()
     with st.expander("🆕 Agregar o Actualizar Producto"):
         with st.form("form_inv", clear_on_submit=True):
@@ -129,27 +129,20 @@ if opcion == "📦 Inventario":
                         "precio_mayor": mayor_p,
                         "min_mayor": c6
                     }
-                    
                     try:
-                        # Buscamos si el nombre ya existe para decidir si insertar o actualizar
                         check = db.table("inventario").select("id").eq("nombre", n_prod.upper()).execute()
-                        
                         if check.data:
-                            # Existe -> Actualizamos
                             db.table("inventario").update(data_p).eq("nombre", n_prod.upper()).execute()
-                            st.success(f"✅ {n_prod} actualizado con éxito.")
+                            st.success(f"✅ {n_prod} actualizado.")
                         else:
-                            # No existe -> Insertamos
                             db.table("inventario").insert(data_p).execute()
-                            st.success(f"✨ {n_prod} registrado como nuevo.")
-                        
+                            st.success(f"✨ {n_prod} registrado.")
                         time.sleep(1)
                         st.rerun()
                     except Exception as e:
-                        st.error(f"❌ Error al guardar: {e}")
+                        st.error(f"❌ Error: {e}")
                 else:
-                    st.warning("Escribe un nombre para el producto.")
-        )
+                    st.warning("Escribe un nombre.")
 
     # 5. Panel de Control de Productos (Admin)
     with st.expander("🛠️ Panel de Carga y Edición de Mercancía"):
@@ -425,6 +418,7 @@ elif opcion == "📊 Cierre de Caja":
                 st.error("Acceso Denegado: Clave Incorrecta")
     else:
         st.info("No se encontraron movimientos para la fecha seleccionada.")
+
 
 
 
