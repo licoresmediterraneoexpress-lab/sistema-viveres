@@ -42,6 +42,7 @@ with st.sidebar:
 
 # --- 3. MÓDULO INVENTARIO PROFESIONAL ---
 if opcion == "📦 Inventario":
+    import time
     st.header("📦 Centro de Control de Inventario")
     
     # Obtener datos
@@ -90,7 +91,6 @@ if opcion == "📦 Inventario":
             st.error(f"⚠️ ATENCIÓN: Tienes {len(bajo_stock)} productos con stock crítico (menos de 10 unidades).")
 
         # 4. Tabla Maestra Estilizada
-        # Añadimos un indicador visual (Emoji) según el stock
         def alert_stock(stk):
             if stk <= 0: return "❌ Agotado"
             elif stk <= 10: return "⚠️ Crítico"
@@ -102,6 +102,53 @@ if opcion == "📦 Inventario":
             df_m[['Estado', 'nombre', 'stock', 'costo', 'precio_detal', 'precio_mayor', 'min_mayor']],
             use_container_width=True,
             hide_index=True
+        )
+
+    # --- 5. FORMULARIO DE REGISTRO (CORRECCIÓN API ERROR) ---
+    st.divider()
+    with st.expander("🆕 Agregar o Actualizar Producto"):
+        with st.form("form_inv", clear_on_submit=True):
+            c1, c2 = st.columns(2)
+            n_prod = c1.text_input("Nombre del Producto")
+            s_prod = c2.number_input("Cantidad en Stock", min_value=0.0, step=1.0)
+            
+            c3, c4, c5 = st.columns(3)
+            cost_p = c3.number_input("Costo Unitario ($)", min_value=0.0, format="%.2f")
+            detal_p = c4.number_input("Precio Detal ($)", min_value=0.0, format="%.2f")
+            mayor_p = c5.number_input("Precio Mayor ($)", min_value=0.0, format="%.2f")
+            
+            c6 = st.number_input("Mínimo para Mayorista (Unidades)", min_value=1)
+            
+            if st.form_submit_button("💾 GUARDAR PRODUCTO"):
+                if n_prod:
+                    data_p = {
+                        "nombre": n_prod.upper(),
+                        "stock": s_prod,
+                        "costo": cost_p,
+                        "precio_detal": detal_p,
+                        "precio_mayor": mayor_p,
+                        "min_mayor": c6
+                    }
+                    
+                    try:
+                        # Buscamos si el nombre ya existe para decidir si insertar o actualizar
+                        check = db.table("inventario").select("id").eq("nombre", n_prod.upper()).execute()
+                        
+                        if check.data:
+                            # Existe -> Actualizamos
+                            db.table("inventario").update(data_p).eq("nombre", n_prod.upper()).execute()
+                            st.success(f"✅ {n_prod} actualizado con éxito.")
+                        else:
+                            # No existe -> Insertamos
+                            db.table("inventario").insert(data_p).execute()
+                            st.success(f"✨ {n_prod} registrado como nuevo.")
+                        
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error al guardar: {e}")
+                else:
+                    st.warning("Escribe un nombre para el producto.")
         )
 
     # 5. Panel de Control de Productos (Admin)
@@ -378,6 +425,7 @@ elif opcion == "📊 Cierre de Caja":
                 st.error("Acceso Denegado: Clave Incorrecta")
     else:
         st.info("No se encontraron movimientos para la fecha seleccionada.")
+
 
 
 
