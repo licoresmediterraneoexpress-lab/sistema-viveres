@@ -259,9 +259,34 @@ elif opcion == "💸 Gastos":
             db.table("gastos").insert({"descripcion": desc, "monto_usd": monto, "fecha": datetime.now().isoformat()}).execute()
             st.success("Gasto registrado y restado de la utilidad.")
 
-# --- 6. CIERRE DE CAJA (ACTUALIZADO CON PAGO_OTROS) ---
+# --- 6. CIERRE DE CAJA (CON APERTURA, TOTALIZADO Y PAGO_OTROS) ---
 elif opcion == "📊 Cierre de Caja":
-    st.header("📊 Cierre de Caja y Balance Diario")
+    st.header("📊 Gestión de Caja: Apertura y Cierre")
+    
+    # --- BLOQUE DE APERTURA ---
+    with st.expander("🔑 APERTURA DE JORNADA (Fondo Inicial)", expanded=True):
+        f_hoy = date.today().isoformat()
+        # Buscamos si ya existe una apertura para hoy en la tabla de gastos
+        res_ap = db.table("gastos").select("*").eq("descripcion", f"APERTURA_{f_hoy}").execute()
+        
+        if not res_ap.data:
+            c_ap1, c_ap2 = st.columns([2, 1])
+            monto_ap = c_ap1.number_input("Monto inicial en efectivo ($) para vuelto:", 0.0)
+            if c_ap2.button("✅ Registrar Apertura", use_container_width=True):
+                db.table("gastos").insert({
+                    "descripcion": f"APERTURA_{f_hoy}",
+                    "monto_usd": monto_ap,
+                    "fecha": datetime.now().isoformat()
+                }).execute()
+                st.success(f"Caja abierta con ${monto_ap}")
+                st.rerun()
+        else:
+            monto_ap_registrado = res_ap.data[0]['monto_usd']
+            st.info(f"🟢 Caja abierta hoy con un fondo de: **${monto_ap_registrado:,.2f}**")
+
+    st.divider()
+
+    # --- CONSULTA DE RESULTADOS ---
     f_rep = st.date_input("Fecha a Consultar", date.today())
     
     # Consultas a Supabase
@@ -272,33 +297,47 @@ elif opcion == "📊 Cierre de Caja":
         df_v = pd.DataFrame(v.data)
         df_g = pd.DataFrame(g.data) if g.data else pd.DataFrame()
         
-        # 1. DESGLOSE POR MÉTODO DE PAGO (Aquí incluimos pago_otros)
+        # Separamos la apertura de los gastos operativos para no alterar la utilidad
+        df_gastos_reales = df_g[~df_g['descripcion'].str.contains("APERTURA_", na=False)]
+        monto_apertura_dia = df_g[df_g['descripcion'].str.contains("APERTURA_", na=False)]['monto_usd'].sum()
+
+        # 1. DESGLOSE POR MÉTODO DE PAGO
         st.subheader("💳 Detalle por Método de Pago")
         c1, c2, c3, c4, c5, c6 = st.columns(6)
         
         c1.metric("Efectivo Bs", f"{df_v['pago_efectivo'].sum():,.2f}")
         c2.metric("P. Móvil Bs", f"{df_v['pago_movil'].sum():,.2f}")
         c3.metric("Punto Bs", f"{df_v['pago_punto'].sum():,.2f}")
-        c4.metric("Otros Bs", f"{df_v['pago_otros'].sum():,.2f}") # <-- SE AGREGA ESTE DATO
+        c4.metric("Otros Bs", f"{df_v['pago_otros'].sum():,.2f}")
         c5.metric("Zelle $", f"${df_v['pago_zelle'].sum():,.2f}")
         c6.metric("Divisas $", f"${df_v['pago_divisas'].sum():,.2f}")
         
         st.divider()
         
-        # 2. CÁLCULO DE TOTALES Y UTILIDADES
+        # 2. CÁLCULO DE TOTALES, UTILIDADES Y CUADRE
         t_usd = df_v['total_usd'].sum()
         t_cos = df_v['costo_venta'].sum()
-        t_gas = df_g['monto_usd'].sum() if not df_g.empty else 0
+        t_gas = df_gastos_reales['monto_usd'].sum()
         t_pro = df_v['propina'].sum()
         
+        # Cuadre de efectivo físico (Apertura + Ventas en Divisas $)
+        efectivo_en_caja = monto_apertura_dia + df_v['pago_divisas'].sum()
+
         # Balance General
-        st.subheader("📈 Balance de Ganancias")
+        st.subheader("📈 Balance de Ganancias y Totales")
         k1, k2, k3, k4 = st.columns(4)
         
-        k1.metric("VENTAS TOTALES", f"${t_usd:,.2f}")
+        k1.metric("VENTAS TOTALES (BRUTO)", f"${t_usd:,.2f}", help="Suma de todas las ventas sin descontar nada")
         k2.metric("COSTO MERCANCÍA", f"${t_cos:,.2f}")
-        k3.metric("GASTOS TOTALES", f"${t_gas:,.2f}")
+        k3.metric("GASTOS OPERATIVOS", f"${t_gas:,.2f}")
         k4.metric("UTILIDAD NETA", f"${t_usd - t_cos - t_gas:,.2f}")
+
+        # Sección de Cuadre Físico
+        st.subheader("🧾 Cuadre Físico de Efectivo")
+        e1, e2 = st.columns(2)
+        e1.info(f"**Fondo Inicial:** ${monto_apertura_dia:,.2f}")
+        e2.success(f"**Efectivo Total Esperado:** ${efectivo_en_caja:,.2f}")
+        st.caption("*(Ventas en Divisas $ + Monto de Apertura)*")
 
         st.info(f"💰 **Sobrante Redondeo (Propina):** ${t_pro:,.2f}")
         
@@ -308,6 +347,7 @@ elif opcion == "📊 Cierre de Caja":
             
     else:
         st.info("No hay registros de ventas para esta fecha.")
+
 
 
 
