@@ -39,25 +39,42 @@ with st.sidebar:
         st.session_state.car = []
         st.rerun()
 
-# --- 3. MÓDULO INVENTARIO ---
+# --- 3. MÓDULO INVENTARIO (CON EXPORTACIÓN A EXCEL) ---
 if opcion == "📦 Inventario":
-    st.header("📦 Gestión de Inventario y Mercancía")
+    st.header("📦 Gestión de Inventario")
     res = db.table("inventario").select("*").execute()
     df_inv = pd.DataFrame(res.data) if res.data else pd.DataFrame()
     
     if not df_inv.empty:
-        # Alertas de Stock Bajo
-        bajo_stock = df_inv[df_inv['stock'] <= 5]
-        if not bajo_stock.empty:
-            st.warning(f"⚠️ Tienes {len(bajo_stock)} productos por agotarse.")
-            with st.expander("Ver lista de reposición"):
-                st.table(bajo_stock[['nombre', 'stock']])
-
-        # Valorización de la mercancía
+        # Métricas principales
         df_inv['valor_total'] = df_inv['stock'] * df_inv['costo']
-        st.metric("Inversión Total en Mercancía", f"${df_inv['valor_total'].sum():,.2f}")
+        c1, c2 = st.columns(2)
+        c1.metric("Inversión Total", f"${df_inv['valor_total'].sum():,.2f}")
+        c2.metric("Productos Registrados", len(df_inv))
+
+        # --- BOTÓN DE EXPORTAR A EXCEL ---
+        st.divider()
+        try:
+            import io
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                # Ordenamos las columnas para que el Excel sea legible
+                columnas_excel = ['nombre', 'stock', 'costo', 'precio_detal', 'precio_mayor', 'min_mayor']
+                df_inv[columnas_excel].to_excel(writer, index=False, sheet_name='Inventario')
+            
+            st.download_button(
+                label="📥 Descargar Inventario en Excel",
+                data=buffer.getvalue(),
+                file_name=f"Inventario_Mediterraneo_{date.today()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+        except Exception as e:
+            st.error(f"Error al generar Excel: {e}")
         
-        # Buscador Inteligente de Stock
+        st.divider()
+
+        # Buscador y Tabla
         bus_inv = st.text_input("🔍 Buscar en inventario...")
         df_m = df_inv[df_inv['nombre'].str.contains(bus_inv, case=False)] if bus_inv else df_inv
         st.dataframe(df_m[['nombre', 'stock', 'costo', 'precio_detal', 'precio_mayor', 'min_mayor']], use_container_width=True, hide_index=True)
@@ -78,7 +95,6 @@ if opcion == "📦 Inventario":
                     db.table("inventario").upsert(data, on_conflict="nombre").execute()
                     st.success("Inventario Actualizado")
                     st.rerun()
-
 elif opcion == "🛒 Venta Rápida":
     import time
     st.header("🛒 Terminal de Ventas")
@@ -259,6 +275,7 @@ elif opcion == "📊 Cierre de Caja":
             
     else:
         st.info("No hay registros de ventas para esta fecha.")
+
 
 
 
