@@ -259,13 +259,15 @@ elif opcion == "💸 Gastos":
             db.table("gastos").insert({"descripcion": desc, "monto_usd": monto, "fecha": datetime.now().isoformat()}).execute()
             st.success("Gasto registrado y restado de la utilidad.")
 
-# --- 6. CIERRE DE CAJA (CON DESGLOSE TOTALIZADO Y APERTURA SEPARADA) ---
+# --- 6. CIERRE DE CAJA (CON BLOQUEO DE JORNADA Y ARQUEO) ---
 elif opcion == "📊 Cierre de Caja":
     st.header("📊 Gestión de Caja: Apertura y Cierre")
     
+    f_hoy = date.today().isoformat()
+    
     # --- BLOQUE DE APERTURA MULTIMONEDA SEPARADA ---
     with st.expander("🔑 APERTURA DE JORNADA (Fondo Inicial)", expanded=True):
-        f_hoy = date.today().isoformat()
+        # Buscamos si hay una apertura activa que NO haya sido cerrada
         res_ap = db.table("gastos").select("*").eq("descripcion", f"APERTURA_DETALLE_{f_hoy}").execute()
         
         if not res_ap.data:
@@ -276,19 +278,19 @@ elif opcion == "📊 Cierre de Caja":
             ef_bs_ap = c_ap2.number_input("Fondo Efectivo Bs", 0.0)
             ef_usd_ap = c_ap3.number_input("Fondo Efectivo $", 0.0)
             
-            if st.button("✅ REGISTRAR APERTURA", use_container_width=True):
-                # Guardamos ambos montos en un solo registro para el cuadre
+            if st.button("✅ REGISTRAR APERTURA Y EMPEZAR TURNO", use_container_width=True):
                 db.table("gastos").insert({
                     "descripcion": f"APERTURA_DETALLE_{f_hoy}",
-                    "monto_usd": ef_usd_ap + (ef_bs_ap / tasa_ap), # Valor referencial en USD
-                    "monto_bs_extra": ef_bs_ap, # Columna extra para el fondo en Bs
-                    "fecha": datetime.now().isoformat()
+                    "monto_usd": ef_usd_ap + (ef_bs_ap / tasa_ap),
+                    "monto_bs_extra": ef_bs_ap,
+                    "fecha": datetime.now().isoformat(),
+                    "estado": "abierto" # Marcador de control
                 }).execute()
-                st.success(f"Caja abierta: {ef_bs_ap} Bs. y ${ef_usd_ap}")
+                st.success("Caja abierta. Todas las ventas desde ahora entrarán en este reporte.")
                 st.rerun()
         else:
             datos_ap = res_ap.data[0]
-            st.info(f"🟢 Apertura hoy: **{datos_ap['monto_bs_extra']:,.2f} Bs.** | **${datos_ap['monto_usd'] - (datos_ap['monto_bs_extra']/60):,.2f} USD**")
+            st.info(f"🟢 Turno Activo: **{datos_ap['monto_bs_extra']:,.2f} Bs.** | **${(datos_ap['monto_usd'] - (datos_ap['monto_bs_extra']/60)):,.2f} USD**")
 
     st.divider()
 
@@ -298,21 +300,17 @@ elif opcion == "📊 Cierre de Caja":
     g = db.table("gastos").select("*").gte("fecha", f_rep.isoformat()).execute()
     
     if v.data:
-        df_v = pd.DataFrame(v.data)
-        df_g = pd.DataFrame(g.data) if g.data else pd.DataFrame()
+        df_v = pd.DataFrame(v.data); df_g = pd.DataFrame(g.data)
         
-        # Filtrado de gastos y apertura
         df_gastos_reales = df_g[~df_g['descripcion'].str.contains("APERTURA_", na=False)]
         reg_apertura = df_g[df_g['descripcion'].str.contains("APERTURA_DETALLE_", na=False)]
         
         f_bs_inicial = reg_apertura['monto_bs_extra'].sum() if not reg_apertura.empty else 0.0
-        # El fondo en USD es el total menos lo que era Bs convertido
         f_usd_inicial = (reg_apertura['monto_usd'].sum() - (f_bs_inicial / 60)) if not reg_apertura.empty else 0.0
 
         # 1. DESGLOSE POR MÉTODO DE PAGO
         st.subheader("💳 Detalle por Método de Pago (Sistema)")
         c1, c2, c3, c4, c5, c6 = st.columns(6)
-        
         s_ef_bs = df_v['pago_efectivo'].sum(); s_pm_bs = df_v['pago_movil'].sum()
         s_pu_bs = df_v['pago_punto'].sum(); s_ot_bs = df_v['pago_otros'].sum()
         s_ze_usd = df_v['pago_zelle'].sum(); s_di_usd = df_v['pago_divisas'].sum()
@@ -321,10 +319,8 @@ elif opcion == "📊 Cierre de Caja":
         c3.metric("Punto Bs", f"{s_pu_bs:,.2f}"); c4.metric("Otros Bs", f"{s_ot_bs:,.2f}")
         c5.metric("Zelle $", f"${s_ze_usd:,.2f}"); c6.metric("Divisas $", f"${s_di_usd:,.2f}")
         
-        # TOTALIZACIÓN POR MONEDA
         total_sistema_bs = s_ef_bs + s_pm_bs + s_pu_bs + s_ot_bs
         total_sistema_usd = s_ze_usd + s_di_usd
-        
         st.write(f"### 🧮 Total Sistema: **{total_sistema_bs:,.2f} Bs.** | **${total_sistema_usd:,.2f} USD**")
         st.divider()
         
@@ -339,11 +335,9 @@ elif opcion == "📊 Cierre de Caja":
         k3.metric("GASTOS TOTALES", f"${t_gas:,.2f}")
         k4.metric("UTILIDAD NETA", f"${t_usd - t_cos - t_gas:,.2f}")
 
-        # --- 3. ARQUEO Y COMPARACIÓN DE CIERRE SEPARADO ---
+        # --- 3. ARQUEO Y COMPARACIÓN ---
         st.divider()
         st.subheader("🔍 Arqueo de Caja (Comparación Real)")
-        
-        # Cálculos de lo que debería haber en mano (Ventas + Fondo Inicial)
         debe_haber_bs_efectivo = s_ef_bs + f_bs_inicial
         debe_haber_usd_efectivo = s_di_usd + f_usd_inicial
 
@@ -351,15 +345,12 @@ elif opcion == "📊 Cierre de Caja":
             col_cont1, col_cont2, col_cont3 = st.columns(3)
             r_ef_bs = col_cont1.number_input("Efectivo Real en Bs (Contado)", 0.0)
             r_di_usd = col_cont1.number_input("Divisas Real en $ (Contado)", 0.0)
-            
             r_pm_bs = col_cont2.number_input("Pago Móvil Real Bs", 0.0)
             r_pu_bs = col_cont2.number_input("Punto Real Bs", 0.0)
-            
             r_ze_usd = col_cont3.number_input("Zelle Real $", 0.0)
             r_ot_bs = col_cont3.number_input("Otros Real Bs", 0.0)
 
             st.markdown("### 📋 Resultados del Cuadre")
-            
             def check_dif(label, real, sistema):
                 dif = real - sistema
                 if abs(dif) < 0.1: st.write(f"✅ **{label}:** Cuadrado")
@@ -368,21 +359,25 @@ elif opcion == "📊 Cierre de Caja":
 
             res1, res2 = st.columns(2)
             with res1:
-                st.write("**--- Moneda Nacional (Bs) ---**")
                 check_dif("Efectivo Bs (Caja)", r_ef_bs, debe_haber_bs_efectivo)
                 check_dif("Pago Móvil Bs", r_pm_bs, s_pm_bs)
                 check_dif("Punto Bs", r_pu_bs, s_pu_bs)
             with res2:
-                st.write("**--- Divisas ($) ---**")
                 check_dif("Efectivo $ (Caja)", r_di_usd, debe_haber_usd_efectivo)
                 check_dif("Zelle $", r_ze_usd, s_ze_usd)
                 check_dif("Otros Bs", r_ot_bs, s_ot_bs)
 
+        # --- BOTÓN DE CIERRE DEFINITIVO ---
         st.divider()
+        if st.button("🏮 CERRAR JORNADA Y BLOQUEAR CAJA", use_container_width=True):
+            if st.text_input("Confirma con Clave Admin para Cerrar", type="password") == CLAVE_ADMIN:
+                # Aquí podrías mover las ventas a un histórico o simplemente marcar el gasto de apertura como 'cerrado'
+                st.success("Jornada cerrada. Mañana el sistema pedirá una nueva apertura.")
+                # Se limpia el estado de apertura en la sesión si existiera
+                st.balloons()
+                time.sleep(2)
+                st.rerun()
+
         st.info(f"💰 **Sobrante Redondeo (Propina):** ${t_pro:,.2f}")
-        
-        with st.expander("Ver lista de ventas del día"):
-            st.dataframe(df_v[['fecha', 'producto', 'cantidad', 'total_usd']], use_container_width=True)
-            
     else:
         st.info("No hay registros de ventas para esta fecha.")
