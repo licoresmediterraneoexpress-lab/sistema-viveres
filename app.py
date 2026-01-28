@@ -496,104 +496,123 @@ elif opcion == "📊 Cierre de Caja":
     res_caja = db.table("gastos").select("*").eq("descripcion", f"APERTURA_{hoy}").execute()
     caja_abierta = len(res_caja.data) > 0
     
-    # --- BLOQUE A: APERTURA (Solo si no hay una) ---
+   # --- 6. MÓDULO DE CAJA PROFESIONAL (ARQUEO INTEGRAL) ---
+elif opcion == "📊 Cierre de Caja":
+    st.header("📊 Arqueo Integral y Cierre de Jornada")
+    hoy = date.today().isoformat()
+    
+    # --- 6.1. VERIFICACIÓN DE ESTADO ---
+    res_caja = db.table("gastos").select("*").eq("descripcion", f"APERTURA_{hoy}").execute()
+    caja_abierta = len(res_caja.data) > 0
+    
     if not caja_abierta:
-        st.warning("⚠️ La caja se encuentra cerrada para el día de hoy.")
-        with st.form("form_apertura"):
-            st.subheader("🔑 Abrir Turno")
+        st.warning("⚠️ La caja no ha sido abierta hoy.")
+        with st.form("form_apertura_nueva"):
+            st.subheader("🔑 Apertura de Turno")
             col1, col2, col3 = st.columns(3)
-            tasa_hoy = col1.number_input("Tasa de Cambio (Bs/$)", min_value=1.0, value=60.0)
-            f_bs = col2.number_input("Fondo en Bolívares (Bs)", min_value=0.0)
-            f_usd = col3.number_input("Fondo en Divisas ($)", min_value=0.0)
+            tasa_ap = col1.number_input("Tasa del Día (Bs/$)", min_value=1.0, value=60.0)
+            f_bs = col2.number_input("Fondo Inicial en Bolívares (Bs)", min_value=0.0)
+            f_usd = col3.number_input("Fondo Inicial en Divisas ($)", min_value=0.0)
             
-            if st.form_submit_button("✅ REGISTRAR APERTURA Y EMPEZAR"):
-                # Guardamos el fondo inicial
+            if st.form_submit_button("✅ REGISTRAR APERTURA"):
                 db.table("gastos").insert({
                     "descripcion": f"APERTURA_{hoy}",
-                    "monto_usd": f_usd + (f_bs / tasa_hoy),
+                    "monto_usd": f_usd + (f_bs / tasa_ap),
                     "monto_bs_extra": f_bs,
                     "fecha": datetime.now().isoformat(),
                     "estado": "abierto"
                 }).execute()
-                st.success("Caja abierta correctamente.")
+                st.success("Caja abierta. Puede empezar a vender.")
                 st.rerun()
-    
-    # --- BLOQUE B: PANEL DE CONTROL Y ARQUEO (Solo si ya está abierta) ---
     else:
-        # Recuperar datos de apertura
+        # --- 6.2. PROCESO DE ARQUEO ---
         datos_ap = res_caja.data[0]
-        fondo_bs_inicial = datos_ap['monto_bs_extra']
-        fondo_usd_inicial = datos_ap['monto_usd'] - (fondo_bs_inicial / 60) # Ajuste base
+        f_bs_ini = datos_ap['monto_bs_extra']
+        f_usd_ini = datos_ap['monto_usd'] - (f_bs_ini / 60) # Ajuste referencial
 
-        st.info(f"🟢 Caja abierta hoy con: {fondo_bs_inicial:,.2f} Bs | ${fondo_usd_inicial:,.2f} USD")
+        # Consultar Movimientos del sistema
+        v_res = db.table("ventas").select("*").gte("fecha", hoy).execute()
+        df_v = pd.DataFrame(v_res.data) if v_res.data else pd.DataFrame()
 
-        # Consultar Movimientos del día
-        ventas_hoy = db.table("ventas").select("*").gte("fecha", hoy).execute()
-        gastos_hoy = db.table("gastos").select("*").gte("fecha", hoy).execute()
-        
-        df_v = pd.DataFrame(ventas_hoy.data) if ventas_hoy.data else pd.DataFrame()
-        df_g = pd.DataFrame(gastos_hoy.data) if gastos_hoy.data else pd.DataFrame()
-
-        # Cálculos de Sistema
+        # Totales del Sistema
         if not df_v.empty:
-            sys_ef_bs = df_v['pago_efectivo'].sum()
-            sys_ef_usd = df_v['pago_divisas'].sum()
-            sys_pm_bs = df_v['pago_movil'].sum()
-            sys_zelle = df_v['pago_zelle'].sum()
-            sys_punto = df_v['pago_punto'].sum()
-            total_ingreso_usd = df_v['total_usd'].sum()
+            s_ef_bs = df_v['pago_efectivo'].sum(); s_ef_usd = df_v['pago_divisas'].sum()
+            s_pm_bs = df_v['pago_movil'].sum(); s_pu_bs = df_v['pago_punto'].sum()
+            s_ze_usd = df_v['pago_zelle'].sum(); s_ot_bs = df_v['pago_otros'].sum()
+            t_ingreso = df_v['total_usd'].sum()
         else:
-            sys_ef_bs = sys_ef_usd = sys_pm_bs = sys_zelle = sys_punto = total_ingreso_usd = 0.0
+            s_ef_bs = s_ef_usd = s_pm_bs = s_pu_bs = s_ze_usd = s_ot_bs = t_ingreso = 0.0
 
-        # --- SECCIÓN DE CONTEO FÍSICO ---
-        st.divider()
-        st.subheader("🔍 Arqueo Físico (Lo que tienes en mano)")
+        st.info(f"Fondo en Caja al abrir: {f_bs_ini:,.2f} Bs | ${f_usd_ini:,.2f} USD")
+
+        # --- FORMULARIO DE CONTEO FÍSICO Y DIGITAL ---
+        st.subheader("📝 Registro de Arqueo (Conteo Real)")
+        st.write("Ingrese el dinero que tiene físicamente en caja y los saldos en sus cuentas:")
         
-        c1, c2, c3 = st.columns(3)
-        real_ef_bs = c1.number_input("Efectivo Bolívares Físico", 0.0, key="r1")
-        real_ef_usd = c1.number_input("Efectivo Divisas Físico", 0.0, key="r2")
-        
-        real_pm_bs = c2.number_input("Total en Pago Móvil (Banco)", 0.0, key="r3")
-        real_pu_bs = c2.number_input("Total en Punto (Banco)", 0.0, key="r4")
-        
-        real_zelle = c3.number_input("Total Zelle (App)", 0.0, key="r5")
-        
+        with st.container(border=True):
+            c1, c2, c3 = st.columns(3)
+            # Grupo 1: Efectivo
+            r_ef_bs = c1.number_input("Efectivo en Bs (Caja)", min_value=0.0)
+            r_ef_usd = c1.number_input("Efectivo en $ (Caja)", min_value=0.0)
+            
+            # Grupo 2: Bancos Bs
+            r_pm_bs = c2.number_input("Saldo Pago Móvil (Bs)", min_value=0.0)
+            r_pu_bs = c2.number_input("Saldo Punto de Venta (Bs)", min_value=0.0)
+            
+            # Grupo 3: Otros / Digitales
+            r_ze_usd = c3.number_input("Saldo Zelle ($)", min_value=0.0)
+            r_ot_bs = c3.number_input("Otros / Transferencias (Bs)", min_value=0.0)
+
         # --- CÁLCULO DE DIFERENCIAS ---
-        # Esperado = Fondo inicial + Ventas
-        esperado_bs = sys_ef_bs + fondo_bs_inicial
-        esperado_usd = sys_ef_usd + fondo_usd_inicial
-        
-        # --- BOTÓN DE CIERRE ---
-        st.divider()
-        if st.button("🏮 REALIZAR CIERRE DE JORNADA", use_container_width=True):
-            # Resultados
-            diff_bs = real_ef_bs - esperado_bs
-            diff_usd = real_ef_usd - esperado_usd
-            diff_pm = real_pm_bs - sys_pm_bs
-            
-            st.subheader("📋 Resultado del Cuadre")
-            
-            col_res1, col_res2, col_res3 = st.columns(3)
-            col_res1.metric("Diferencia Efectivo Bs", f"{diff_bs:,.2f} Bs", delta=diff_bs)
-            col_res2.metric("Diferencia Efectivo $", f"${diff_usd:,.2f}", delta=diff_usd)
-            col_res3.metric("Diferencia Pago Móvil", f"{diff_pm:,.2f} Bs", delta=diff_pm)
+        # Efectivo esperado = Fondo inicial + Ventas en efectivo
+        esp_bs = s_ef_bs + f_bs_ini
+        esp_usd = s_ef_usd + f_usd_ini
 
-            # Reporte Visual para Impresión
-            reporte_cierre = f"""
-            <div style="background: white; color: black; padding: 20px; border: 2px solid #000; font-family: monospace;">
-                <h2 style="text-align: center;">MEDITERRANEO EXPRESS</h2>
-                <h4 style="text-align: center;">CIERRE DE CAJA - {hoy}</h4>
+        st.divider()
+        
+        if st.button("🏮 FINALIZAR JORNADA Y GENERAR REPORTE", use_container_width=True):
+            # Resultados del Cuadre
+            d_bs = r_ef_bs - esp_bs
+            d_usd = r_ef_usd - esp_usd
+            d_pm = r_pm_bs - s_pm_bs
+            d_pu = r_pu_bs - s_pu_bs
+            d_ze = r_ze_usd - s_ze_usd
+
+            st.subheader("📋 Balance de Cierre")
+            
+            m1, m2, m3, m4, m5 = st.columns(5)
+            m1.metric("Efectivo Bs", f"{d_bs:,.2f}", delta=d_bs)
+            m2.metric("Efectivo $", f"${d_usd:,.2f}", delta=d_usd)
+            m3.metric("Pago Móvil", f"{d_pm:,.2f}", delta=d_pm)
+            m4.metric("Punto Venta", f"{d_pu:,.2f}", delta=d_pu)
+            m5.metric("Zelle", f"${d_ze:,.2f}", delta=d_ze)
+
+            # Reporte HTML para Imprimir
+            reporte_html = f"""
+            <div style="background:white; color:black; padding:25px; border:2px solid black; font-family:monospace;">
+                <center>
+                    <h2>MEDITERRANEO EXPRESS</h2>
+                    <h3>REPORTE DE CIERRE INTEGRAL</h3>
+                    <p>{datetime.now().strftime('%d/%m/%Y %H:%M')}</p>
+                </center>
                 <hr>
-                <p><b>VENTAS TOTALES:</b> ${total_ingreso_usd:,.2f}</p>
+                <b>INGRESOS DEL DÍA:</b> ${t_ingreso:,.2f}<br>
                 <hr>
-                <b>DETALLE DE ARQUEO:</b><br>
-                - Efec. Bs: Real {real_ef_bs:,.2f} / Esp. {esperado_bs:,.2f} (Dif: {diff_bs:,.2f})<br>
-                - Efec. $: Real {real_ef_usd:,.2f} / Esp. {esperado_usd:,.2f} (Dif: {diff_usd:,.2f})<br>
-                - Pago Móvil: Real {real_pm_bs:,.2f} / Esp. {sys_pm_bs:,.2f} (Dif: {diff_pm:,.2f})<br>
-                - Zelle: Real {real_zelle:,.2f} / Esp. {sys_zelle:,.2f}<br>
+                <b>DETALLE DE CUADRE:</b><br>
+                1. EFECTIVO BS: Real {r_ef_bs:,.2f} | Esp {esp_bs:,.2f} (Dif: {d_bs:,.2f})<br>
+                2. EFECTIVO $: Real {r_ef_usd:,.2f} | Esp {esp_usd:,.2f} (Dif: {d_usd:,.2f})<br>
+                3. PAGO MÓVIL: Real {r_pm_bs:,.2f} | Esp {s_pm_bs:,.2f} (Dif: {d_pm:,.2f})<br>
+                4. PUNTO VENTA: Real {r_pu_bs:,.2f} | Esp {s_pu_bs:,.2f} (Dif: {d_pu:,.2f})<br>
+                5. ZELLE $: Real {r_ze_usd:,.2f} | Esp {s_ze_usd:,.2f} (Dif: {d_ze:,.2f})<br>
                 <hr>
-                <p style="text-align:center;">FIRMA RESPONSABLE</p>
+                <b>ESTADO FINAL:</b> {"✅ CAJA CUADRADA" if (abs(d_bs)<1 and abs(d_usd)<0.1) else "❌ DISCREPANCIA DETECTADA"}<br>
+                <hr>
+                <p style="text-align:center;">Turno Cerrado</p>
             </div>
             """
-            st.markdown(reporte_cierre, unsafe_allow_html=True)
+            st.markdown(reporte_html, unsafe_allow_html=True)
             st.balloons()
+            
+            # Botón opcional para nueva venta (limpia estado si fuera necesario)
+            if st.button("🔄 INICIAR NUEVO DÍA"):
+                st.rerun()
