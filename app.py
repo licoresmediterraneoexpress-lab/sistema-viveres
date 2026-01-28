@@ -195,19 +195,21 @@ elif opcion == "💸 Gastos":
             db.table("gastos").insert({"descripcion": desc, "monto_usd": monto, "fecha": datetime.now().isoformat()}).execute()
             st.success("Gasto registrado.")
 
-# --- 6. MÓDULO DE CAJA: APERTURA, ARQUEO Y CIERRE (VERSIÓN DEFINITIVA) ---
+# --- 6. MÓDULO DE CAJA: CONTROL TOTAL Y CIERRE ---
 elif opcion == "📊 Cierre de Caja":
     import time
     st.header("📊 Gestión de Caja y Arqueo Integral")
     hoy = date.today().isoformat()
     
-    # 1. VERIFICACIÓN DE ESTADO DE CAJA
+    # 1. VERIFICACIÓN DE ESTADO DE CAJA (Apertura y si ya fue cerrada)
     res_caja = db.table("gastos").select("*").eq("descripcion", f"APERTURA_{hoy}").execute()
-    caja_abierta = len(res_caja.data) > 0
+    caja_datos = res_caja.data[0] if res_caja.data else None
+    caja_abierta = caja_datos is not None
+    esta_cerrada = caja_datos['estado'] == 'cerrado' if caja_abierta else False
 
-    # --- BLOQUE A: APERTURA DE JORNADA ---
+    # --- BLOQUE A: APERTURA (Solo si no hay registro de hoy) ---
     if not caja_abierta:
-        st.warning("⚠️ La caja se encuentra cerrada. Por favor, registre el fondo inicial.")
+        st.warning("⚠️ La caja se encuentra cerrada. Por favor, registre el fondo inicial para operar.")
         with st.form("form_apertura"):
             st.subheader("🔑 Abrir Turno")
             col1, col2, col3 = st.columns(3)
@@ -216,87 +218,76 @@ elif opcion == "📊 Cierre de Caja":
             f_usd = col3.number_input("Fondo Inicial en Divisas ($)", min_value=0.0)
             
             if st.form_submit_button("✅ REGISTRAR APERTURA Y EMPEZAR", use_container_width=True):
-                # Calculamos el total en USD para la contabilidad neta
                 total_usd_ap = f_usd + (f_bs / tasa_ap)
                 db.table("gastos").insert({
                     "descripcion": f"APERTURA_{hoy}",
                     "monto_usd": total_usd_ap,
-                    "monto_bs_extra": f_bs, # Respaldamos Bs para el arqueo físico
+                    "monto_bs_extra": f_bs,
                     "fecha": datetime.now().isoformat(),
                     "estado": "abierto"
                 }).execute()
                 st.success("¡Caja abierta exitosamente!")
                 time.sleep(1)
                 st.rerun()
-    
-    # --- BLOQUE B: PANEL DE CONTROL Y ARQUEO (Si ya está abierta) ---
+
+    # --- BLOQUE B: VISTA DE CIERRE (Si ya se cerró la caja hoy) ---
+    elif esta_cerrada:
+        st.success("✅ La jornada de hoy ha sido FINALIZADA y bloqueada.")
+        st.info("A continuación se muestra el reporte de cierre generado. No se pueden realizar más cambios.")
+        # Aquí podrías opcionalmente mostrar el reporte que se guardó o recalcularlo solo lectura
+        if st.button("🔄 Volver a Menú Principal"):
+            st.rerun()
+
+    # --- BLOQUE C: PANEL DE ARQUEO ACTIVO (Caja abierta y lista para cerrar) ---
     else:
-        # 1. Recuperar Fondos Iniciales
-        datos_ap = res_caja.data[0]
-        f_bs_ini = datos_ap['monto_bs_extra']
-        # El USD puro es el total menos el equivalente de los Bs a tasa 60 (o la de la tabla si prefieres)
-        f_usd_ini = datos_ap['monto_usd'] - (f_bs_ini / 60) 
+        # Recuperar Fondos Iniciales
+        f_bs_ini = caja_datos['monto_bs_extra']
+        f_usd_ini = caja_datos['monto_usd'] - (f_bs_ini / 60) 
 
-        st.info(f"🟢 Caja Abierta: {f_bs_ini:,.2f} Bs | ${f_usd_ini:,.2f} USD")
+        st.info(f"🟢 Caja Abierta hoy con: {f_bs_ini:,.2f} Bs | ${f_usd_ini:,.2f} USD")
 
-        # 2. Consultar Movimientos del Sistema
+        # Consultar Movimientos del Sistema
         v_res = db.table("ventas").select("*").gte("fecha", hoy).execute()
         g_res = db.table("gastos").select("*").gte("fecha", hoy).execute()
-        
         df_v = pd.DataFrame(v_res.data) if v_res.data else pd.DataFrame()
         df_g = pd.DataFrame(g_res.data) if g_res.data else pd.DataFrame()
 
+        # Totales del Sistema
         if not df_v.empty:
-            # Totales por método de pago
             s_ef_bs = df_v['pago_efectivo'].sum(); s_di_usd = df_v['pago_divisas'].sum()
             s_pm_bs = df_v['pago_movil'].sum(); s_pu_bs = df_v['pago_punto'].sum()
             s_ze_usd = df_v['pago_zelle'].sum(); s_ot_bs = df_v['pago_otros'].sum()
-            
-            # Análisis Financiero
-            t_ingreso = df_v['total_usd'].sum()
-            t_costo = df_v['costo_venta'].sum()
-            df_gastos_puros = df_g[~df_g['descripcion'].str.contains("APERTURA_", na=False)]
-            t_gastos_op = df_gastos_puros['monto_usd'].sum() if not df_gastos_puros.empty else 0.0
-            utilidad_neta = t_ingreso - t_costo - t_gastos_op
+            total_ingreso = df_v['total_usd'].sum()
         else:
-            s_ef_bs = s_di_usd = s_pm_bs = s_pu_bs = s_ze_usd = s_ot_bs = 0.0
-            t_ingreso = t_costo = t_gastos_op = utilidad_neta = 0.0
+            s_ef_bs = s_di_usd = s_pm_bs = s_pu_bs = s_ze_usd = s_ot_bs = total_ingreso = 0.0
 
-        # --- INTERFAZ DE RESUMEN ---
-        st.subheader("💳 Resumen de Ventas (Sistema)")
-        c1, c2, c3, c4, c5, c6 = st.columns(6)
-        c1.metric("Efec. Bs", f"{s_ef_bs:,.2f}"); c2.metric("Efec. $", f"{s_di_usd:,.2f}")
-        c3.metric("P. Móvil", f"{s_pm_bs:,.2f}"); c4.metric("Punto", f"{s_pu_bs:,.2f}")
-        c5.metric("Zelle", f"{s_ze_usd:,.2f}"); c6.metric("Otros", f"{s_ot_bs:,.2f}")
+        # Interfaz de Resumen del Sistema
+        st.subheader("💳 Ventas Registradas (Sistema)")
+        c_sys = st.columns(6)
+        c_sys[0].metric("Efec. Bs", f"{s_ef_bs:,.2f}"); c_sys[1].metric("Efec. $", f"{s_di_usd:,.2f}")
+        c_sys[2].metric("P. Móvil", f"{s_pm_bs:,.2f}"); c_sys[3].metric("Punto", f"{s_pu_bs:,.2f}")
+        c_sys[4].metric("Zelle", f"{s_ze_usd:,.2f}"); c_sys[5].metric("Otros", f"{s_ot_bs:,.2f}")
 
-        # --- SECCIÓN DE ARQUEO FÍSICO ---
+        # Sección de Ingreso de Dinero Real
         st.divider()
-        st.subheader("📝 Registro de Arqueo (Conteo Real)")
-        st.write("Ingrese el dinero total que posee en este momento:")
-        
+        st.subheader("📝 Arqueo Físico y de Cuentas")
         with st.container(border=True):
             col_r1, col_r2, col_r3 = st.columns(3)
-            r_ef_bs = col_r1.number_input("Efectivo Bs en Mano", 0.0)
-            r_ef_usd = col_r1.number_input("Efectivo $ en Mano", 0.0)
-            
-            r_pm_bs = col_r2.number_input("Saldo en Pago Móvil", 0.0)
-            r_pu_bs = col_r2.number_input("Saldo en Punto", 0.0)
-            
-            r_ze_usd = col_r3.number_input("Saldo en Zelle $", 0.0)
-            r_ot_bs = col_r3.number_input("Otros / Cuentas Bs", 0.0)
+            r_ef_bs = col_r1.number_input("Efectivo Bs en Caja", 0.0)
+            r_ef_usd = col_r1.number_input("Efectivo $ en Caja", 0.0)
+            r_pm_bs = col_r2.number_input("Total en Pago Móvil", 0.0)
+            r_pu_bs = col_r2.number_input("Total en Punto", 0.0)
+            r_ze_usd = col_r3.number_input("Total en Zelle $", 0.0)
+            r_ot_bs = col_r3.number_input("Otras Cuentas Bs", 0.0)
 
-        # --- CIERRE FINAL ---
+        # BOTÓN DE CIERRE DEFINITIVO
         st.divider()
-        if st.button("🏮 FINALIZAR JORNADA Y GENERAR REPORTE", use_container_width=True):
-            # Cálculos de Diferencia (Esperado = Sistema + Fondo Inicial)
+        if st.button("🏮 FINALIZAR JORNADA Y BLOQUEAR CAJA", use_container_width=True, type="primary"):
+            # Cálculos finales
             esp_bs = s_ef_bs + f_bs_ini
             esp_usd = s_di_usd + f_usd_ini
-            
             d_bs = r_ef_bs - esp_bs; d_usd = r_ef_usd - esp_usd
             d_pm = r_pm_bs - s_pm_bs; d_pu = r_pu_bs - s_pu_bs
-            d_ze = r_ze_usd - s_ze_usd; d_ot = r_ot_bs - s_ot_bs
 
-            # Mostrar Métricas de Cuadre
-            st.subheader("📋 Balance de Cuadre")
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Dif. Ef
+            # 1. ACTUALIZAR ESTADO EN DB PARA BLOQUEO
+            db.table("gastos").update({"estado": "cerrado"}).eq("descripcion", f"APERTURA_{hoy}").execute
