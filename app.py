@@ -39,62 +39,95 @@ with st.sidebar:
         st.session_state.car = []
         st.rerun()
 
-# --- 3. MÓDULO INVENTARIO (CON EXPORTACIÓN A EXCEL) ---
+# --- 3. MÓDULO INVENTARIO PROFESIONAL ---
 if opcion == "📦 Inventario":
-    st.header("📦 Gestión de Inventario")
+    st.header("📦 Centro de Control de Inventario")
+    
+    # Obtener datos
     res = db.table("inventario").select("*").execute()
     df_inv = pd.DataFrame(res.data) if res.data else pd.DataFrame()
     
     if not df_inv.empty:
-        # Métricas principales
-        df_inv['valor_total'] = df_inv['stock'] * df_inv['costo']
-        c1, c2 = st.columns(2)
-        c1.metric("Inversión Total", f"${df_inv['valor_total'].sum():,.2f}")
-        c2.metric("Productos Registrados", len(df_inv))
+        # Cálculos Financieros
+        df_inv['valor_costo'] = df_inv['stock'] * df_inv['costo']
+        df_inv['valor_venta'] = df_inv['stock'] * df_inv['precio_detal']
+        df_inv['ganancia_estimada'] = df_inv['valor_venta'] - df_inv['valor_costo']
 
-        # --- BOTÓN DE EXPORTAR A EXCEL ---
+        # 1. KPIs Superiores (Métricas)
+        m1, m2, m3 = st.columns(3)
+        m1.metric("🛒 Inversión en Stock", f"${df_inv['valor_costo'].sum():,.2f}")
+        m2.metric("💰 Valor de Venta", f"${df_inv['valor_venta'].sum():,.2f}")
+        m3.metric("📈 Ganancia Proyectada", f"${df_inv['ganancia_estimada'].sum():,.2f}")
+
         st.divider()
-        try:
+
+        # 2. Herramientas de Exportación y Filtro
+        col_bus, col_exp = st.columns([3, 1])
+        
+        with col_exp:
             import io
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                # Ordenamos las columnas para que el Excel sea legible
-                columnas_excel = ['nombre', 'stock', 'costo', 'precio_detal', 'precio_mayor', 'min_mayor']
-                df_inv[columnas_excel].to_excel(writer, index=False, sheet_name='Inventario')
+                df_inv[['nombre', 'stock', 'costo', 'precio_detal', 'precio_mayor']].to_excel(writer, index=False, sheet_name='Stock')
             
             st.download_button(
-                label="📥 Descargar Inventario en Excel",
+                label="📥 Exportar a Excel",
                 data=buffer.getvalue(),
-                file_name=f"Inventario_Mediterraneo_{date.today()}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
+                file_name=f"Inventario_{date.today()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-        except Exception as e:
-            st.error(f"Error al generar Excel: {e}")
+
+        # 3. Buscador y Alertas de Stock Crítico
+        bus_inv = col_bus.text_input("🔍 Buscar producto o marca...", placeholder="Ej: Harina, Polar, Mantequilla...")
         
-        st.divider()
-
-        # Buscador y Tabla
-        bus_inv = st.text_input("🔍 Buscar en inventario...")
+        # Filtrado dinámico
         df_m = df_inv[df_inv['nombre'].str.contains(bus_inv, case=False)] if bus_inv else df_inv
-        st.dataframe(df_m[['nombre', 'stock', 'costo', 'precio_detal', 'precio_mayor', 'min_mayor']], use_container_width=True, hide_index=True)
+        
+        # Identificar stock bajo (menos de 10 unidades)
+        bajo_stock = df_m[df_m['stock'] <= 10]
+        if not bajo_stock.empty:
+            st.error(f"⚠️ ATENCIÓN: Tienes {len(bajo_stock)} productos con stock crítico (menos de 10 unidades).")
 
-    # Registro y Edición
-    with st.expander("⚙️ Agregar o Modificar Producto (Admin)"):
-        if st.text_input("Clave de Seguridad", type="password") == CLAVE_ADMIN:
-            with st.form("form_inv"):
-                c1, c2, c3 = st.columns(3)
-                n_nom = c1.text_input("Nombre")
-                n_stk = c1.number_input("Stock", 0)
-                n_cos = c2.number_input("Costo $", 0.0)
-                n_pde = c2.number_input("Precio Detal $", 0.0)
-                n_pma = c3.number_input("Precio Mayor $", 0.0)
-                n_mma = c3.number_input("Mínimo para Mayor", 12)
-                if st.form_submit_button("💾 Guardar Producto"):
-                    data = {"nombre": n_nom, "stock": n_stk, "costo": n_cos, "precio_detal": n_pde, "precio_mayor": n_pma, "min_mayor": n_mma}
-                    db.table("inventario").upsert(data, on_conflict="nombre").execute()
-                    st.success("Inventario Actualizado")
-                    st.rerun()
+        # 4. Tabla Maestra Estilizada
+        # Añadimos un indicador visual (Emoji) según el stock
+        def alert_stock(stk):
+            if stk <= 0: return "❌ Agotado"
+            elif stk <= 10: return "⚠️ Crítico"
+            return "✅ Disponible"
+
+        df_m['Estado'] = df_m['stock'].apply(alert_stock)
+        
+        st.dataframe(
+            df_m[['Estado', 'nombre', 'stock', 'costo', 'precio_detal', 'precio_mayor', 'min_mayor']],
+            use_container_width=True,
+            hide_index=True
+        )
+
+    # 5. Panel de Control de Productos (Admin)
+    with st.expander("🛠️ Panel de Carga y Edición de Mercancía"):
+        if st.text_input("Clave de Administrador", type="password") == CLAVE_ADMIN:
+            with st.form("form_gestion"):
+                c1, c2 = st.columns(2)
+                f_nom = c1.text_input("Nombre Completo del Producto")
+                f_stk = c1.number_input("Cantidad en Almacén (Stock)", 0)
+                f_cos = c2.number_input("Costo de Compra ($)", 0.0, format="%.2f")
+                f_pde = c2.number_input("Precio Venta Detal ($)", 0.0, format="%.2f")
+                
+                c3, c4 = st.columns(2)
+                f_pma = c3.number_input("Precio Venta Mayor ($)", 0.0, format="%.2f")
+                f_mma = c4.number_input("Cantidad Mínima para Mayor", 12)
+                
+                if st.form_submit_button("💾 ACTUALIZAR / REGISTRAR PRODUCTO"):
+                    if f_nom:
+                        data_prod = {
+                            "nombre": f_nom, "stock": f_stk, "costo": f_cos, 
+                            "precio_detal": f_pde, "precio_mayor": f_pma, "min_mayor": f_mma
+                        }
+                        db.table("inventario").upsert(data_prod, on_conflict="nombre").execute()
+                        st.success(f"Producto '{f_nom}' actualizado correctamente.")
+                        st.rerun()
+                    else:
+                        st.warning("El nombre es obligatorio.")
 elif opcion == "🛒 Venta Rápida":
     import time
     st.header("🛒 Terminal de Ventas")
@@ -275,6 +308,7 @@ elif opcion == "📊 Cierre de Caja":
             
     else:
         st.info("No hay registros de ventas para esta fecha.")
+
 
 
 
