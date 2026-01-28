@@ -5,7 +5,7 @@ from datetime import datetime, date
 import time
 
 # --- 1. CONFIGURACIÓN INICIAL ---
-st.set_page_config(page_title="Mediterraneo POS Premium", layout="wide")
+st.set_page_config(page_title="Mediterraneo Express POS Premium", layout="wide")
 
 URL = "https://orrfldqwpjkkooeuqnmp.supabase.co"
 KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9ycmZsZHF3cGpra29vZXVxbm1wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkzMDg5MDEsImV4cCI6MjA4NDg4NDkwMX0.va4XR7_lDF2QV9SBXTusmAa_bgqV9oKwiIhC23hsC7E"
@@ -378,3 +378,4 @@ elif opcion == "📊 Cierre de Caja":
                 st.error("Acceso Denegado: Clave Incorrecta")
     else:
         st.info("No se encontraron movimientos para la fecha seleccionada.")
+
