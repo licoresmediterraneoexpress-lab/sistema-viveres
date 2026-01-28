@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from supabase import create_client
 from datetime import datetime, date
+import time
 
 # --- 1. CONFIGURACIÓN INICIAL ---
 st.set_page_config(page_title="Mediterraneo POS Premium", layout="wide")
@@ -359,3 +360,4 @@ elif opcion == "📊 Cierre de Caja":
                 st.error("Clave Incorrecta")
     else:
         st.info("No hay ventas registradas.")
+
