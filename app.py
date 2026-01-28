@@ -259,39 +259,36 @@ elif opcion == "💸 Gastos":
             db.table("gastos").insert({"descripcion": desc, "monto_usd": monto, "fecha": datetime.now().isoformat()}).execute()
             st.success("Gasto registrado y restado de la utilidad.")
 
-# --- 6. CIERRE DE CAJA (CON APERTURA, PAGO_OTROS Y ARQUEO DE CIERRE) ---
+# --- 6. CIERRE DE CAJA (CON DESGLOSE TOTALIZADO Y APERTURA SEPARADA) ---
 elif opcion == "📊 Cierre de Caja":
     st.header("📊 Gestión de Caja: Apertura y Cierre")
     
-    # --- BLOQUE DE APERTURA MULTIMONEDA ---
+    # --- BLOQUE DE APERTURA MULTIMONEDA SEPARADA ---
     with st.expander("🔑 APERTURA DE JORNADA (Fondo Inicial)", expanded=True):
         f_hoy = date.today().isoformat()
-        res_ap = db.table("gastos").select("*").eq("descripcion", f"APERTURA_{f_hoy}").execute()
+        res_ap = db.table("gastos").select("*").eq("descripcion", f"APERTURA_DETALLE_{f_hoy}").execute()
         
         if not res_ap.data:
             st.subheader("Registro de Fondo Inicial")
             c_ap1, c_ap2, c_ap3 = st.columns(3)
             
             tasa_ap = c_ap1.number_input("Tasa de Cambio Apertura (Bs/$)", 1.0, 500.0, 60.0)
-            ef_bs_ap = c_ap2.number_input("Efectivo en Bs", 0.0)
-            ef_usd_ap = c_ap3.number_input("Efectivo en $", 0.0)
+            ef_bs_ap = c_ap2.number_input("Fondo Efectivo Bs", 0.0)
+            ef_usd_ap = c_ap3.number_input("Fondo Efectivo $", 0.0)
             
-            total_ap_bs = ef_bs_ap + (ef_usd_ap * tasa_ap)
-            total_ap_usd = ef_usd_ap + (ef_bs_ap / tasa_ap)
-            
-            st.markdown(f"**Total Apertura:** {total_ap_bs:,.2f} Bs. / **${total_ap_usd:,.2f}**")
-            
-            if st.button("✅ REGISTRAR APERTURA Y TASA", use_container_width=True):
+            if st.button("✅ REGISTRAR APERTURA", use_container_width=True):
+                # Guardamos ambos montos en un solo registro para el cuadre
                 db.table("gastos").insert({
-                    "descripcion": f"APERTURA_{f_hoy}",
-                    "monto_usd": total_ap_usd,
+                    "descripcion": f"APERTURA_DETALLE_{f_hoy}",
+                    "monto_usd": ef_usd_ap + (ef_bs_ap / tasa_ap), # Valor referencial en USD
+                    "monto_bs_extra": ef_bs_ap, # Columna extra para el fondo en Bs
                     "fecha": datetime.now().isoformat()
                 }).execute()
-                st.success(f"Caja abierta exitosamente.")
+                st.success(f"Caja abierta: {ef_bs_ap} Bs. y ${ef_usd_ap}")
                 st.rerun()
         else:
-            monto_ap_registrado = res_ap.data[0]['monto_usd']
-            st.info(f"🟢 Caja abierta hoy con un fondo equivalente a: **${monto_ap_registrado:,.2f}**")
+            datos_ap = res_ap.data[0]
+            st.info(f"🟢 Apertura hoy: **{datos_ap['monto_bs_extra']:,.2f} Bs.** | **${datos_ap['monto_usd'] - (datos_ap['monto_bs_extra']/60):,.2f} USD**")
 
     st.divider()
 
@@ -304,35 +301,36 @@ elif opcion == "📊 Cierre de Caja":
         df_v = pd.DataFrame(v.data)
         df_g = pd.DataFrame(g.data) if g.data else pd.DataFrame()
         
+        # Filtrado de gastos y apertura
         df_gastos_reales = df_g[~df_g['descripcion'].str.contains("APERTURA_", na=False)]
-        monto_apertura_dia = df_g[df_g['descripcion'].str.contains("APERTURA_", na=False)]['monto_usd'].sum()
+        reg_apertura = df_g[df_g['descripcion'].str.contains("APERTURA_DETALLE_", na=False)]
+        
+        f_bs_inicial = reg_apertura['monto_bs_extra'].sum() if not reg_apertura.empty else 0.0
+        # El fondo en USD es el total menos lo que era Bs convertido
+        f_usd_inicial = (reg_apertura['monto_usd'].sum() - (f_bs_inicial / 60)) if not reg_apertura.empty else 0.0
 
         # 1. DESGLOSE POR MÉTODO DE PAGO
         st.subheader("💳 Detalle por Método de Pago (Sistema)")
         c1, c2, c3, c4, c5, c6 = st.columns(6)
         
-        sum_ef_bs = df_v['pago_efectivo'].sum()
-        sum_pm_bs = df_v['pago_movil'].sum()
-        sum_pu_bs = df_v['pago_punto'].sum()
-        sum_ot_bs = df_v['pago_otros'].sum()
-        sum_ze_usd = df_v['pago_zelle'].sum()
-        sum_di_usd = df_v['pago_divisas'].sum()
+        s_ef_bs = df_v['pago_efectivo'].sum(); s_pm_bs = df_v['pago_movil'].sum()
+        s_pu_bs = df_v['pago_punto'].sum(); s_ot_bs = df_v['pago_otros'].sum()
+        s_ze_usd = df_v['pago_zelle'].sum(); s_di_usd = df_v['pago_divisas'].sum()
 
-        c1.metric("Efectivo Bs", f"{sum_ef_bs:,.2f}")
-        c2.metric("P. Móvil Bs", f"{sum_pm_bs:,.2f}")
-        c3.metric("Punto Bs", f"{sum_pu_bs:,.2f}")
-        c4.metric("Otros Bs", f"{sum_ot_bs:,.2f}")
-        c5.metric("Zelle $", f"${sum_ze_usd:,.2f}")
-        c6.metric("Divisas $", f"${sum_di_usd:,.2f}")
+        c1.metric("Efectivo Bs", f"{s_ef_bs:,.2f}"); c2.metric("P. Móvil Bs", f"{s_pm_bs:,.2f}")
+        c3.metric("Punto Bs", f"{s_pu_bs:,.2f}"); c4.metric("Otros Bs", f"{s_ot_bs:,.2f}")
+        c5.metric("Zelle $", f"${s_ze_usd:,.2f}"); c6.metric("Divisas $", f"${s_di_usd:,.2f}")
         
+        # TOTALIZACIÓN POR MONEDA
+        total_sistema_bs = s_ef_bs + s_pm_bs + s_pu_bs + s_ot_bs
+        total_sistema_usd = s_ze_usd + s_di_usd
+        
+        st.write(f"### 🧮 Total Sistema: **{total_sistema_bs:,.2f} Bs.** | **${total_sistema_usd:,.2f} USD**")
         st.divider()
         
-        # 2. CÁLCULO DE TOTALES Y BALANCE
-        t_usd = df_v['total_usd'].sum()
-        t_cos = df_v['costo_venta'].sum()
-        t_gas = df_gastos_reales['monto_usd'].sum()
-        t_pro = df_v['propina'].sum()
-        efectivo_en_caja_usd = monto_apertura_dia + sum_di_usd
+        # 2. BALANCE DE GANANCIAS
+        t_usd = df_v['total_usd'].sum(); t_cos = df_v['costo_venta'].sum()
+        t_gas = df_gastos_reales['monto_usd'].sum(); t_pro = df_v['propina'].sum()
 
         st.subheader("📈 Balance de Ganancias")
         k1, k2, k3, k4 = st.columns(4)
@@ -341,46 +339,44 @@ elif opcion == "📊 Cierre de Caja":
         k3.metric("GASTOS TOTALES", f"${t_gas:,.2f}")
         k4.metric("UTILIDAD NETA", f"${t_usd - t_cos - t_gas:,.2f}")
 
-        # --- 3. NUEVA SECCIÓN: ARQUEO Y COMPARACIÓN DE CIERRE ---
+        # --- 3. ARQUEO Y COMPARACIÓN DE CIERRE SEPARADO ---
         st.divider()
         st.subheader("🔍 Arqueo de Caja (Comparación Real)")
-        st.write("Ingresa lo que tienes físicamente para comparar con el sistema:")
         
+        # Cálculos de lo que debería haber en mano (Ventas + Fondo Inicial)
+        debe_haber_bs_efectivo = s_ef_bs + f_bs_inicial
+        debe_haber_usd_efectivo = s_di_usd + f_usd_inicial
+
         with st.container():
             col_cont1, col_cont2, col_cont3 = st.columns(3)
+            r_ef_bs = col_cont1.number_input("Efectivo Real en Bs (Contado)", 0.0)
+            r_di_usd = col_cont1.number_input("Divisas Real en $ (Contado)", 0.0)
             
-            # Entradas manuales del usuario
-            real_ef_bs = col_cont1.number_input("Efectivo Real en Bs", 0.0)
-            real_pm_bs = col_cont1.number_input("Pago Móvil Real en Bs", 0.0)
+            r_pm_bs = col_cont2.number_input("Pago Móvil Real Bs", 0.0)
+            r_pu_bs = col_cont2.number_input("Punto Real Bs", 0.0)
             
-            real_pu_bs = col_cont2.number_input("Punto Real en Bs", 0.0)
-            real_ot_bs = col_cont2.number_input("Otros Real en Bs", 0.0)
-            
-            real_ze_usd = col_cont3.number_input("Zelle Real en $", 0.0)
-            real_di_usd = col_cont3.number_input("Divisas Real en $ (Incluye Apertura)", 0.0)
+            r_ze_usd = col_cont3.number_input("Zelle Real $", 0.0)
+            r_ot_bs = col_cont3.number_input("Otros Real Bs", 0.0)
 
-            # Lógica de Comparación
-            st.markdown("### 📋 Resultados del Arqueo")
+            st.markdown("### 📋 Resultados del Cuadre")
             
-            def mostrar_diferencia(label, real, sistema):
+            def check_dif(label, real, sistema):
                 dif = real - sistema
-                if abs(dif) < 0.01:
-                    st.write(f"✅ **{label}:** Cuadrado")
-                elif dif > 0:
-                    st.write(f"🟢 **{label}:** Sobra {dif:,.2f}")
-                else:
-                    st.write(f"🔴 **{label}:** Falta {abs(dif):,.2f}")
+                if abs(dif) < 0.1: st.write(f"✅ **{label}:** Cuadrado")
+                elif dif > 0: st.write(f"🟢 **{label}:** Sobra {dif:,.2f}")
+                else: st.write(f"🔴 **{label}:** Falta {abs(dif):,.2f}")
 
-            c_res1, c_res2 = st.columns(2)
-            with c_res1:
-                mostrar_diferencia("Efectivo Bs", real_ef_bs, sum_ef_bs)
-                mostrar_diferencia("Pago Móvil Bs", real_pm_bs, sum_pm_bs)
-                mostrar_diferencia("Punto Bs", real_pu_bs, sum_pu_bs)
-                mostrar_diferencia("Otros Bs", real_ot_bs, sum_ot_bs)
-            
-            with c_res2:
-                mostrar_diferencia("Zelle $", real_ze_usd, sum_ze_usd)
-                mostrar_diferencia("Divisas $ (Con Apertura)", real_di_usd, efectivo_en_caja_usd)
+            res1, res2 = st.columns(2)
+            with res1:
+                st.write("**--- Moneda Nacional (Bs) ---**")
+                check_dif("Efectivo Bs (Caja)", r_ef_bs, debe_haber_bs_efectivo)
+                check_dif("Pago Móvil Bs", r_pm_bs, s_pm_bs)
+                check_dif("Punto Bs", r_pu_bs, s_pu_bs)
+            with res2:
+                st.write("**--- Divisas ($) ---**")
+                check_dif("Efectivo $ (Caja)", r_di_usd, debe_haber_usd_efectivo)
+                check_dif("Zelle $", r_ze_usd, s_ze_usd)
+                check_dif("Otros Bs", r_ot_bs, s_ot_bs)
 
         st.divider()
         st.info(f"💰 **Sobrante Redondeo (Propina):** ${t_pro:,.2f}")
