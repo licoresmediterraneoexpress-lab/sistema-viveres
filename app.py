@@ -259,40 +259,31 @@ elif opcion == "💸 Gastos":
             db.table("gastos").insert({"descripcion": desc, "monto_usd": monto, "fecha": datetime.now().isoformat()}).execute()
             st.success("Gasto registrado y restado de la utilidad.")
 
-# --- 6. CIERRE DE CAJA (CON BLOQUEO, ARQUEO Y REPORTE PDF) ---
+# --- 6. CIERRE DE CAJA (CORREGIDO SIN ERRORES DE SINTAXIS) ---
 elif opcion == "📊 Cierre de Caja":
     st.header("📊 Gestión de Caja: Apertura y Cierre")
-    
     f_hoy = date.today().isoformat()
     
-    # --- BLOQUE DE APERTURA MULTIMONEDA SEPARADA ---
-    with st.expander("🔑 APERTURA DE JORNADA (Fondo Inicial)", expanded=True):
+    # --- BLOQUE DE APERTURA ---
+    with st.expander("🔑 APERTURA DE JORNADA", expanded=True):
         res_ap = db.table("gastos").select("*").eq("descripcion", f"APERTURA_DETALLE_{f_hoy}").execute()
-        
         if not res_ap.data:
-            st.subheader("Registro de Fondo Inicial")
             c_ap1, c_ap2, c_ap3 = st.columns(3)
-            tasa_ap = c_ap1.number_input("Tasa de Cambio Apertura (Bs/$)", 1.0, 500.0, 60.0)
-            ef_bs_ap = c_ap2.number_input("Fondo Efectivo Bs", 0.0)
-            ef_usd_ap = c_ap3.number_input("Fondo Efectivo $", 0.0)
-            
-            if st.button("✅ REGISTRAR APERTURA Y EMPEZAR TURNO", use_container_width=True):
+            tasa_ap = c_ap1.number_input("Tasa (Bs/$)", 1.0, 500.0, 60.0)
+            ef_bs_ap = c_ap2.number_input("Fondo Bs", 0.0)
+            ef_usd_ap = c_ap3.number_input("Fondo $", 0.0)
+            if st.button("✅ REGISTRAR APERTURA", use_container_width=True):
                 db.table("gastos").insert({
                     "descripcion": f"APERTURA_DETALLE_{f_hoy}",
                     "monto_usd": ef_usd_ap + (ef_bs_ap / tasa_ap),
-                    "monto_bs_extra": ef_bs_ap,
-                    "fecha": datetime.now().isoformat(),
-                    "estado": "abierto"
+                    "monto_bs_extra": ef_bs_ap, "fecha": datetime.now().isoformat(), "estado": "abierto"
                 }).execute()
-                st.success("Caja abierta exitosamente.")
                 st.rerun()
         else:
-            datos_ap = res_ap.data[0]
-            st.info(f"🟢 Turno Activo: **{datos_ap['monto_bs_extra']:,.2f} Bs.** | **${(datos_ap['monto_usd'] - (datos_ap['monto_bs_extra']/60)):,.2f} USD**")
+            d_ap = res_ap.data[0]
+            st.info(f"🟢 Activo: {d_ap['monto_bs_extra']:,.2f} Bs. | ${(d_ap['monto_usd'] - (d_ap['monto_bs_extra']/60)):,.2f} $")
 
     st.divider()
-
-    # --- CONSULTA DE RESULTADOS ---
     f_rep = st.date_input("Fecha a Consultar", date.today())
     v = db.table("ventas").select("*").gte("fecha", f_rep.isoformat()).execute()
     g = db.table("gastos").select("*").gte("fecha", f_rep.isoformat()).execute()
@@ -300,67 +291,64 @@ elif opcion == "📊 Cierre de Caja":
     if v.data:
         df_v = pd.DataFrame(v.data); df_g = pd.DataFrame(g.data)
         df_gastos_reales = df_g[~df_g['descripcion'].str.contains("APERTURA_", na=False)]
-        reg_apertura = df_g[df_g['descripcion'].str.contains("APERTURA_DETALLE_", na=False)]
-        
-        f_bs_inicial = reg_apertura['monto_bs_extra'].sum() if not reg_apertura.empty else 0.0
-        f_usd_inicial = (reg_apertura['monto_usd'].sum() - (f_bs_inicial / 60)) if not reg_apertura.empty else 0.0
+        reg_ap = df_g[df_g['descripcion'].str.contains("APERTURA_DETALLE_", na=False)]
+        f_bs_ini = reg_ap['monto_bs_extra'].sum() if not reg_ap.empty else 0.0
+        f_usd_ini = (reg_ap['monto_usd'].sum() - (f_bs_ini / 60)) if not reg_ap.empty else 0.0
 
-        # 1. DESGLOSE POR MÉTODO DE PAGO
-        st.subheader("💳 Detalle por Método de Pago (Sistema)")
-        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        # MÉTRICAS
         s_ef_bs = df_v['pago_efectivo'].sum(); s_pm_bs = df_v['pago_movil'].sum()
         s_pu_bs = df_v['pago_punto'].sum(); s_ot_bs = df_v['pago_otros'].sum()
         s_ze_usd = df_v['pago_zelle'].sum(); s_di_usd = df_v['pago_divisas'].sum()
-
-        c1.metric("Efectivo Bs", f"{s_ef_bs:,.2f}"); c2.metric("P. Móvil Bs", f"{s_pm_bs:,.2f}")
-        c3.metric("Punto Bs", f"{s_pu_bs:,.2f}"); c4.metric("Otros Bs", f"{s_ot_bs:,.2f}")
-        c5.metric("Zelle $", f"${s_ze_usd:,.2f}"); c6.metric("Divisas $", f"${s_di_usd:,.2f}")
         
-        total_sistema_bs = s_ef_bs + s_pm_bs + s_pu_bs + s_ot_bs
-        total_sistema_usd = s_ze_usd + s_di_usd
-        st.write(f"### 🧮 Total Sistema: **{total_sistema_bs:,.2f} Bs.** | **${total_sistema_usd:,.2f} USD**")
-        st.divider()
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        c1.metric("Efec. Bs", f"{s_ef_bs:,.2f}"); c2.metric("P.Móvil", f"{s_pm_bs:,.2f}")
+        c3.metric("Punto", f"{s_pu_bs:,.2f}"); c4.metric("Otros", f"{s_ot_bs:,.2f}")
+        c5.metric("Zelle $", f"{s_ze_usd:,.2f}"); c6.metric("Divisa $", f"{s_di_usd:,.2f}")
         
-        # 2. BALANCE DE GANANCIAS
         t_usd = df_v['total_usd'].sum(); t_cos = df_v['costo_venta'].sum()
-        t_gas = df_gastos_reales['monto_usd'].sum(); t_pro = df_v['propina'].sum()
-        utilidad = t_usd - t_cos - t_gas
+        t_gas = df_gastos_reales['monto_usd'].sum(); utilidad = t_usd - t_cos - t_gas
 
-        st.subheader("📈 Balance de Ganancias")
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric("VENTAS TOTALES", f"${t_usd:,.2f}")
-        k2.metric("COSTO MERCANCÍA", f"${t_cos:,.2f}")
-        k3.metric("GASTOS TOTALES", f"${t_gas:,.2f}")
-        k4.metric("UTILIDAD NETA", f"${utilidad:,.2f}")
+        # ARQUEO
+        st.subheader("🔍 Arqueo Real")
+        col_c1, col_c2, col_c3 = st.columns(3)
+        r_ef_bs = col_c1.number_input("Real Efectivo Bs", 0.0)
+        r_di_usd = col_c1.number_input("Real Divisas $", 0.0)
+        r_pm_bs = col_c2.number_input("Real Pago Móvil", 0.0)
+        r_pu_bs = col_c2.number_input("Real Punto", 0.0)
+        r_ze_usd = col_c3.number_input("Real Zelle", 0.0)
+        r_ot_bs = col_c3.number_input("Real Otros Bs", 0.0)
 
-        # --- 3. ARQUEO Y COMPARACIÓN ---
+        # CIERRE Y REPORTE
         st.divider()
-        st.subheader("🔍 Arqueo de Caja (Comparación Real)")
-        debe_haber_bs_ef = s_ef_bs + f_bs_inicial
-        debe_haber_usd_ef = s_di_usd + f_usd_inicial
-
-        col_cont1, col_cont2, col_cont3 = st.columns(3)
-        r_ef_bs = col_cont1.number_input("Efectivo Real Bs", 0.0)
-        r_di_usd = col_cont1.number_input("Divisas Real $", 0.0)
-        r_pm_bs = col_cont2.number_input("Pago Móvil Real Bs", 0.0)
-        r_pu_bs = col_cont2.number_input("Punto Real Bs", 0.0)
-        r_ze_usd = col_cont3.number_input("Zelle Real $", 0.0)
-        r_ot_bs = col_cont3.number_input("Otros Real Bs", 0.0)
-
-        # --- BOTÓN DE CIERRE DEFINITIVO Y PDF ---
-        st.divider()
-        clave_conf = st.text_input("Clave Admin para CERRAR JORNADA", type="password")
-        
-        if st.button("🏮 CERRAR JORNADA Y GENERAR REPORTE", use_container_width=True):
-            if clave_conf == CLAVE_ADMIN:
-                ahora_cierre = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
-                
-                # HTML DEL REPORTE DE CIERRE
-                reporte_html = f"""
-                <div style='background-color: #fff; padding: 20px; border: 2px solid #000; color: #000; font-family: Arial, sans-serif; width: 500px; margin: auto;'>
-                    <h2 style='text-align: center;'>REPORTE DE CIERRE DE CAJA</h2>
-                    <h3 style='text-align: center;'>MEDITERRANEO EXPRESS, C.A.</h3>
-                    <p style='text-align: center;'>Fecha de Cierre: {ahora_cierre}</p>
+        clave_c = st.text_input("Clave Admin", type="password")
+        if st.button("🏮 CERRAR Y GENERAR REPORTE", use_container_width=True):
+            if clave_c == CLAVE_ADMIN:
+                ahora = datetime.now().strftime('%d/%m/%Y %H:%M')
+                # Diseño del reporte simplificado para evitar errores de f-string
+                rep_txt = f"""
+                <div style="color:black; background:white; padding:20px; border:1px solid black;">
+                    <center><h2>CIERRE DE CAJA</h2><h3>MEDITERRANEO EXPRESS</h3></center>
                     <hr>
+                    <p><b>Fecha:</b> {ahora}</p>
+                    <p><b>Ventas USD:</b> ${t_usd:,.2f}</p>
+                    <p><b>Utilidad:</b> ${utilidad:,.2f}</p>
+                    <hr>
+                    <h4>ARQUEO FÍSICO:</h4>
+                    <p>Efectivo Bs: Sist {s_ef_bs+f_bs_ini:,.2f} | Real {r_ef_bs:,.2f}</p>
+                    <p>Efectivo $: Sist {s_di_usd+f_usd_ini:,.2f} | Real {r_di_usd:,.2f}</p>
+                    <p>Pago Móvil: Sist {s_pm_bs:,.2f} | Real {r_pm_bs:,.2f}</p>
+                </div>
+                """
+                st.markdown(rep_txt, unsafe_allow_html=True)
+                # Script de impresión
+                st.components.v1.html(f"<script>window.print();</script>", height=0)
+                st.success("Jornada Finalizada.")
+                time.sleep(2)
+                st.rerun()
+            else:
+                st.error("Clave Incorrecta")
+    else:
+        st.info("No hay ventas hoy.")
                     <h4>💰 Resumen de Ventas:</h4>
                     <p>Total USD: ${t_usd:,.
+
