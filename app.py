@@ -259,7 +259,7 @@ elif opcion == "💸 Gastos":
             db.table("gastos").insert({"descripcion": desc, "monto_usd": monto, "fecha": datetime.now().isoformat()}).execute()
             st.success("Gasto registrado y restado de la utilidad.")
 
-# --- 6. CIERRE DE CAJA (CON BLOQUEO DE JORNADA Y ARQUEO) ---
+# --- 6. CIERRE DE CAJA (CON BLOQUEO, ARQUEO Y REPORTE PDF) ---
 elif opcion == "📊 Cierre de Caja":
     st.header("📊 Gestión de Caja: Apertura y Cierre")
     
@@ -267,13 +267,11 @@ elif opcion == "📊 Cierre de Caja":
     
     # --- BLOQUE DE APERTURA MULTIMONEDA SEPARADA ---
     with st.expander("🔑 APERTURA DE JORNADA (Fondo Inicial)", expanded=True):
-        # Buscamos si hay una apertura activa que NO haya sido cerrada
         res_ap = db.table("gastos").select("*").eq("descripcion", f"APERTURA_DETALLE_{f_hoy}").execute()
         
         if not res_ap.data:
             st.subheader("Registro de Fondo Inicial")
             c_ap1, c_ap2, c_ap3 = st.columns(3)
-            
             tasa_ap = c_ap1.number_input("Tasa de Cambio Apertura (Bs/$)", 1.0, 500.0, 60.0)
             ef_bs_ap = c_ap2.number_input("Fondo Efectivo Bs", 0.0)
             ef_usd_ap = c_ap3.number_input("Fondo Efectivo $", 0.0)
@@ -284,9 +282,9 @@ elif opcion == "📊 Cierre de Caja":
                     "monto_usd": ef_usd_ap + (ef_bs_ap / tasa_ap),
                     "monto_bs_extra": ef_bs_ap,
                     "fecha": datetime.now().isoformat(),
-                    "estado": "abierto" # Marcador de control
+                    "estado": "abierto"
                 }).execute()
-                st.success("Caja abierta. Todas las ventas desde ahora entrarán en este reporte.")
+                st.success("Caja abierta exitosamente.")
                 st.rerun()
         else:
             datos_ap = res_ap.data[0]
@@ -301,7 +299,6 @@ elif opcion == "📊 Cierre de Caja":
     
     if v.data:
         df_v = pd.DataFrame(v.data); df_g = pd.DataFrame(g.data)
-        
         df_gastos_reales = df_g[~df_g['descripcion'].str.contains("APERTURA_", na=False)]
         reg_apertura = df_g[df_g['descripcion'].str.contains("APERTURA_DETALLE_", na=False)]
         
@@ -327,57 +324,43 @@ elif opcion == "📊 Cierre de Caja":
         # 2. BALANCE DE GANANCIAS
         t_usd = df_v['total_usd'].sum(); t_cos = df_v['costo_venta'].sum()
         t_gas = df_gastos_reales['monto_usd'].sum(); t_pro = df_v['propina'].sum()
+        utilidad = t_usd - t_cos - t_gas
 
         st.subheader("📈 Balance de Ganancias")
         k1, k2, k3, k4 = st.columns(4)
         k1.metric("VENTAS TOTALES", f"${t_usd:,.2f}")
         k2.metric("COSTO MERCANCÍA", f"${t_cos:,.2f}")
         k3.metric("GASTOS TOTALES", f"${t_gas:,.2f}")
-        k4.metric("UTILIDAD NETA", f"${t_usd - t_cos - t_gas:,.2f}")
+        k4.metric("UTILIDAD NETA", f"${utilidad:,.2f}")
 
         # --- 3. ARQUEO Y COMPARACIÓN ---
         st.divider()
         st.subheader("🔍 Arqueo de Caja (Comparación Real)")
-        debe_haber_bs_efectivo = s_ef_bs + f_bs_inicial
-        debe_haber_usd_efectivo = s_di_usd + f_usd_inicial
+        debe_haber_bs_ef = s_ef_bs + f_bs_inicial
+        debe_haber_usd_ef = s_di_usd + f_usd_inicial
 
-        with st.container():
-            col_cont1, col_cont2, col_cont3 = st.columns(3)
-            r_ef_bs = col_cont1.number_input("Efectivo Real en Bs (Contado)", 0.0)
-            r_di_usd = col_cont1.number_input("Divisas Real en $ (Contado)", 0.0)
-            r_pm_bs = col_cont2.number_input("Pago Móvil Real Bs", 0.0)
-            r_pu_bs = col_cont2.number_input("Punto Real Bs", 0.0)
-            r_ze_usd = col_cont3.number_input("Zelle Real $", 0.0)
-            r_ot_bs = col_cont3.number_input("Otros Real Bs", 0.0)
+        col_cont1, col_cont2, col_cont3 = st.columns(3)
+        r_ef_bs = col_cont1.number_input("Efectivo Real Bs", 0.0)
+        r_di_usd = col_cont1.number_input("Divisas Real $", 0.0)
+        r_pm_bs = col_cont2.number_input("Pago Móvil Real Bs", 0.0)
+        r_pu_bs = col_cont2.number_input("Punto Real Bs", 0.0)
+        r_ze_usd = col_cont3.number_input("Zelle Real $", 0.0)
+        r_ot_bs = col_cont3.number_input("Otros Real Bs", 0.0)
 
-            st.markdown("### 📋 Resultados del Cuadre")
-            def check_dif(label, real, sistema):
-                dif = real - sistema
-                if abs(dif) < 0.1: st.write(f"✅ **{label}:** Cuadrado")
-                elif dif > 0: st.write(f"🟢 **{label}:** Sobra {dif:,.2f}")
-                else: st.write(f"🔴 **{label}:** Falta {abs(dif):,.2f}")
-
-            res1, res2 = st.columns(2)
-            with res1:
-                check_dif("Efectivo Bs (Caja)", r_ef_bs, debe_haber_bs_efectivo)
-                check_dif("Pago Móvil Bs", r_pm_bs, s_pm_bs)
-                check_dif("Punto Bs", r_pu_bs, s_pu_bs)
-            with res2:
-                check_dif("Efectivo $ (Caja)", r_di_usd, debe_haber_usd_efectivo)
-                check_dif("Zelle $", r_ze_usd, s_ze_usd)
-                check_dif("Otros Bs", r_ot_bs, s_ot_bs)
-
-        # --- BOTÓN DE CIERRE DEFINITIVO ---
+        # --- BOTÓN DE CIERRE DEFINITIVO Y PDF ---
         st.divider()
-        if st.button("🏮 CERRAR JORNADA Y BLOQUEAR CAJA", use_container_width=True):
-            if st.text_input("Confirma con Clave Admin para Cerrar", type="password") == CLAVE_ADMIN:
-                # Aquí podrías mover las ventas a un histórico o simplemente marcar el gasto de apertura como 'cerrado'
-                st.success("Jornada cerrada. Mañana el sistema pedirá una nueva apertura.")
-                # Se limpia el estado de apertura en la sesión si existiera
-                st.balloons()
-                time.sleep(2)
-                st.rerun()
-
-        st.info(f"💰 **Sobrante Redondeo (Propina):** ${t_pro:,.2f}")
-    else:
-        st.info("No hay registros de ventas para esta fecha.")
+        clave_conf = st.text_input("Clave Admin para CERRAR JORNADA", type="password")
+        
+        if st.button("🏮 CERRAR JORNADA Y GENERAR REPORTE", use_container_width=True):
+            if clave_conf == CLAVE_ADMIN:
+                ahora_cierre = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+                
+                # HTML DEL REPORTE DE CIERRE
+                reporte_html = f"""
+                <div style='background-color: #fff; padding: 20px; border: 2px solid #000; color: #000; font-family: Arial, sans-serif; width: 500px; margin: auto;'>
+                    <h2 style='text-align: center;'>REPORTE DE CIERRE DE CAJA</h2>
+                    <h3 style='text-align: center;'>MEDITERRANEO EXPRESS, C.A.</h3>
+                    <p style='text-align: center;'>Fecha de Cierre: {ahora_cierre}</p>
+                    <hr>
+                    <h4>💰 Resumen de Ventas:</h4>
+                    <p>Total USD: ${t_usd:,.
