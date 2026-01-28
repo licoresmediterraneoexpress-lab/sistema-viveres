@@ -39,113 +39,116 @@ with st.sidebar:
     if st.button("🗑️ Vaciar Carrito"):
         st.session_state.car = []
         st.rerun()
-# --- 3. MÓDULO INVENTARIO PROFESIONAL ---
+# --- 3. MÓDULO INVENTARIO PROFESIONAL (VERSIÓN CORREGIDA Y UNIFICADA) ---
 if opcion == "📦 Inventario":
     import time
     st.header("📦 Centro de Control de Inventario")
     
-    # 1. Obtener datos desde Supabase
+    # 1. Obtener datos actualizados
     res = db.table("inventario").select("*").execute()
     df_inv = pd.DataFrame(res.data) if res.data else pd.DataFrame()
     
     if not df_inv.empty:
-        # Limpieza de datos para cálculos
+        # Limpieza de datos
         for col in ['stock', 'costo', 'precio_detal', 'precio_mayor']:
             df_inv[col] = pd.to_numeric(df_inv[col], errors='coerce').fillna(0)
         
-        # Cálculos Financieros
+        # Cálculos de valorización
         df_inv['valor_costo'] = df_inv['stock'] * df_inv['costo']
         df_inv['valor_venta'] = df_inv['stock'] * df_inv['precio_detal']
         df_inv['ganancia_estimada'] = df_inv['valor_venta'] - df_inv['valor_costo']
 
         # KPIs
         m1, m2, m3 = st.columns(3)
-        m1.metric("🛒 Inversión", f"${df_inv['valor_costo'].sum():,.2f}")
-        m2.metric("💰 Valor Venta", f"${df_inv['valor_venta'].sum():,.2f}")
-        m3.metric("📈 Ganancia", f"${df_inv['ganancia_estimada'].sum():,.2f}")
+        m1.metric("🛒 Inversión Total", f"${df_inv['valor_costo'].sum():,.2f}")
+        m2.metric("💰 Valor de Venta", f"${df_inv['valor_venta'].sum():,.2f}")
+        m3.metric("📈 Ganancia Proyectada", f"${df_inv['ganancia_estimada'].sum():,.2f}")
 
         st.divider()
 
-        # 2. Buscador y Filtro
-        bus_inv = st.text_input("🔍 Buscar producto...", placeholder="Ej: Harina...")
+        # 2. Buscador y Tabla
+        bus_inv = st.text_input("🔍 Buscar producto...", placeholder="Escriba nombre del producto...")
         df_m = df_inv[df_inv['nombre'].str.contains(bus_inv, case=False)] if bus_inv else df_inv
         
-        # 3. Tabla Maestra
         def alert_stock(stk):
             return "❌ Agotado" if stk <= 0 else "⚠️ Bajo" if stk <= 10 else "✅ OK"
         
         df_m['Estado'] = df_m['stock'].apply(alert_stock)
-        st.dataframe(df_m[['Estado', 'nombre', 'stock', 'costo', 'precio_detal', 'precio_mayor', 'min_mayor']], 
-                     use_container_width=True, hide_index=True)
+        
+        # Mostramos la tabla principal
+        st.subheader("📋 Existencias en Almacén")
+        st.dataframe(
+            df_m[['Estado', 'nombre', 'stock', 'costo', 'precio_detal', 'precio_mayor', 'min_mayor']], 
+            use_container_width=True, hide_index=True
+        )
 
-    # --- 4. FORMULARIO DE REGISTRO (SIN ERRORES) ---
+    # --- 3. FORMULARIO ÚNICO DE CARGA Y EDICIÓN ---
     st.divider()
-    with st.expander("🆕 Agregar o Actualizar Producto", expanded=True):
-        with st.form("form_inv", clear_on_submit=True):
-            c1, c2 = st.columns(2)
-            n_prod = c1.text_input("Nombre del Producto").strip().upper()
-            s_prod = c2.number_input("Cantidad en Stock", step=0.01)
-            
-            c3, c4, c5 = st.columns(3)
-            cost_p = c3.number_input("Costo ($)", format="%.2f", step=0.01)
-            detal_p = c4.number_input("Precio Detal ($)", format="%.2f", step=0.01)
-            mayor_p = c5.number_input("Precio Mayor ($)", format="%.2f", step=0.01)
-            c6 = st.number_input("Mínimo Mayorista", min_value=1, step=1)
-            
-            if st.form_submit_button("💾 GUARDAR PRODUCTO"):
-                if n_prod:
-                    # Datos preparados para Supabase
-                    data_p = {
-                        "nombre": n_prod,
-                        "stock": float(s_prod),
-                        "costo": float(cost_p),
-                        "precio_detal": float(detal_p),
-                        "precio_mayor": float(mayor_p),
-                        "min_mayor": int(c6)
-                    }
-                    try:
-                        # Intentamos insertar. Si el nombre ya existe, la DB lanzará un error
-                        # por la restricción 'product_name_unique' que ya creaste.
-                        db.table("inventario").insert(data_p).execute()
-                        st.success(f"✨ {n_prod} registrado como nuevo.")
-                    except:
-                        # Si falló la inserción (porque ya existe), lo actualizamos
-                        db.table("inventario").update(data_p).eq("nombre", n_prod).execute()
-                        st.success(f"✅ {n_prod} actualizado correctamente.")
-                    
-                    time.sleep(1)
-                    st.rerun()
-                else:
-                    st.warning("El nombre es obligatorio.")
-
-    # 5. Panel de Control de Productos (Admin)
-    with st.expander("🛠️ Panel de Carga y Edición de Mercancía"):
-        if st.text_input("Clave de Administrador", type="password") == CLAVE_ADMIN:
-            with st.form("form_gestion"):
+    col_izq, col_der = st.columns(2)
+    
+    with col_izq:
+        with st.expander("📝 REGISTRAR O ACTUALIZAR PRODUCTO", expanded=True):
+            with st.form("form_registro_unico", clear_on_submit=True):
+                n_prod = st.text_input("Nombre del Producto").strip().upper()
                 c1, c2 = st.columns(2)
-                f_nom = c1.text_input("Nombre Completo del Producto")
-                f_stk = c1.number_input("Cantidad en Almacén (Stock)", 0)
-                f_cos = c2.number_input("Costo de Compra ($)", 0.0, format="%.2f")
-                f_pde = c2.number_input("Precio Venta Detal ($)", 0.0, format="%.2f")
+                s_prod = c1.number_input("Cantidad en Stock", min_value=0.0, step=1.0)
+                cost_p = c2.number_input("Costo Compra ($)", min_value=0.0, format="%.2f")
                 
                 c3, c4 = st.columns(2)
-                f_pma = c3.number_input("Precio Venta Mayor ($)", 0.0, format="%.2f")
-                f_mma = c4.number_input("Cantidad Mínima para Mayor", 12)
+                detal_p = c3.number_input("Venta Detal ($)", min_value=0.0, format="%.2f")
+                mayor_p = c4.number_input("Venta Mayor ($)", min_value=0.0, format="%.2f")
                 
-                if st.form_submit_button("💾 ACTUALIZAR / REGISTRAR PRODUCTO"):
-                    if f_nom:
-                        data_prod = {
-                            "nombre": f_nom, "stock": f_stk, "costo": f_cos, 
-                            "precio_detal": f_pde, "precio_mayor": f_pma, "min_mayor": f_mma
+                m_mayor = st.number_input("Mínimo para Mayorista", min_value=1, value=12)
+                
+                btn_guardar = st.form_submit_button("💾 GUARDAR CAMBIOS EN INVENTARIO")
+                
+                if btn_guardar:
+                    if n_prod:
+                        data_p = {
+                            "nombre": n_prod,
+                            "stock": float(s_prod),
+                            "costo": float(cost_p),
+                            "precio_detal": float(detal_p),
+                            "precio_mayor": float(mayor_p),
+                            "min_mayor": int(m_mayor)
                         }
-                        db.table("inventario").upsert(data_prod, on_conflict="nombre").execute()
-                        st.success(f"Producto '{f_nom}' actualizado correctamente.")
+                        try:
+                            # Intentamos insertar; si falla por nombre duplicado, actualizamos.
+                            # Esto aprovecha la restricción UNIQUE que pusimos en Supabase.
+                            db.table("inventario").insert(data_p).execute()
+                            st.success(f"✨ '{n_prod}' registrado como nuevo producto.")
+                        except:
+                            db.table("inventario").update(data_p).eq("nombre", n_prod).execute()
+                            st.success(f"✅ '{n_prod}' actualizado correctamente.")
+                        
+                        time.sleep(1)
                         st.rerun()
                     else:
-                        st.warning("El nombre es obligatorio.")
+                        st.error("El nombre es obligatorio.")
+
+    with col_der:
+        with st.expander("🗑️ ELIMINAR PRODUCTO"):
+            st.warning("Esta acción no se puede deshacer.")
+            if not df_inv.empty:
+                prod_a_borrar = st.selectbox("Seleccione producto a eliminar", ["---"] + df_inv['nombre'].tolist())
+                pass_admin = st.text_input("Clave de Seguridad", type="password", key="del_pass")
+                
+                if st.button("❌ ELIMINAR DEFINITIVAMENTE"):
+                    if pass_admin == CLAVE_ADMIN:
+                        if prod_a_borrar != "---":
+                            db.table("inventario").delete().eq("nombre", prod_a_borrar).execute()
+                            st.error(f"Producto '{prod_a_borrar}' eliminado.")
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.info("Seleccione un producto válido.")
+                    else:
+                        st.error("Clave administrativa incorrecta.")
+            else:
+                st.info("No hay productos para eliminar.")
+
+# --- SIGUIENTE BLOQUE ---
 elif opcion == "🛒 Venta Rápida":
-    import time
-    st.header("🛒 Terminal de Ventas")
     
     # 1. Configuración de Tasa
     with st.sidebar:
@@ -392,6 +395,7 @@ elif opcion == "📊 Cierre de Caja":
                 st.error("Acceso Denegado: Clave Incorrecta")
     else:
         st.info("No se encontraron movimientos para la fecha seleccionada.")
+
 
 
 
