@@ -49,127 +49,74 @@ if opcion == "📦 Inventario":
     df_inv = pd.DataFrame(res.data) if res.data else pd.DataFrame()
     
     if not df_inv.empty:
-        # Asegurar que los tipos de datos en el DataFrame sean correctos para cálculos
-        df_inv['stock'] = df_inv['stock'].astype(float)
-        df_inv['costo'] = df_inv['costo'].astype(float)
-        df_inv['precio_detal'] = df_inv['precio_detal'].astype(float)
+        # Limpieza de datos para cálculos
+        for col in ['stock', 'costo', 'precio_detal', 'precio_mayor']:
+            df_inv[col] = pd.to_numeric(df_inv[col], errors='coerce').fillna(0)
         
         # Cálculos Financieros
         df_inv['valor_costo'] = df_inv['stock'] * df_inv['costo']
         df_inv['valor_venta'] = df_inv['stock'] * df_inv['precio_detal']
         df_inv['ganancia_estimada'] = df_inv['valor_venta'] - df_inv['valor_costo']
 
-        # KPIs Superiores
+        # KPIs
         m1, m2, m3 = st.columns(3)
-        m1.metric("🛒 Inversión en Stock", f"${df_inv['valor_costo'].sum():,.2f}")
-        m2.metric("💰 Valor de Venta", f"${df_inv['valor_venta'].sum():,.2f}")
-        m3.metric("📈 Ganancia Proyectada", f"${df_inv['ganancia_estimada'].sum():,.2f}")
+        m1.metric("🛒 Inversión", f"${df_inv['valor_costo'].sum():,.2f}")
+        m2.metric("💰 Valor Venta", f"${df_inv['valor_venta'].sum():,.2f}")
+        m3.metric("📈 Ganancia", f"${df_inv['ganancia_estimada'].sum():,.2f}")
 
         st.divider()
 
-        # 2. Herramientas de Exportación y Filtro
-        col_bus, col_exp = st.columns([3, 1])
-        
-        with col_exp:
-            import io
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                df_inv[['nombre', 'stock', 'costo', 'precio_detal', 'precio_mayor']].to_excel(writer, index=False, sheet_name='Stock')
-            
-            st.download_button(
-                label="📥 Exportar a Excel",
-                data=buffer.getvalue(),
-                file_name=f"Inventario_{date.today()}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-
-        # 3. Buscador y Alertas
-        bus_inv = col_bus.text_input("🔍 Buscar producto...", placeholder="Ej: Harina, Polar...")
-        
-        # Filtrado dinámico
+        # 2. Buscador y Filtro
+        bus_inv = st.text_input("🔍 Buscar producto...", placeholder="Ej: Harina...")
         df_m = df_inv[df_inv['nombre'].str.contains(bus_inv, case=False)] if bus_inv else df_inv
         
-        # Alerta de Stock Crítico
-        bajo_stock = df_m[df_m['stock'] <= 5] # Bajamos a 5 para que sea realmente crítico
-        if not bajo_stock.empty:
-            st.warning(f"⚠️ ATENCIÓN: Tienes {len(bajo_stock)} productos con stock muy bajo (5 o menos).")
-
-        # 4. Visualización de Tabla
+        # 3. Tabla Maestra
         def alert_stock(stk):
-            if stk <= 0: return "❌ Agotado"
-            elif stk <= 10: return "⚠️ Bajo"
-            return "✅ OK"
-
-        df_m['Estado'] = df_m['stock'].apply(alert_stock)
+            return "❌ Agotado" if stk <= 0 else "⚠️ Bajo" if stk <= 10 else "✅ OK"
         
-        st.dataframe(
-            df_m[['Estado', 'nombre', 'stock', 'costo', 'precio_detal', 'precio_mayor', 'min_mayor']],
-            use_container_width=True,
-            hide_index=True
-        )
+        df_m['Estado'] = df_m['stock'].apply(alert_stock)
+        st.dataframe(df_m[['Estado', 'nombre', 'stock', 'costo', 'precio_detal', 'precio_mayor', 'min_mayor']], 
+                     use_container_width=True, hide_index=True)
 
-    # --- 5. FORMULARIO DE REGISTRO / ACTUALIZACIÓN (SOLUCIÓN ERROR BIGINT) ---
+    # --- 4. FORMULARIO DE REGISTRO (SIN ERRORES) ---
     st.divider()
-    tab1, tab2 = st.tabs(["🆕 Registro / Actualización", "⚙️ Gestión Rápida"])
-    
-    with tab1:
+    with st.expander("🆕 Agregar o Actualizar Producto", expanded=True):
         with st.form("form_inv", clear_on_submit=True):
-            st.subheader("Datos del Producto")
             c1, c2 = st.columns(2)
-            n_prod = c1.text_input("Nombre del Producto (Ej: Harina Pan 1kg)")
-            # Usamos int() al enviar a la DB para evitar el error de sintaxis 22P02
-            s_prod = c2.number_input("Cantidad en Stock", min_value=0.0, step=1.0, value=0.0)
+            n_prod = c1.text_input("Nombre del Producto").strip().upper()
+            s_prod = c2.number_input("Cantidad en Stock", step=0.01)
             
             c3, c4, c5 = st.columns(3)
-            cost_p = c3.number_input("Costo Unitario ($)", min_value=0.0, format="%.2f")
-            detal_p = c4.number_input("Precio Detal ($)", min_value=0.0, format="%.2f")
-            mayor_p = c5.number_input("Precio Mayor ($)", min_value=0.0, format="%.2f")
+            cost_p = c3.number_input("Costo ($)", format="%.2f", step=0.01)
+            detal_p = c4.number_input("Precio Detal ($)", format="%.2f", step=0.01)
+            mayor_p = c5.number_input("Precio Mayor ($)", format="%.2f", step=0.01)
+            c6 = st.number_input("Mínimo Mayorista", min_value=1, step=1)
             
-            c6 = st.number_input("Mínimo para Mayorista (Unidades)", min_value=1, value=12)
-            
-            if st.form_submit_button("💾 GUARDAR CAMBIOS"):
+            if st.form_submit_button("💾 GUARDAR PRODUCTO"):
                 if n_prod:
-                    # LIMPIEZA Y CONVERSIÓN DE DATOS (Crucial para Supabase)
+                    # Datos preparados para Supabase
                     data_p = {
-                        "nombre": n_prod.strip().upper(),
-                        "stock": int(s_prod),          # Forzamos entero para BIGINT
-                        "costo": float(cost_p),        # Forzamos float para decimales
+                        "nombre": n_prod,
+                        "stock": float(s_prod),
+                        "costo": float(cost_p),
                         "precio_detal": float(detal_p),
                         "precio_mayor": float(mayor_p),
-                        "min_mayor": int(c6)           # Forzamos entero
+                        "min_mayor": int(c6)
                     }
                     try:
-                        # Verificamos si existe por nombre
-                        check = db.table("inventario").select("id").eq("nombre", n_prod.strip().upper()).execute()
-                        
-                        if check.data:
-                            # ACTUALIZAR
-                            db.table("inventario").update(data_p).eq("id", check.data[0]['id']).execute()
-                            st.success(f"✅ {n_prod.upper()} actualizado correctamente.")
-                        else:
-                            # INSERTAR NUEVO
-                            db.table("inventario").insert(data_p).execute()
-                            st.success(f"✨ {n_prod.upper()} registrado como nuevo producto.")
-                        
-                        time.sleep(1.5)
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ Error de base de datos: {e}")
+                        # Intentamos insertar. Si el nombre ya existe, la DB lanzará un error
+                        # por la restricción 'product_name_unique' que ya creaste.
+                        db.table("inventario").insert(data_p).execute()
+                        st.success(f"✨ {n_prod} registrado como nuevo.")
+                    except:
+                        # Si falló la inserción (porque ya existe), lo actualizamos
+                        db.table("inventario").update(data_p).eq("nombre", n_prod).execute()
+                        st.success(f"✅ {n_prod} actualizado correctamente.")
+                    
+                    time.sleep(1)
+                    st.rerun()
                 else:
-                    st.warning("Debe ingresar un nombre.")
-
-    with tab2:
-        st.subheader("Eliminar Producto")
-        if not df_inv.empty:
-            prod_eliminar = st.selectbox("Seleccione producto a eliminar", df_inv['nombre'].tolist())
-            confirmar = st.checkbox(f"Confirmo que deseo eliminar {prod_eliminar}")
-            if st.button("🗑️ Eliminar Definitivamente") and confirmar:
-                db.table("inventario").delete().eq("nombre", prod_eliminar).execute()
-                st.success(f"Producto {prod_eliminar} eliminado.")
-                time.sleep(1)
-                st.rerun()
-        else:
-            st.info("No hay productos registrados.")
+                    st.warning("El nombre es obligatorio.")
 
     # 5. Panel de Control de Productos (Admin)
     with st.expander("🛠️ Panel de Carga y Edición de Mercancía"):
@@ -445,6 +392,7 @@ elif opcion == "📊 Cierre de Caja":
                 st.error("Acceso Denegado: Clave Incorrecta")
     else:
         st.info("No se encontraron movimientos para la fecha seleccionada.")
+
 
 
 
