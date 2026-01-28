@@ -49,7 +49,7 @@ if opcion == "📦 Inventario":
     df_inv = pd.DataFrame(res.data) if res.data else pd.DataFrame()
     
     if not df_inv.empty:
-        # Limpieza de datos
+        # Limpieza de datos para evitar errores de cálculo
         for col in ['stock', 'costo', 'precio_detal', 'precio_mayor']:
             df_inv[col] = pd.to_numeric(df_inv[col], errors='coerce').fillna(0)
         
@@ -58,7 +58,7 @@ if opcion == "📦 Inventario":
         df_inv['valor_venta'] = df_inv['stock'] * df_inv['precio_detal']
         df_inv['ganancia_estimada'] = df_inv['valor_venta'] - df_inv['valor_costo']
 
-        # KPIs
+        # KPIs superiores
         m1, m2, m3 = st.columns(3)
         m1.metric("🛒 Inversión Total", f"${df_inv['valor_costo'].sum():,.2f}")
         m2.metric("💰 Valor de Venta", f"${df_inv['valor_venta'].sum():,.2f}")
@@ -75,7 +75,6 @@ if opcion == "📦 Inventario":
         
         df_m['Estado'] = df_m['stock'].apply(alert_stock)
         
-        # Mostramos la tabla principal
         st.subheader("📋 Existencias en Almacén")
         st.dataframe(
             df_m[['Estado', 'nombre', 'stock', 'costo', 'precio_detal', 'precio_mayor', 'min_mayor']], 
@@ -88,7 +87,8 @@ if opcion == "📦 Inventario":
     
     with col_izq:
         with st.expander("📝 REGISTRAR O ACTUALIZAR PRODUCTO", expanded=True):
-            with st.form("form_registro_unico", clear_on_submit=True):
+            # Usamos una clave única para el formulario
+            with st.form("form_registro_final", clear_on_submit=False):
                 n_prod = st.text_input("Nombre del Producto").strip().upper()
                 c1, c2 = st.columns(2)
                 s_prod = c1.number_input("Cantidad en Stock", min_value=0.0, step=1.0)
@@ -102,8 +102,10 @@ if opcion == "📦 Inventario":
                 
                 btn_guardar = st.form_submit_button("💾 GUARDAR CAMBIOS EN INVENTARIO")
                 
+                # LA LÓGICA DE GUARDADO DEBE ESTAR IDENTADA DENTRO DEL FORM_SUBMIT_BUTTON
                 if btn_guardar:
                     if n_prod:
+                        # Aseguramos tipos de datos puros para la base de datos
                         data_p = {
                             "nombre": n_prod,
                             "stock": float(s_prod),
@@ -113,39 +115,47 @@ if opcion == "📦 Inventario":
                             "min_mayor": int(m_mayor)
                         }
                         try:
-                            # Intentamos insertar; si falla por nombre duplicado, actualizamos.
-                            # Esto aprovecha la restricción UNIQUE que pusimos en Supabase.
-                            db.table("inventario").insert(data_p).execute()
-                            st.success(f"✨ '{n_prod}' registrado como nuevo producto.")
-                        except:
-                            db.table("inventario").update(data_p).eq("nombre", n_prod).execute()
-                            st.success(f"✅ '{n_prod}' actualizado correctamente.")
-                        
-                        time.sleep(1)
-                        st.rerun()
+                            # 1. Intentar buscar si existe
+                            check = db.table("inventario").select("id").eq("nombre", n_prod).execute()
+                            
+                            if check.data:
+                                # 2. Si existe, ACTUALIZAR
+                                db.table("inventario").update(data_p).eq("nombre", n_prod).execute()
+                                st.success(f"✅ '{n_prod}' actualizado correctamente.")
+                            else:
+                                # 3. Si no existe, INSERTAR
+                                db.table("inventario").insert(data_p).execute()
+                                st.success(f"✨ '{n_prod}' registrado como nuevo.")
+                            
+                            time.sleep(1)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error al conectar con la base de datos: {e}")
                     else:
-                        st.error("El nombre es obligatorio.")
+                        st.error("⚠️ El nombre del producto es obligatorio para guardar.")
 
     with col_der:
         with st.expander("🗑️ ELIMINAR PRODUCTO"):
-            st.warning("Esta acción no se puede deshacer.")
+            st.warning("Acción irreversible.")
             if not df_inv.empty:
-                prod_a_borrar = st.selectbox("Seleccione producto a eliminar", ["---"] + df_inv['nombre'].tolist())
+                # El selectbox no debe estar dentro de un form para que responda rápido
+                prod_a_borrar = st.selectbox("Seleccione para eliminar", ["---"] + df_inv['nombre'].tolist(), key="select_del")
                 pass_admin = st.text_input("Clave de Seguridad", type="password", key="del_pass")
                 
                 if st.button("❌ ELIMINAR DEFINITIVAMENTE"):
                     if pass_admin == CLAVE_ADMIN:
                         if prod_a_borrar != "---":
-                            db.table("inventario").delete().eq("nombre", prod_a_borrar).execute()
-                            st.error(f"Producto '{prod_a_borrar}' eliminado.")
-                            time.sleep(1)
-                            st.rerun()
+                            try:
+                                db.table("inventario").delete().eq("nombre", prod_a_borrar).execute()
+                                st.error(f"Producto '{prod_a_borrar}' borrado.")
+                                time.sleep(1)
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error al eliminar: {e}")
                         else:
-                            st.info("Seleccione un producto válido.")
+                            st.info("Seleccione un producto.")
                     else:
-                        st.error("Clave administrativa incorrecta.")
-            else:
-                st.info("No hay productos para eliminar.")
+                        st.error("Clave incorrecta.")
 
 # --- SIGUIENTE BLOQUE ---
 elif opcion == "🛒 Venta Rápida":
@@ -395,6 +405,7 @@ elif opcion == "📊 Cierre de Caja":
                 st.error("Acceso Denegado: Clave Incorrecta")
     else:
         st.info("No se encontraron movimientos para la fecha seleccionada.")
+
 
 
 
