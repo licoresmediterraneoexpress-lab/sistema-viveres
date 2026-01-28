@@ -260,8 +260,9 @@ elif opcion == "💸 Gastos":
             db.table("gastos").insert({"descripcion": desc, "monto_usd": monto, "fecha": datetime.now().isoformat()}).execute()
             st.success("Gasto registrado y restado de la utilidad.")
 
-# --- 6. CIERRE DE CAJA (CORREGIDO Y SIN ERRORES DE INDENTACIÓN) ---
+# --- 6. CIERRE DE CAJA (CON UTILIDADES DETALLADAS Y ARQUEO) ---
 elif opcion == "📊 Cierre de Caja":
+    import time 
     st.header("📊 Gestión de Caja: Apertura y Cierre")
     f_hoy = date.today().isoformat()
     
@@ -304,60 +305,74 @@ elif opcion == "📊 Cierre de Caja":
         f_bs_ini = reg_ap['monto_bs_extra'].sum() if not reg_ap.empty else 0.0
         f_usd_ini = (reg_ap['monto_usd'].sum() - (f_bs_ini / 60)) if not reg_ap.empty else 0.0
 
-        # MÉTRICAS DE SISTEMA
+        # --- 1. MÉTRICAS DE MÉTODOS DE PAGO ---
         s_ef_bs = df_v['pago_efectivo'].sum(); s_pm_bs = df_v['pago_movil'].sum()
         s_pu_bs = df_v['pago_punto'].sum(); s_ot_bs = df_v['pago_otros'].sum()
         s_ze_usd = df_v['pago_zelle'].sum(); s_di_usd = df_v['pago_divisas'].sum()
         
+        st.subheader("💳 Detalle de Ingresos por Método")
         c1, c2, c3, c4, c5, c6 = st.columns(6)
         c1.metric("Efec. Bs", f"{s_ef_bs:,.2f}"); c2.metric("P.Móvil", f"{s_pm_bs:,.2f}")
         c3.metric("Punto", f"{s_pu_bs:,.2f}"); c4.metric("Otros", f"{s_ot_bs:,.2f}")
         c5.metric("Zelle $", f"{s_ze_usd:,.2f}"); c6.metric("Divisa $", f"{s_di_usd:,.2f}")
         
-        t_usd = df_v['total_usd'].sum(); t_cos = df_v['costo_venta'].sum()
-        t_gas = df_gr['monto_usd'].sum(); utilidad = t_usd - t_cos - t_gas
-        t_bs_sis = s_ef_bs + s_pm_bs + s_pu_bs + s_ot_bs
+        # --- 2. CÁLCULO DE UTILIDADES (LO QUE FALTABA) ---
+        st.divider()
+        st.subheader("📈 Análisis de Rentabilidad")
+        
+        t_ingreso = df_v['total_usd'].sum()
+        t_costo = df_v['costo_venta'].sum()
+        t_gastos_op = df_gr['monto_usd'].sum()
+        ganancia_bruta = t_ingreso - t_costo
+        ganancia_neta = ganancia_bruta - t_gastos_op
+        
+        u1, u2, u3, u4 = st.columns(4)
+        u1.metric("INGRESO TOTAL", f"${t_ingreso:,.2f}")
+        u2.metric("COSTO MERCANCÍA", f"${t_costo:,.2f}", delta_color="inverse")
+        u3.metric("GANANCIA BRUTA", f"${ganancia_bruta:,.2f}")
+        u4.metric("GANANCIA NETA", f"${ganancia_neta:,.2f}", delta=f"{((ganancia_neta/t_ingreso)*100 if t_ingreso>0 else 0):,.1f}%")
 
-        # ARQUEO REAL
-        st.subheader("🔍 Arqueo Real")
+        # --- 3. ARQUEO REAL ---
+        st.divider()
+        st.subheader("🔍 Arqueo Físico vs Sistema")
         col_c1, col_c2, col_c3 = st.columns(3)
-        r_ef_bs = col_c1.number_input("Real Efectivo Bs", 0.0)
-        r_di_usd = col_c1.number_input("Real Divisas $", 0.0)
-        r_pm_bs = col_c2.number_input("Real Pago Móvil Bs", 0.0)
-        r_pu_bs = col_c2.number_input("Real Punto Bs", 0.0)
-        r_ze_usd = col_c3.number_input("Real Zelle $", 0.0)
-        r_ot_bs = col_c3.number_input("Real Otros Bs", 0.0)
+        r_ef_bs = col_c1.number_input("Contado Efectivo Bs", 0.0)
+        r_di_usd = col_c1.number_input("Contado Divisas $", 0.0)
+        r_pm_bs = col_c2.number_input("Contado Pago Móvil Bs", 0.0)
+        r_pu_bs = col_c2.number_input("Contado Punto Bs", 0.0)
+        r_ze_usd = col_c3.number_input("Contado Zelle $", 0.0)
+        r_ot_bs = col_c3.number_input("Contado Otros Bs", 0.0)
 
-        # CIERRE Y REPORTE
+        # --- 4. CIERRE Y REPORTE ---
         st.divider()
         clave_c = st.text_input("Clave de Seguridad", type="password")
         if st.button("🏮 CERRAR JORNADA Y GENERAR REPORTE", use_container_width=True):
             if clave_c == CLAVE_ADMIN:
                 ahora = datetime.now().strftime('%d/%m/%Y %H:%M')
+                t_bs_sis = s_ef_bs + s_pm_bs + s_pu_bs + s_ot_bs
                 
-                # REPORTE LIMPIO
                 reporte = f"""
-                <div style="color:black; background:white; padding:15px; border:2px solid black; font-family:sans-serif;">
+                <div style="color:black; background:white; padding:15px; border:2px solid black; font-family:Arial;">
                 <h2 style="text-align:center;">CIERRE: MEDITERRANEO EXPRESS</h2>
                 <p><b>Fecha:</b> {ahora}</p>
                 <hr>
-                <p><b>Ventas Totales:</b> ${t_usd:,.2f} / {t_bs_sis:,.2f} Bs.</p>
-                <p><b>Utilidad Neta:</b> ${utilidad:,.2f}</p>
+                <p><b>Ingreso Total:</b> ${t_ingreso:,.2f}</p>
+                <p><b>Costo Venta:</b> ${t_costo:,.2f}</p>
+                <p><b>Ganancia Bruta:</b> ${ganancia_bruta:,.2f}</p>
+                <p><b>Gastos Op:</b> ${t_gastos_op:,.2f}</p>
+                <p><b>GANANCIA NETA:</b> ${ganancia_neta:,.2f}</p>
                 <hr>
-                <b>CUADRE DE EFECTIVO:</b><br>
-                Bs en Caja: Sist {s_ef_bs+f_bs_ini:,.2f} | Real {r_ef_bs:,.2f}<br>
-                $ en Caja: Sist {s_di_usd+f_usd_ini:,.2f} | Real {r_di_usd:,.2f}
-                <hr>
-                <p style="font-size:10px; text-align:center;">Caja Cerrada Exitosamente</p>
+                <b>CUADRE DE EFECTIVO EN MANO:</b><br>
+                Bs Caja: Sist {s_ef_bs+f_bs_ini:,.2f} | Real {r_ef_bs:,.2f}<br>
+                $ Caja: Sist {s_di_usd+f_usd_ini:,.2f} | Real {r_di_usd:,.2f}
                 </div>
                 """
                 st.markdown(reporte, unsafe_allow_html=True)
                 st.components.v1.html("<script>window.print();</script>", height=0)
-                st.success("Jornada Finalizada. Sistema Reiniciado.")
-                time.sleep(3)
+                st.success("Jornada Finalizada con éxito.")
+                time.sleep(2)
                 st.rerun()
             else:
                 st.error("Clave Incorrecta")
     else:
         st.info("No hay ventas registradas.")
-
