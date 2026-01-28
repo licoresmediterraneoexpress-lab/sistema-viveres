@@ -195,7 +195,7 @@ elif opcion == "💸 Gastos":
             db.table("gastos").insert({"descripcion": desc, "monto_usd": monto, "fecha": datetime.now().isoformat()}).execute()
             st.success("Gasto registrado.")
 
-# --- 6. MÓDULO DE CAJA: CONTROL TOTAL Y CIERRE ---
+# --- 6. MÓDULO DE CAJA: CONTROL TOTAL Y CIERRE (VERSIÓN FINAL SIN ERRORES) ---
 elif opcion == "📊 Cierre de Caja":
     import time
     from datetime import date, datetime
@@ -207,12 +207,11 @@ elif opcion == "📊 Cierre de Caja":
     res_caja = db.table("gastos").select("*").eq("descripcion", f"APERTURA_{hoy}").execute()
     caja_datos = res_caja.data[0] if res_caja.data else None
     caja_abierta = caja_datos is not None
-    # Verificamos si ya existe el estado 'cerrado' en el registro de hoy
     esta_cerrada = caja_datos.get('estado') == 'cerrado' if caja_abierta else False
 
     # --- BLOQUE A: APERTURA ---
     if not caja_abierta:
-        st.warning("⚠️ La caja se encuentra cerrada. Debe registrar el fondo inicial.")
+        st.warning("⚠️ La caja se encuentra cerrada. Por favor, registre el fondo inicial.")
         with st.form("form_apertura"):
             st.subheader("🔑 Abrir Turno")
             col1, col2, col3 = st.columns(3)
@@ -233,60 +232,96 @@ elif opcion == "📊 Cierre de Caja":
                 time.sleep(1)
                 st.rerun()
 
-    # --- BLOQUE B: VISTA DE BLOQUEO (Si ya se cerró la caja) ---
+    # --- BLOQUE B: VISTA DE BLOQUEO (Si la caja ya fue cerrada hoy) ---
     elif esta_cerrada:
         st.success("✅ JORNADA CERRADA: El arqueo de hoy ha sido finalizado.")
-        st.info("No se pueden realizar más ventas ni modificaciones en el arqueo.")
+        st.info("El sistema está bloqueado para nuevas ventas o cambios en el arqueo de hoy.")
         
-        # Consultar totales finales para mostrar reporte histórico
-        v_res = db.table("ventas").select("*").gte("fecha", hoy).execute()
+        # Consultar totales rápidos para el reporte estático
+        v_res = db.table("ventas").select("total_usd").gte("fecha", hoy).execute()
         total_hoy = sum(item['total_usd'] for item in v_res.data) if v_res.data else 0.0
+        st.metric("Total Ventas del Día", f"${total_hoy:,.2f}")
         
-        st.metric("Total Ventas Liquidadas", f"${total_hoy:,.2f}")
-        if st.button("🔄 Refrescar Estado"):
+        if st.button("🔄 Actualizar"):
             st.rerun()
 
     # --- BLOQUE C: PANEL DE ARQUEO ACTIVO ---
     else:
+        # Extraer fondos iniciales seguros
         f_bs_ini = caja_datos.get('monto_bs_extra', 0.0)
-        # Calculamos fondo USD inicial restando los Bs del total guardado
-        f_usd_ini = caja_datos.get('monto_usd', 0.0) - (f_bs_ini / 60) 
+        f_total_usd = caja_datos.get('monto_usd', 0.0)
+        # El USD inicial es el total menos el equivalente en Bs (usando tasa 60 referencial)
+        f_usd_ini = f_total_usd - (f_bs_ini / 60)
 
-        st.info(f"🟢 Caja Abierta: {f_bs_ini:,.2f} Bs | ${f_usd_ini:,.2f} USD")
+        st.info(f"🟢 Caja Abierta con: {f_bs_ini:,.2f} Bs | ${f_usd_ini:,.2f} USD")
 
         # Consultar Movimientos del Sistema
         v_res = db.table("ventas").select("*").gte("fecha", hoy).execute()
         df_v = pd.DataFrame(v_res.data) if v_res.data else pd.DataFrame()
 
         if not df_v.empty:
-            s_ef_bs = df_v['pago_efectivo'].sum(); s_di_usd = df_v['pago_divisas'].sum()
-            s_pm_bs = df_v['pago_movil'].sum(); s_pu_bs = df_v['pago_punto'].sum()
-            s_ze_usd = df_v['pago_zelle'].sum(); s_ot_bs = df_v['pago_otros'].sum()
+            s_ef_bs = df_v['pago_efectivo'].sum()
+            s_di_usd = df_v['pago_divisas'].sum()
+            s_pm_bs = df_v['pago_movil'].sum()
+            s_pu_bs = df_v['pago_punto'].sum()
+            s_ze_usd = df_v['pago_zelle'].sum()
+            s_ot_bs = df_v['pago_otros'].sum()
             total_ingreso = df_v['total_usd'].sum()
         else:
             s_ef_bs = s_di_usd = s_pm_bs = s_pu_bs = s_ze_usd = s_ot_bs = total_ingreso = 0.0
 
-        st.subheader("💳 Ventas según Sistema")
+        st.subheader("💳 Totales en Sistema")
         c_sys = st.columns(6)
-        c_sys[0].metric("Efec. Bs", f"{s_ef_bs:,.2f}"); c_sys[1].metric("Efec. $", f"{s_di_usd:,.2f}")
-        c_sys[2].metric("P. Móvil", f"{s_pm_bs:,.2f}"); c_sys[3].metric("Punto", f"{s_pu_bs:,.2f}")
-        c_sys[4].metric("Zelle", f"{s_ze_usd:,.2f}"); c_sys[5].metric("Otros", f"{s_ot_bs:,.2f}")
+        c_sys[0].metric("Efectivo Bs", f"{s_ef_bs:,.2f}")
+        c_sys[1].metric("Divisas $", f"{s_di_usd:,.2f}")
+        c_sys[2].metric("Pago Móvil", f"{s_pm_bs:,.2f}")
+        c_sys[3].metric("Punto", f"{s_pu_bs:,.2f}")
+        c_sys[4].metric("Zelle $", f"{s_ze_usd:,.2f}")
+        c_sys[5].metric("Otros Bs", f"{s_ot_bs:,.2f}")
 
         st.divider()
-        st.subheader("📝 Conteo Físico (Arqueo Real)")
+        st.subheader("📝 Conteo Físico Real")
         with st.container(border=True):
             col_r1, col_r2, col_r3 = st.columns(3)
-            r_ef_bs = col_r1.number_input("Efectivo Bs en Mano", 0.0)
-            r_ef_usd = col_r1.number_input("Efectivo $ en Mano", 0.0)
-            r_pm_bs = col_r2.number_input("Saldo Pago Móvil", 0.0)
-            r_pu_bs = col_r2.number_input("Saldo Punto", 0.0)
-            r_ze_usd = col_r3.number_input("Saldo Zelle $", 0.0)
-            r_ot_bs = col_r3.number_input("Otros Bs", 0.0)
+            r_ef_bs = col_r1.number_input("Real Efectivo Bs", 0.0)
+            r_ef_usd = col_r1.number_input("Real Efectivo $", 0.0)
+            r_pm_bs = col_r2.number_input("Real Pago Móvil Bs", 0.0)
+            r_pu_bs = col_r2.number_input("Real Punto Bs", 0.0)
+            r_ze_usd = col_r3.number_input("Real Zelle $", 0.0)
+            r_ot_bs = col_r3.number_input("Real Otros Bs", 0.0)
 
+        # BOTÓN DE CIERRE CON MANEJO DE ERRORES CORREGIDO
         if st.button("🏮 FINALIZAR JORNADA Y BLOQUEAR", use_container_width=True, type="primary"):
             try:
-                # Actualización del estado para BLOQUEAR el sistema
+                # 1. Ejecutar actualización en la DB
                 db.table("gastos").update({"estado": "cerrado"}).eq("descripcion", f"APERTURA_{hoy}").execute()
                 
-                # Cálculos de Diferencia
-                esp
+                # 2. Cálculos de Diferencia
+                esp_bs = s_ef_bs + f_bs_ini
+                esp_usd = s_di_usd + f_usd_ini
+                dif_bs = r_ef_bs - esp_bs
+                dif_usd = r_ef_usd - esp_usd
+
+                st.balloons()
+                st.success("✅ Caja cerrada y bloqueada con éxito.")
+
+                # 3. Reporte Final
+                reporte_final = f"""
+                <div style="background: white; color: black; padding: 25px; border: 3px solid black; font-family: monospace;">
+                    <center><h2>MEDITERRANEO EXPRESS</h2><h3>CIERRE DE CAJA</h3></center>
+                    <hr>
+                    <b>VENTAS TOTALES:</b> ${total_ingreso:,.2f}<br>
+                    <hr>
+                    <b>CUADRE DE EFECTIVO:</b><br>
+                    - Bs: Real {r_ef_bs:,.2f} | Esp {esp_bs:,.2f} (Dif: {dif_bs:,.2f})<br>
+                    - $: Real {r_ef_usd:,.2f} | Esp {esp_usd:,.2f} (Dif: {dif_usd:,.2f})<br>
+                    <hr>
+                    <center><b>ESTADO: CERRADO</b></center>
+                </div>
+                """
+                st.markdown(reporte_html, unsafe_allow_html=True)
+                time.sleep(3)
+                st.rerun()
+
+            except Exception as e:
+                st.error(f"Error técnico al cerrar: {e}")
