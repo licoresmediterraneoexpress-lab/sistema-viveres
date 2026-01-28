@@ -195,30 +195,144 @@ elif opcion == "💸 Gastos":
             db.table("gastos").insert({"descripcion": desc, "monto_usd": monto, "fecha": datetime.now().isoformat()}).execute()
             st.success("Gasto registrado.")
 
-# --- 6. CIERRE DE CAJA ---
+# --- 6. CIERRE DE CAJA (VERSION PROFESIONAL INTEGRADA) ---
 elif opcion == "📊 Cierre de Caja":
-    st.header("📊 Gestión de Caja")
+    st.header("📊 Gestión de Caja: Apertura y Arqueo")
     f_hoy = date.today().isoformat()
     
-    with st.expander("🔑 APERTURA DE JORNADA"):
+    # --- BLOQUE 1: APERTURA ---
+    with st.expander("🔑 APERTURA DE JORNADA", expanded=True):
         res_ap = db.table("gastos").select("*").eq("descripcion", f"APERTURA_{f_hoy}").execute()
+        
         if not res_ap.data:
+            st.subheader("Registro de Fondo Inicial")
             c_ap1, c_ap2, c_ap3 = st.columns(3)
-            tasa_ap = c_ap1.number_input("Tasa Bs/$", 1.0, 500.0, 60.0)
-            ef_bs_ap = c_ap2.number_input("Fondo Bs", 0.0)
-            ef_usd_ap = c_ap3.number_input("Fondo $", 0.0)
-            if st.button("✅ REGISTRAR APERTURA"):
+            tasa_ap = c_ap1.number_input("Tasa del Día (Bs/$)", 1.0, 500.0, 60.0)
+            ef_bs_ap = c_ap2.number_input("Fondo Inicial Bs", 0.0)
+            ef_usd_ap = c_ap3.number_input("Fondo Inicial $", 0.0)
+            
+            # Cálculo informativo para el usuario
+            total_ap_usd = ef_usd_ap + (ef_bs_ap / tasa_ap)
+            st.caption(f"Valor total de apertura: ${total_ap_usd:,.2f} USD")
+
+            if st.button("✅ REGISTRAR APERTURA", use_container_width=True):
                 db.table("gastos").insert({
-                    "descripcion": f"APERTURA_{f_hoy}", "monto_usd": ef_usd_ap + (ef_bs_ap / tasa_ap),
-                    "monto_bs_extra": ef_bs_ap, "fecha": datetime.now().isoformat(), "estado": "abierto"
+                    "descripcion": f"APERTURA_{f_hoy}",
+                    "monto_usd": total_ap_usd,
+                    "monto_bs_extra": ef_bs_ap, # Guardamos Bs para el arqueo
+                    "fecha": datetime.now().isoformat(),
+                    "estado": "abierto"
                 }).execute()
+                st.success("¡Caja abierta exitosamente!")
+                time.sleep(1)
                 st.rerun()
         else:
-            st.info("🟢 Caja ya abierta hoy.")
+            d_ap = res_ap.data[0]
+            st.info(f"🟢 Caja Abierta hoy con: {d_ap['monto_bs_extra']:,.2f} Bs. y ${(d_ap['monto_usd'] - (d_ap['monto_bs_extra']/60)):,.2f} USD")
 
-    f_rep = st.date_input("Fecha Consultar", date.today())
+    st.divider()
+
+    # --- BLOQUE 2: RESUMEN DE VENTAS Y MÉTODOS DE PAGO ---
+    f_rep = st.date_input("Consultar Fecha de Cierre", date.today())
+    
+    # Consultar ventas y gastos (para utilidades)
     v = db.table("ventas").select("*").gte("fecha", f_rep.isoformat()).execute()
+    g = db.table("gastos").select("*").gte("fecha", f_rep.isoformat()).execute()
+    
     if v.data:
         df_v = pd.DataFrame(v.data)
-        st.subheader("Resumen de Ingresos")
-        st.metric("TOTAL USD", f"${df_v['total_usd'].sum():,.2f}")
+        df_g = pd.DataFrame(g.data) if g.data else pd.DataFrame()
+        
+        # 1. Totales por método de pago
+        st.subheader("💳 Ventas por Tipo de Pago (Sistema)")
+        s_ef_bs = df_v['pago_efectivo'].sum()
+        s_pm_bs = df_v['pago_movil'].sum()
+        s_pu_bs = df_v['pago_punto'].sum()
+        s_ze_usd = df_v['pago_zelle'].sum()
+        s_di_usd = df_v['pago_divisas'].sum()
+        s_ot_bs = df_v['pago_otros'].sum()
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Efectivo Bs", f"{s_ef_bs:,.2f}")
+        c1.metric("Pago Móvil Bs", f"{s_pm_bs:,.2f}")
+        c2.metric("Punto Bs", f"{s_pu_bs:,.2f}")
+        c2.metric("Zelle $", f"${s_ze_usd:,.2f}")
+        c3.metric("Divisas $", f"${s_di_usd:,.2f}")
+        c3.metric("Otros Bs", f"{s_ot_bs:,.2f}")
+
+        # 2. Análisis de Rentabilidad
+        st.divider()
+        st.subheader("📈 Análisis Financiero")
+        t_ingreso = df_v['total_usd'].sum()
+        t_costo = df_v['costo_venta'].sum()
+        # Gastos excluyendo la apertura
+        df_gastos_puros = df_g[~df_g['descripcion'].str.contains("APERTURA_", na=False)] if not df_g.empty else pd.DataFrame()
+        t_gastos = df_gastos_puros['monto_usd'].sum() if not df_gastos_puros.empty else 0.0
+        
+        u1, u2, u3 = st.columns(3)
+        u1.metric("Ingreso Bruto", f"${t_ingreso:,.2f}")
+        u2.metric("Gastos/Egresos", f"${t_gastos:,.2f}")
+        u3.metric("Utilidad Neta", f"${(t_ingreso - t_costo - t_gastos):,.2f}", delta_color="normal")
+
+        # --- BLOQUE 3: ARQUEO FÍSICO (COMPARATIVA REAL) ---
+        st.divider()
+        st.subheader("🔍 Arqueo de Caja Real vs Sistema")
+        
+        # Obtenemos fondo inicial para el cuadre
+        reg_ap = df_g[df_g['descripcion'].str.contains("APERTURA_", na=False)] if not df_g.empty else pd.DataFrame()
+        f_bs_ini = reg_ap['monto_bs_extra'].sum() if not reg_ap.empty else 0.0
+        f_usd_ini = (reg_ap['monto_usd'].sum() - (f_bs_ini / 60)) if not reg_ap.empty else 0.0
+
+        st.warning(f"Nota: El sistema espera en caja el Fondo Inicial + Ventas en Efectivo.")
+        
+        col_arqueo1, col_arqueo2 = st.columns(2)
+        with col_arqueo1:
+            st.markdown("### 💵 Conteo Físico")
+            r_ef_bs = st.number_input("Total Efectivo Bs en Caja", 0.0)
+            r_di_usd = st.number_input("Total Divisas $ en Caja", 0.0)
+            
+        with col_arqueo2:
+            st.markdown("### ⚖️ Diferencia")
+            esperado_bs = s_ef_bs + f_bs_ini
+            esperado_usd = s_di_usd + f_usd_ini
+            
+            dif_bs = r_ef_bs - esperado_bs
+            dif_usd = r_di_usd - esperado_usd
+            
+            st.metric("Dif. Bolívares", f"{dif_bs:,.2f} Bs", delta=dif_bs)
+            st.metric("Dif. Divisas", f"${dif_usd:,.2f}", delta=dif_usd)
+
+        # --- BLOQUE 4: CIERRE FINAL ---
+        st.divider()
+        clave_c = st.text_input("Clave de Administrador para cerrar", type="password")
+        if st.button("🏮 CERRAR CAJA E IMPRIMIR REPORTE", use_container_width=True):
+            if clave_c == CLAVE_ADMIN:
+                ahora = datetime.now().strftime('%d/%m/%Y %H:%M')
+                
+                reporte_html = f"""
+                <div style="color:black; background:white; padding:20px; border:2px solid black; font-family:'Courier New';">
+                    <center><h2>REPORTE DE CIERRE</h2><b>{ahora}</b></center>
+                    <hr>
+                    <b>RESUMEN SISTEMA:</b><br>
+                    Ventas Totales: ${t_ingreso:,.2f}<br>
+                    Efectivo Bs esperado: {esperado_bs:,.2f}<br>
+                    Divisa $ esperada: {esperado_usd:,.2f}<br>
+                    <hr>
+                    <b>CONTEO REAL:</b><br>
+                    Efectivo Bs: {r_ef_bs:,.2f}<br>
+                    Divisa $: {r_di_usd:,.2f}<br>
+                    <hr>
+                    <b>DIFERENCIA:</b><br>
+                    Bs: {dif_bs:,.2f} | $: {dif_usd:,.2f}<br>
+                    <hr>
+                    <p style="text-align:center;">Cierre Realizado con Éxito</p>
+                </div>
+                """
+                st.markdown(reporte_html, unsafe_allow_html=True)
+                st.success("Jornada Cerrada.")
+                # Aquí podrías agregar lógica para marcar la apertura como 'cerrado' en DB
+            else:
+                st.error("Clave Incorrecta")
+    else:
+        st.info("No hay ventas registradas en la fecha seleccionada para realizar cierre.")
+
