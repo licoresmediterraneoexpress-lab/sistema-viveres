@@ -87,7 +87,6 @@ if opcion == "📦 Inventario":
     
     with col_izq:
         with st.expander("📝 REGISTRAR O ACTUALIZAR PRODUCTO", expanded=True):
-            # Usamos una clave única para el formulario
             with st.form("form_registro_final", clear_on_submit=False):
                 n_prod = st.text_input("Nombre del Producto").strip().upper()
                 c1, c2 = st.columns(2)
@@ -102,17 +101,17 @@ if opcion == "📦 Inventario":
                 
                 btn_guardar = st.form_submit_button("💾 GUARDAR CAMBIOS EN INVENTARIO")
                 
-                # LA LÓGICA DE GUARDADO DEBE ESTAR IDENTADA DENTRO DEL FORM_SUBMIT_BUTTON
                 if btn_guardar:
                     if n_prod:
-                        # Aseguramos tipos de datos puros para la base de datos
+                        # --- SOLUCIÓN AL ERROR BIGINT ---
+                        # Forzamos int() en stock y min_mayor para eliminar el ".0" que causa el error 22P02
                         data_p = {
                             "nombre": n_prod,
-                            "stock": float(s_prod),
+                            "stock": int(s_prod),          # Convertido a Entero puro
                             "costo": float(cost_p),
                             "precio_detal": float(detal_p),
                             "precio_mayor": float(mayor_p),
-                            "min_mayor": int(m_mayor)
+                            "min_mayor": int(m_mayor)      # Convertido a Entero puro
                         }
                         try:
                             # 1. Intentar buscar si existe
@@ -138,7 +137,6 @@ if opcion == "📦 Inventario":
         with st.expander("🗑️ ELIMINAR PRODUCTO"):
             st.warning("Acción irreversible.")
             if not df_inv.empty:
-                # El selectbox no debe estar dentro de un form para que responda rápido
                 prod_a_borrar = st.selectbox("Seleccione para eliminar", ["---"] + df_inv['nombre'].tolist(), key="select_del")
                 pass_admin = st.text_input("Clave de Seguridad", type="password", key="del_pass")
                 
@@ -156,9 +154,6 @@ if opcion == "📦 Inventario":
                             st.info("Seleccione un producto.")
                     else:
                         st.error("Clave incorrecta.")
-
-# --- SIGUIENTE BLOQUE ---
-elif opcion == "🛒 Venta Rápida":
     
     # 1. Configuración de Tasa
     with st.sidebar:
@@ -405,6 +400,7 @@ elif opcion == "📊 Cierre de Caja":
                 st.error("Acceso Denegado: Clave Incorrecta")
     else:
         st.info("No se encontraron movimientos para la fecha seleccionada.")
+
 
 
 
