@@ -398,87 +398,129 @@ elif opcion == "📊 Cierre de Caja":
         r_ze_usd = col_c3.number_input("Real Zelle $", 0.0)
         r_ot_bs = col_c3.number_input("Real Otros Bs", 0.0)
 
-     # --- 4. BOTÓN DE CIERRE Y REPORTE MEJORADO ---
-st.divider()
-clave_c = st.text_input("Clave Administrativa para Cerrar", type="password")
+# --- 6. CIERRE DE CAJA (VERSIÓN FINAL CORREGIDA) ---
+elif opcion == "📊 Cierre de Caja":
+    import time 
+    st.header("📊 Gestión de Caja: Apertura y Arqueo")
+    f_hoy = date.today().isoformat()
+    
+    # 1. INICIALIZACIÓN PREVENTIVA (Evita errores NameError)
+    r_ef_bs = r_di_usd = r_pm_bs = r_pu_bs = r_ze_usd = r_ot_bs = 0.0
+    f_bs_ini = f_usd_ini = 0.0
+    
+    # --- BLOQUE DE APERTURA ---
+    with st.expander("🔑 APERTURA DE JORNADA", expanded=True):
+        res_ap = db.table("gastos").select("*").eq("descripcion", f"APERTURA_{f_hoy}").execute()
+        
+        if not res_ap.data:
+            st.subheader("Registro de Fondo Inicial")
+            c_ap1, c_ap2, c_ap3 = st.columns(3)
+            tasa_ap = c_ap1.number_input("Tasa del Día (Bs/$)", 1.0, 500.0, 60.0)
+            ef_bs_ap = c_ap2.number_input("Fondo Inicial Bs", 0.0)
+            ef_usd_ap = c_ap3.number_input("Fondo Inicial $", 0.0)
+            
+            if st.button("✅ REGISTRAR APERTURA", use_container_width=True):
+                db.table("gastos").insert({
+                    "descripcion": f"APERTURA_{f_hoy}",
+                    "monto_usd": ef_usd_ap + (ef_bs_ap / tasa_ap),
+                    "monto_bs_extra": ef_bs_ap,
+                    "fecha": datetime.now().isoformat(),
+                    "estado": "abierto"
+                }).execute()
+                st.success("¡Caja abierta exitosamente!")
+                time.sleep(1)
+                st.rerun()
+        else:
+            d_ap = res_ap.data[0]
+            f_bs_ini = d_ap['monto_bs_extra']
+            # El USD inicial es el total menos el equivalente en BS
+            f_usd_ini = d_ap['monto_usd'] - (f_bs_ini / 60) # Usando 60 como base o la tasa guardada
+            st.info(f"🟢 Caja Abierta: {f_bs_ini:,.2f} Bs. | ${f_usd_ini:,.2f} USD")
 
-if st.button("🏮 FINALIZAR TURNO Y GENERAR REPORTE", use_container_width=True):
-    if clave_c == CLAVE_ADMIN:
-        ahora = datetime.now().strftime('%d/%m/%Y %H:%M')
+    st.divider()
+    f_rep = st.date_input("Fecha a Consultar", date.today())
+    v = db.table("ventas").select("*").gte("fecha", f_rep.isoformat()).execute()
+    g = db.table("gastos").select("*").gte("fecha", f_rep.isoformat()).execute()
+    
+    if v.data:
+        df_v = pd.DataFrame(v.data)
+        df_g = pd.DataFrame(g.data)
         
-        # Cálculos de Diferencias (Arqueo)
-        dif_bs = r_ef_bs - (s_ef_bs + f_bs_ini)
-        dif_usd = r_di_usd - (s_di_usd + f_usd_ini)
-        dif_pm = r_pm_bs - s_pm_bs
+        # Filtros de Gastos
+        df_gr = df_g[~df_g['descripcion'].str.contains("APERTURA_", na=False)]
         
-        # Función para dar color a las diferencias en el reporte
-        def format_dif(valor):
-            if valor < -0.1: return f"<span style='color:red;'>({valor:,.2f}) FALTANTE</span>"
-            if valor > 0.1: return f"<span style='color:green;'>+{valor:,.2f} SOBRANTE</span>"
-            return "<span style='color:blue;'>CUADRADO</span>"
+        # --- 1. MÉTODOS DE PAGO (SISTEMA) ---
+        st.subheader("💳 Detalle de Pagos (Sistema)")
+        s_ef_bs = df_v['pago_efectivo'].sum(); s_pm_bs = df_v['pago_movil'].sum()
+        s_pu_bs = df_v['pago_punto'].sum(); s_ot_bs = df_v['pago_otros'].sum()
+        s_ze_usd = df_v['pago_zelle'].sum(); s_di_usd = df_v['pago_divisas'].sum()
+        
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        c1.metric("Efec. Bs", f"{s_ef_bs:,.2f}"); c2.metric("P.Móvil", f"{s_pm_bs:,.2f}")
+        c3.metric("Punto", f"{s_pu_bs:,.2f}"); c4.metric("Otros", f"{s_ot_bs:,.2f}")
+        c5.metric("Zelle $", f"{s_ze_usd:,.2f}"); c6.metric("Divisa $", f"{s_di_usd:,.2f}")
+        
+        # --- 2. ANÁLISIS FINANCIERO ---
+        st.divider()
+        st.subheader("📈 Análisis de Rentabilidad")
+        t_ingreso = df_v['total_usd'].sum()
+        t_costo = df_v['costo_venta'].sum()
+        t_gastos_op = df_gr['monto_usd'].sum()
+        ganancia_bruta = t_ingreso - t_costo
+        ganancia_neta = ganancia_bruta - t_gastos_op
+        
+        u1, u2, u3, u4 = st.columns(4)
+        u1.metric("INGRESO TOTAL", f"${t_ingreso:,.2f}")
+        u2.metric("COSTO MERCANCÍA", f"${t_costo:,.2f}")
+        u3.metric("GANANCIA BRUTA", f"${ganancia_bruta:,.2f}")
+        u4.metric("GANANCIA NETA", f"${ganancia_neta:,.2f}")
 
-        # HTML para el Reporte Profesional
-        reporte_html = f"""
-        <div style="color:black; background:white; padding:30px; border:3px solid #0041C2; font-family: 'Courier New', Courier, monospace; width:100%;">
-            <center>
-                <h1 style='margin:0;'>MEDITERRANEO EXPRESS</h1>
-                <h3 style='margin:0;'>REPORTE DE CIERRE DE CAJA</h3>
-                <p>Fecha: {ahora}</p>
-            </center>
-            <hr style='border: 1px solid black;'>
-            
-            <table style='width:100%; font-size:16px;'>
-                <tr><td><b>INGRESOS TOTALES:</b></td><td align='right'>${t_ingreso:,.2f}</td></tr>
-                <tr><td><b>GASTOS OPERATIVOS:</b></td><td align='right'>-${t_gastos_op:,.2f}</td></tr>
-                <tr style='font-size:18px;'><td><b>GANANCIA NETA:</b></td><td align='right'><b>${ganancia_neta:,.2f}</b></td></tr>
-            </table>
-            
-            <hr style='border: 1px dashed black;'>
-            <h3>🔍 RESULTADOS DEL ARQUEO</h3>
-            
-            <table style='width:100%; border-collapse: collapse;'>
-                <tr style='background-color:#f2f2f2;'>
-                    <th align='left'>MÉTODO</th><th align='right'>SISTEMA</th><th align='right'>REAL</th><th align='right'>DIFERENCIA</th>
-                </tr>
-                <tr>
-                    <td>Efectivo Bs</td><td align='right'>{s_ef_bs+f_bs_ini:,.2f}</td><td align='right'>{r_ef_bs:,.2f}</td><td align='right'>{format_dif(dif_bs)}</td>
-                </tr>
-                <tr>
-                    <td>Efectivo $</td><td align='right'>{s_di_usd+f_usd_ini:,.2f}</td><td align='right'>{r_di_usd:,.2f}</td><td align='right'>{format_dif(dif_usd)}</td>
-                </tr>
-                <tr>
-                    <td>Pago Móvil</td><td align='right'>{s_pm_bs:,.2f}</td><td align='right'>{r_pm_bs:,.2f}</td><td align='right'>{format_dif(dif_pm)}</td>
-                </tr>
-                 <tr>
-                    <td>Punto Venta</td><td align='right'>{s_pu_bs:,.2f}</td><td align='right'>{r_pu_bs:,.2f}</td><td align='right'>-</td>
-                </tr>
-            </table>
-            
-            <br>
-            <div style='background-color:#eee; padding:10px; border-radius:5px;'>
-                <b>Observaciones de Caja:</b><br>
-                {"✅ CAJA CUADRADA" if abs(dif_bs) < 1 and abs(dif_usd) < 0.1 else "⚠️ SE DETECTARON DISCREPANCIAS EN EL ARQUEO"}
-            </div>
-            
-            <hr style='border: 1px solid black;'>
-            <p style="text-align:center; font-size:12px;">ESTE DOCUMENTO ES UN REGISTRO DE CONTROL INTERNO</p>
-        </div>
-        """
-        
-        st.markdown(reporte_html, unsafe_allow_html=True)
-        
-        # Ejecutar impresión
-        st.components.v1.html("<script>window.print();</script>", height=0)
-        
-        # OPCIONAL: Marcar cierre en Base de Datos
-        try:
-            db.table("gastos").update({"estado": "cerrado"}).eq("descripcion", f"APERTURA_{f_hoy}").execute()
-            st.success("✅ Turno finalizado y guardado en historial.")
-        except:
-            pass
+        # --- 3. ARQUEO FÍSICO (VARIABLES CORREGIDAS) ---
+        st.divider()
+        st.subheader("🔍 Arqueo de Caja Real")
+        col_c1, col_c2, col_c3 = st.columns(3)
+        r_ef_bs = col_c1.number_input("Real en Efectivo Bs", 0.0)
+        r_di_usd = col_c1.number_input("Real en Divisas $", 0.0)
+        r_pm_bs = col_c2.number_input("Real en Pago Móvil Bs", 0.0)
+        r_pu_bs = col_c2.number_input("Real en Punto Bs", 0.0)
+        r_ze_usd = col_c3.number_input("Real en Zelle $", 0.0)
+        r_ot_bs = col_c3.number_input("Real en Otros Bs", 0.0)
 
-        time.sleep(3)
-        st.rerun()
+        # --- 4. BOTÓN DE CIERRE Y REPORTE ---
+        st.divider()
+        clave_c = st.text_input("Clave Administrativa para Cerrar", type="password")
+        if st.button("🏮 FINALIZAR TURNO Y GENERAR REPORTE", use_container_width=True):
+            if clave_c == CLAVE_ADMIN:
+                ahora = datetime.now().strftime('%d/%m/%Y %H:%M')
+                
+                # Cálculos de Diferencias
+                esp_ef_bs = s_ef_bs + f_bs_ini
+                esp_ef_usd = s_di_usd + f_usd_ini
+                dif_bs = r_ef_bs - esp_ef_bs
+                dif_usd = r_di_usd - esp_ef_usd
+                dif_pm = r_pm_bs - s_pm_bs
+                
+                reporte_html = f"""
+                <div style="color:black; background:white; padding:20px; border:2px solid black; font-family:Arial;">
+                    <center><h2>MEDITERRANEO EXPRESS</h2><h3>REPORTE DE CIERRE</h3></center>
+                    <hr>
+                    <p><b>Fecha:</b> {ahora}</p>
+                    <p><b>Ingresos:</b> ${t_ingreso:,.2f} | <b>Utilidad Neta:</b> ${ganancia_neta:,.2f}</p>
+                    <hr>
+                    <b>CUADRE DE CAJA:</b><br>
+                    - Efectivo Bs: Sist {esp_ef_bs:,.2f} | Real {r_ef_bs:,.2f} (Dif: {dif_bs:,.2f})<br>
+                    - Efectivo $: Sist {esp_ef_usd:,.2f} | Real {r_di_usd:,.2f} (Dif: {dif_usd:,.2f})<br>
+                    - Pago Móvil: Sist {s_pm_bs:,.2f} | Real {r_pm_bs:,.2f} (Dif: {dif_pm:,.2f})<br>
+                    <hr>
+                    <p style="text-align:center;">Caja Cerrada - Control Interno</p>
+                </div>
+                """
+                st.markdown(reporte_html, unsafe_allow_html=True)
+                st.components.v1.html("<script>window.print();</script>", height=0)
+                st.success("¡Cierre completado!")
+                time.sleep(2)
+                st.rerun()
+            else:
+                st.error("Acceso Denegado: Clave Incorrecta")
     else:
-        st.error("❌ Clave Incorrecta. Acceso denegado.")
-
+        st.info("No se encontraron movimientos para la fecha seleccionada.")
