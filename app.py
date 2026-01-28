@@ -398,36 +398,87 @@ elif opcion == "📊 Cierre de Caja":
         r_ze_usd = col_c3.number_input("Real Zelle $", 0.0)
         r_ot_bs = col_c3.number_input("Real Otros Bs", 0.0)
 
-        # --- 4. BOTÓN DE CIERRE Y REPORTE ---
-        st.divider()
-        clave_c = st.text_input("Clave Administrativa para Cerrar", type="password")
-        if st.button("🏮 FINALIZAR TURNO Y GENERAR PDF", use_container_width=True):
-            if clave_c == CLAVE_ADMIN:
-                ahora = datetime.now().strftime('%d/%m/%Y %H:%M')
-                t_bs_sis = s_ef_bs + s_pm_bs + s_pu_bs + s_ot_bs
-                
-                # HTML para el Reporte
-                reporte_html = f"""
-                <div style="color:black; background:white; padding:20px; border:2px solid black; font-family:Arial; width:100%;">
-                    <center><h2>MEDITERRANEO EXPRESS</h2><h3>REPORTE DE CIERRE DIARIO</h3></center>
-                    <hr>
-                    <p><b>Fecha/Hora:</b> {ahora}</p>
-                    <p><b>Ingreso Total:</b> ${t_ingreso:,.2f} | <b>Ganancia Neta:</b> ${ganancia_neta:,.2f}</p>
-                    <hr>
-                    <b>CUADRE DE CAJA (FÍSICO VS SISTEMA):</b><br>
-                    - Efectivo Bs: Sistema {s_ef_bs+f_bs_ini:,.2f} | Real {r_ef_bs:,.2f}<br>
-                    - Efectivo $: Sistema {s_di_usd+f_usd_ini:,.2f} | Real {r_di_usd:,.2f}<br>
-                    - Pago Móvil: Sistema {s_pm_bs:,.2f} | Real {r_pm_bs:,.2f}<br>
-                    <hr>
-                    <p style="text-align:center;">*** Fin del Reporte ***</p>
-                </div>
-                """
-                st.markdown(reporte_html, unsafe_allow_html=True)
-                st.components.v1.html("<script>window.print();</script>", height=0)
-                st.success("Jornada cerrada correctamente.")
-                time.sleep(2)
-                st.rerun()
-            else:
-                st.error("Clave Incorrecta. No se puede cerrar la jornada.")
+     # --- 4. BOTÓN DE CIERRE Y REPORTE MEJORADO ---
+st.divider()
+clave_c = st.text_input("Clave Administrativa para Cerrar", type="password")
+
+if st.button("🏮 FINALIZAR TURNO Y GENERAR REPORTE", use_container_width=True):
+    if clave_c == CLAVE_ADMIN:
+        ahora = datetime.now().strftime('%d/%m/%Y %H:%M')
+        
+        # Cálculos de Diferencias (Arqueo)
+        dif_bs = r_ef_bs - (s_ef_bs + f_bs_ini)
+        dif_usd = r_di_usd - (s_di_usd + f_usd_ini)
+        dif_pm = r_pm_bs - s_pm_bs
+        
+        # Función para dar color a las diferencias en el reporte
+        def format_dif(valor):
+            if valor < -0.1: return f"<span style='color:red;'>({valor:,.2f}) FALTANTE</span>"
+            if valor > 0.1: return f"<span style='color:green;'>+{valor:,.2f} SOBRANTE</span>"
+            return "<span style='color:blue;'>CUADRADO</span>"
+
+        # HTML para el Reporte Profesional
+        reporte_html = f"""
+        <div style="color:black; background:white; padding:30px; border:3px solid #0041C2; font-family: 'Courier New', Courier, monospace; width:100%;">
+            <center>
+                <h1 style='margin:0;'>MEDITERRANEO EXPRESS</h1>
+                <h3 style='margin:0;'>REPORTE DE CIERRE DE CAJA</h3>
+                <p>Fecha: {ahora}</p>
+            </center>
+            <hr style='border: 1px solid black;'>
+            
+            <table style='width:100%; font-size:16px;'>
+                <tr><td><b>INGRESOS TOTALES:</b></td><td align='right'>${t_ingreso:,.2f}</td></tr>
+                <tr><td><b>GASTOS OPERATIVOS:</b></td><td align='right'>-${t_gastos_op:,.2f}</td></tr>
+                <tr style='font-size:18px;'><td><b>GANANCIA NETA:</b></td><td align='right'><b>${ganancia_neta:,.2f}</b></td></tr>
+            </table>
+            
+            <hr style='border: 1px dashed black;'>
+            <h3>🔍 RESULTADOS DEL ARQUEO</h3>
+            
+            <table style='width:100%; border-collapse: collapse;'>
+                <tr style='background-color:#f2f2f2;'>
+                    <th align='left'>MÉTODO</th><th align='right'>SISTEMA</th><th align='right'>REAL</th><th align='right'>DIFERENCIA</th>
+                </tr>
+                <tr>
+                    <td>Efectivo Bs</td><td align='right'>{s_ef_bs+f_bs_ini:,.2f}</td><td align='right'>{r_ef_bs:,.2f}</td><td align='right'>{format_dif(dif_bs)}</td>
+                </tr>
+                <tr>
+                    <td>Efectivo $</td><td align='right'>{s_di_usd+f_usd_ini:,.2f}</td><td align='right'>{r_di_usd:,.2f}</td><td align='right'>{format_dif(dif_usd)}</td>
+                </tr>
+                <tr>
+                    <td>Pago Móvil</td><td align='right'>{s_pm_bs:,.2f}</td><td align='right'>{r_pm_bs:,.2f}</td><td align='right'>{format_dif(dif_pm)}</td>
+                </tr>
+                 <tr>
+                    <td>Punto Venta</td><td align='right'>{s_pu_bs:,.2f}</td><td align='right'>{r_pu_bs:,.2f}</td><td align='right'>-</td>
+                </tr>
+            </table>
+            
+            <br>
+            <div style='background-color:#eee; padding:10px; border-radius:5px;'>
+                <b>Observaciones de Caja:</b><br>
+                {"✅ CAJA CUADRADA" if abs(dif_bs) < 1 and abs(dif_usd) < 0.1 else "⚠️ SE DETECTARON DISCREPANCIAS EN EL ARQUEO"}
+            </div>
+            
+            <hr style='border: 1px solid black;'>
+            <p style="text-align:center; font-size:12px;">ESTE DOCUMENTO ES UN REGISTRO DE CONTROL INTERNO</p>
+        </div>
+        """
+        
+        st.markdown(reporte_html, unsafe_allow_html=True)
+        
+        # Ejecutar impresión
+        st.components.v1.html("<script>window.print();</script>", height=0)
+        
+        # OPCIONAL: Marcar cierre en Base de Datos
+        try:
+            db.table("gastos").update({"estado": "cerrado"}).eq("descripcion", f"APERTURA_{f_hoy}").execute()
+            st.success("✅ Turno finalizado y guardado en historial.")
+        except:
+            pass
+
+        time.sleep(3)
+        st.rerun()
     else:
-        st.info("No hay ventas registradas para el día de hoy.")
+        st.error("❌ Clave Incorrecta. Acceso denegado.")
+
