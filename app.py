@@ -116,13 +116,24 @@ if opcion == "📦 Inventario":
                         db.table("inventario").delete().eq("nombre", prod_a_borrar).execute()
                         st.rerun()
 
-# --- 4. MÓDULO VENTA RÁPIDA (CORREGIDO: AHORA EN SU PROPIA SECCIÓN) ---
-# Coloca esto al inicio de tu elif opcion == "Nueva Venta"
-res_caja_check = db.table("gastos").select("estado").eq("descripcion", f"APERTURA_{hoy}").execute()
-if res_caja_check.data and res_caja_check.data[0]['estado'] == 'cerrado':
-    st.error("🚫 LA CAJA ESTÁ CERRADA. No se pueden procesar más ventas hoy.")
-    st.stop() # Esto detiene la ejecución del código de ventas
+# --- 4. MÓDULO VENTA RÁPIDA (CON CANDADO DE SEGURIDAD INTEGRADO) ---
 elif opcion == "🛒 Venta Rápida":
+    from datetime import date, datetime # Aseguramos las importaciones
+    
+    # 1. DEFINIR VARIABLES DE TIEMPO PRIMERO
+    hoy = date.today().isoformat()
+    
+    # 2. VERIFICACIÓN DE ESTADO DE CAJA (El candado)
+    res_caja_check = db.table("gastos").select("estado").eq("descripcion", f"APERTURA_{hoy}").execute()
+    
+    if not res_caja_check.data:
+        st.warning("⚠️ La caja no ha sido abierta hoy. Por favor, realiza la apertura en el módulo de Caja.")
+        st.stop()
+    elif res_caja_check.data[0]['estado'] == 'cerrado':
+        st.error("🚫 LA CAJA ESTÁ CERRADA. No se pueden procesar más ventas hoy.")
+        st.stop()
+
+    # --- INICIO DEL MÓDULO DE VENTAS (Tus funciones originales) ---
     st.header("🛒 Ventas Mediterraneo Express")
     
     with st.sidebar:
@@ -172,15 +183,16 @@ elif opcion == "🛒 Venta Rápida":
             try:
                 propina_usd = (total_a_cobrar_bs / tasa) - sub_total_usd
                 items_ticket = st.session_state.car.copy()
-                ahora = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+                ahora_iso = datetime.now().isoformat()
                 
                 for x in st.session_state.car:
                     db.table("ventas").insert({
                         "producto": x['p'], "cantidad": x['c'], "total_usd": x['t'], "tasa_cambio": tasa,
                         "pago_efectivo": ef, "pago_punto": pu, "pago_movil": pm, "pago_zelle": ze, 
                         "pago_otros": ot, "pago_divisas": di, "costo_venta": x['costo_u'] * x['c'],
-                        "propina": propina_usd / len(st.session_state.car), "fecha": datetime.now().isoformat()
+                        "propina": propina_usd / len(st.session_state.car), "fecha": ahora_iso
                     }).execute()
+                    
                     stk_actual = df_p[df_p['nombre'] == x['p']].iloc[0]['stock']
                     db.table("inventario").update({"stock": int(stk_actual - x['c'])}).eq("nombre", x['p']).execute()
                 
@@ -330,3 +342,4 @@ elif opcion == "📊 Cierre de Caja":
 
             except Exception as e:
                 st.error(f"Error técnico al cerrar: {e}")
+
