@@ -121,33 +121,31 @@ if opcion == "📦 Inventario":
                         db.table("inventario").delete().eq("nombre", prod_a_borrar).execute()
                         st.rerun()
 
-# --- 4. MÓDULO VENTA RÁPIDA (SINCRONIZADO CON TURNOS) ---
+# --- 4. MÓDULO VENTA RÁPIDA (CON TICKET Y TURNOS) ---
 elif opcion == "🛒 Venta Rápida":
     from datetime import date, datetime
     import pandas as pd
-    
-    # 1. BUSCAR EL ESTADO DEL ÚLTIMO TURNO REGISTRADO
+
+    # 1. VERIFICACIÓN DE TURNO (CANDADO DINÁMICO)
     res_caja = db.table("gastos").select("*").ilike("descripcion", "APERTURA_%").order("fecha", desc=True).limit(1).execute()
     
-    # Validamos si existe un turno y si está abierto
     if not res_caja.data:
-        st.warning("⚠️ No se ha realizado ninguna apertura. El administrador debe abrir un turno primero.")
+        st.warning("⚠️ No hay turnos registrados. Debe realizar una apertura primero.")
         st.stop()
     
     ultimo_turno = res_caja.data[0]
     if ultimo_turno['estado'] == 'cerrado':
-        st.error(f"🚫 EL TURNO ACTUAL ({ultimo_turno['descripcion']}) ESTÁ CERRADO.")
-        st.info("Por favor, abre un nuevo turno en el módulo 'Cierre de Caja' para continuar.")
+        st.error(f"🚫 TURNO CERRADO ({ultimo_turno['descripcion']}). Abra un nuevo turno para vender.")
         st.stop()
 
-    # --- SI EL TURNO ESTÁ ABIERTO, SE CARGA TODO EL MÓDULO DE VENTAS ---
     st.header("🛒 Ventas Mediterraneo Express")
-    st.caption(f"Operando bajo el turno: {ultimo_turno['descripcion']}")
+    st.caption(f"Turno Activo: {ultimo_turno['descripcion']}")
     
     with st.sidebar:
         st.divider()
         tasa = st.number_input("Tasa del Día (Bs/$)", 1.0, 500.0, 60.0)
 
+    # Consulta de productos
     res_p = db.table("inventario").select("*").execute()
     if res_p.data:
         df_p = pd.DataFrame(res_p.data)
@@ -173,6 +171,7 @@ elif opcion == "🛒 Venta Rápida":
                 })
                 st.rerun()
 
+    # PROCESAMIENTO DEL CARRITO
     if st.session_state.car:
         st.divider()
         df_car = pd.DataFrame(st.session_state.car)
@@ -182,17 +181,21 @@ elif opcion == "🛒 Venta Rápida":
         total_bs_sugerido = sub_total_usd * tasa
         st.write(f"### Total Sugerido: **{total_bs_sugerido:,.2f} Bs.** (${sub_total_usd:,.2f})")
         
-        total_a_cobrar_bs = st.number_input("MONTO FINAL A COBRAR", value=float(total_bs_sugerido))
+        total_a_cobrar_bs = st.number_input("MONTO FINAL A COBRAR (Bs)", value=float(total_bs_sugerido))
         
         col_p1, col_p2, col_p3 = st.columns(3)
         ef = col_p1.number_input("Efectivo Bs", 0.0); pm = col_p1.number_input("Pago Móvil Bs", 0.0)
         pu = col_p2.number_input("Punto Bs", 0.0); ot = col_p2.number_input("Otros Bs", 0.0)
         ze = col_p3.number_input("Zelle $", 0.0); di = col_p3.number_input("Divisas $", 0.0)
         
-        if st.button("🚀 FINALIZAR VENTA"):
+        if st.button("🚀 FINALIZAR VENTA", use_container_width=True, type="primary"):
             try:
                 propina_usd = (total_a_cobrar_bs / tasa) - sub_total_usd
                 ahora_iso = datetime.now().isoformat()
+                ahora_print = datetime.now().strftime("%d/%m/%Y %H:%M")
+                
+                # Guardamos copia para el ticket antes de limpiar el carrito
+                items_factura = st.session_state.car.copy()
                 
                 for x in st.session_state.car:
                     db.table("ventas").insert({
@@ -202,12 +205,38 @@ elif opcion == "🛒 Venta Rápida":
                         "propina": propina_usd / len(st.session_state.car), "fecha": ahora_iso
                     }).execute()
                     
+                    # Descontar Inventario
                     stk_actual = df_p[df_p['nombre'] == x['p']].iloc[0]['stock']
                     db.table("inventario").update({"stock": int(stk_actual - x['c'])}).eq("nombre", x['p']).execute()
                 
+                # --- GENERACIÓN DE FACTURA VISUAL ---
                 st.success("🎉 VENTA REGISTRADA")
-                st.session_state.car = []
-                st.rerun()
+                
+                ticket_html = f"""
+                <div id="ticket" style="background-color: #fff; padding: 20px; color: #000; font-family: monospace; border: 1px solid #ccc; width: 300px;">
+                    <center>
+                        <h3>MEDITERRANEO EXPRESS</h3>
+                        <p>Fecha: {ahora_print}</p>
+                        <hr>
+                    </center>
+                    <table style="width: 100%; font-size: 12px;">
+                        {"".join([f"<tr><td>{i['c']}x {i['p']}</td><td style='text-align:right;'>${i['t']:.2f}</td></tr>" for i in items_factura])}
+                    </table>
+                    <hr>
+                    <table style="width: 100%;">
+                        <tr><td><b>TOTAL USD:</b></td><td style="text-align:right;"><b>${sub_total_usd:.2f}</b></td></tr>
+                        <tr><td><b>TOTAL BS:</b></td><td style="text-align:right;">{total_a_cobrar_bs:.2f}</td></tr>
+                    </table>
+                    <center><br><p>¡Gracias por su compra!</p></center>
+                </div>
+                """
+                st.markdown(ticket_html, unsafe_allow_html=True)
+                
+                # Botón de reinicio manual para que tengan tiempo de ver/imprimir
+                if st.button("NUEVA VENTA"):
+                    st.session_state.car = []
+                    st.rerun()
+
             except Exception as e:
                 st.error(f"Error: {e}")
 
@@ -339,4 +368,5 @@ elif opcion == "📊 Cierre de Caja":
                 st.rerun()
             except Exception as e:
                 st.error(f"Error al cerrar turno: {e}")
+
 
