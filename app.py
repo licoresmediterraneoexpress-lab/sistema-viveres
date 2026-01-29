@@ -243,168 +243,112 @@ elif opcion == "💸 Gastos":
             db.table("gastos").insert({"descripcion": desc, "monto_usd": monto, "fecha": datetime.now().isoformat()}).execute()
             st.success("Gasto registrado.")
 
-# --- 6. MÓDULO DE CAJA: CONTROL TOTAL Y CIERRE (VERSIÓN CORREGIDA Y FINAL) ---
+# --- 6. MÓDULO DE CAJA: TURNOS MÚLTIPLES ---
 elif opcion == "📊 Cierre de Caja":
     import time
     from datetime import date, datetime
     import pandas as pd
 
-    st.header("📊 Gestión de Caja y Arqueo Integral")
+    st.header("📊 Gestión de Turnos y Arqueo")
+    hoy = date.today().isoformat()
     
-    # 1. DEFINICIÓN GLOBAL DE VARIABLES DE TIEMPO
-    ahora_dt = datetime.now()
-    hoy = ahora_dt.date().isoformat()
-    ahora_iso = ahora_dt.isoformat()
+    # 1. BUSCAR EL ÚLTIMO REGISTRO DE CAJA (De cualquier fecha, para saber el estado actual)
+    res_ultimo = db.table("gastos").select("*").ilike("descripcion", "APERTURA_%").order("fecha", desc=True).limit(1).execute()
+    ultimo_registro = res_ultimo.data[0] if res_ultimo.data else None
     
-    # 2. VERIFICACIÓN DE ESTADO DE CAJA EN SUPABASE
-    # Buscamos si ya existe un registro de apertura para el día de hoy
-    res_caja = db.table("gastos").select("*").eq("descripcion", f"APERTURA_{hoy}").execute()
-    caja_datos = res_caja.data[0] if res_caja.data else None
-    
-    # Determinamos estados
-    caja_abierta_en_db = caja_datos is not None
-    esta_cerrada = caja_datos.get('estado') == 'cerrado' if caja_abierta_en_db else False
+    # Determinamos si el sistema está "Abierto" o "Cerrado" actualmente
+    # Si no hay registros o el último está cerrado, se puede abrir un nuevo turno
+    caja_abierta actualmente = ultimo_registro is not None and ultimo_registro.get('estado') == 'abierto'
 
-    # --- BLOQUE A: FORMULARIO DE APERTURA (Si no existe registro hoy) ---
-    if not caja_abierta_en_db:
-        st.warning("⚠️ La caja se encuentra cerrada. Por favor, registre el fondo inicial para operar hoy.")
-        
-        # Usamos un formulario para asegurar que los datos se envíen juntos
-        with st.form("form_apertura_final"):
-            st.subheader("🔑 Abrir Turno de Trabajo")
+    # --- BLOQUE A: APERTURA DE NUEVO TURNO ---
+    if not caja_abierta_actualmente:
+        st.info("🔓 Sistema listo para iniciar un **Nuevo Turno**.")
+        with st.form("form_apertura_turno"):
+            st.subheader("🔑 Apertura de Turno")
             col1, col2, col3 = st.columns(3)
+            tasa_ap = col1.number_input("Tasa del Día", min_value=1.0, value=60.0)
+            f_bs = col2.number_input("Fondo Inicial Bs", min_value=0.0)
+            f_usd = col3.number_input("Fondo Inicial $", min_value=0.0)
             
-            tasa_ap = col1.number_input("Tasa del Día (Bs/$)", min_value=1.0, value=60.0, step=0.1)
-            f_bs = col2.number_input("Fondo Inicial en Bolívares (Bs)", min_value=0.0, step=10.0)
-            f_usd = col3.number_input("Fondo Inicial en Divisas ($)", min_value=0.0, step=1.0)
+            # Generamos un ID único por turno usando el timestamp
+            id_turno = datetime.now().strftime("%Y%m%d_%H%M%S")
             
-            submit_apertura = st.form_submit_button("✅ REGISTRAR APERTURA Y EMPEZAR", use_container_width=True)
-            
-            if submit_apertura:
-                try:
-                    # Cálculo del monto total convertido a USD para la columna monto_usd
-                    total_usd_ap = float(f_usd) + (float(f_bs) / float(tasa_ap))
-                    
-                    # Inserción en la tabla gastos
-                    db.table("gastos").insert({
-                        "descripcion": f"APERTURA_{hoy}",
-                        "monto_usd": total_usd_ap,
-                        "monto_bs_extra": float(f_bs),
-                        "fecha": ahora_iso,
-                        "estado": "abierto"
-                    }).execute()
-                    
-                    st.success("¡Caja abierta exitosamente! Cargando panel...")
-                    time.sleep(1.5)
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error al abrir caja: {str(e)}")
+            if st.form_submit_button("✅ ABRIR TURNO", use_container_width=True):
+                db.table("gastos").insert({
+                    "descripcion": f"APERTURA_{id_turno}",
+                    "monto_usd": f_usd + (f_bs / tasa_ap),
+                    "monto_bs_extra": f_bs,
+                    "fecha": datetime.now().isoformat(),
+                    "estado": "abierto"
+                }).execute()
+                st.success(f"Turno {id_turno} iniciado.")
+                time.sleep(1)
+                st.rerun()
 
-    # --- BLOQUE B: VISTA DE BLOQUEO (Si la caja ya fue cerrada) ---
-    elif esta_cerrada:
-        st.success("✅ JORNADA FINALIZADA: La caja de hoy ha sido cerrada y bloqueada.")
-        st.info("No se permiten más registros de ventas o gastos para la fecha actual.")
-        
-        # Mostramos resumen rápido de solo lectura
-        if st.button("🔄 Refrescar Pantalla"):
-            st.rerun()
-
-    # --- BLOQUE C: PANEL DE ARQUEO ACTIVO (Caja abierta, lista para cerrar) ---
+    # --- BLOQUE B: CIERRE DE TURNO ACTIVO ---
     else:
-        # Extraemos fondos iniciales del registro de apertura
-        f_bs_ini = float(caja_datos.get('monto_bs_extra', 0.0))
-        # Calculamos el USD inicial restando el equivalente en Bs del total en USD
-        # Usamos la tasa de 60 por defecto si no se guardó la tasa específica
-        f_usd_ini = float(caja_datos.get('monto_usd', 0.0)) - (f_bs_ini / 60)
+        id_turno_actual = ultimo_registro['descripcion']
+        fecha_inicio_turno = ultimo_registro['fecha']
+        f_bs_ini = ultimo_registro['monto_bs_extra']
+        f_usd_ini = ultimo_registro['monto_usd'] - (f_bs_ini / 60)
 
-        st.info(f"🟢 Caja Abierta hoy con: {f_bs_ini:,.2f} Bs | ${f_usd_ini:,.2f} USD")
+        st.warning(f"🔔 Turno Activo: **{id_turno_actual}**")
+        st.write(f"Iniciado el: {fecha_inicio_turno}")
 
-        # Consultar todas las ventas del día actual
-        v_res = db.table("ventas").select("*").gte("fecha", hoy).execute()
+        # 2. CONSULTAR VENTAS SOLO DESDE QUE SE ABRIÓ ESTE TURNO
+        v_res = db.table("ventas").select("*").gte("fecha", fecha_inicio_turno).execute()
         df_v = pd.DataFrame(v_res.data) if v_res.data else pd.DataFrame()
 
-        # Inicializamos contadores del sistema
         if not df_v.empty:
-            s_ef_bs = df_v['pago_efectivo'].sum()
-            s_di_usd = df_v['pago_divisas'].sum()
-            s_pm_bs = df_v['pago_movil'].sum()
-            s_pu_bs = df_v['pago_punto'].sum()
-            s_ze_usd = df_v['pago_zelle'].sum()
-            s_ot_bs = df_v['pago_otros'].sum()
+            s_ef_bs = df_v['pago_efectivo'].sum(); s_di_usd = df_v['pago_divisas'].sum()
+            s_pm_bs = df_v['pago_movil'].sum(); s_pu_bs = df_v['pago_punto'].sum()
             total_ingreso = df_v['total_usd'].sum()
         else:
-            s_ef_bs = s_di_usd = s_pm_bs = s_pu_bs = s_ze_usd = s_ot_bs = total_ingreso = 0.0
+            s_ef_bs = s_di_usd = s_pm_bs = s_pu_bs = total_ingreso = 0.0
 
-        # Interfaz de Métricas del Sistema
-        st.subheader("💳 Ventas Registradas en Sistema")
+        # Interfaz de Sistema
         c_sys = st.columns(4)
-        c_sys[0].metric("Efectivo Bs", f"{s_ef_bs:,.2f}")
-        c_sys[1].metric("Divisas $", f"{s_di_usd:,.2f}")
+        c_sys[0].metric("Efec. Bs (Ventas)", f"{s_ef_bs:,.2f}")
+        c_sys[1].metric("Efec. $ (Ventas)", f"{s_di_usd:,.2f}")
         c_sys[2].metric("Pago Móvil", f"{s_pm_bs:,.2f}")
-        c_sys[3].metric("Punto / Zelle", f"{(s_pu_bs + s_ze_usd):,.2f}")
+        c_sys[3].metric("Punto", f"{s_pu_bs:,.2f}")
 
+        # Arqueo Físico
         st.divider()
-        st.subheader("📝 Arqueo Físico (Dinero en Mano)")
-        
-        # Contenedor para entrada de datos físicos
+        st.subheader("📝 Arqueo Físico del Turno")
         with st.container(border=True):
-            col_r1, col_r2, col_r3 = st.columns(3)
-            r_ef_bs = col_r1.number_input("Total Efectivo Bs", 0.0)
-            r_ef_usd = col_r1.number_input("Total Efectivo $", 0.0)
-            r_pm_bs = col_r2.number_input("Total Pago Móvil Bs", 0.0)
-            r_pu_bs = col_r2.number_input("Total Punto Bs", 0.0)
-            r_ze_usd = col_r3.number_input("Total Zelle $", 0.0)
-            r_ot_bs = col_r3.number_input("Otros ingresos Bs", 0.0)
+            col_r1, col_r2 = st.columns(2)
+            r_ef_bs = col_r1.number_input("Efectivo Bs en Caja", 0.0)
+            r_ef_usd = col_r1.number_input("Efectivo $ en Caja", 0.0)
+            r_pm_bs = col_r2.number_input("Vouchers Pago Móvil", 0.0)
+            r_pu_bs = col_r2.number_input("Vouchers Punto", 0.0)
 
-        # BOTÓN DE CIERRE DEFINITIVO
-        if st.button("🏮 FINALIZAR JORNADA Y BLOQUEAR TODO", use_container_width=True, type="primary"):
+        if st.button("🏮 CERRAR TURNO ACTUAL", use_container_width=True, type="primary"):
             try:
-                # 1. Marcar el registro de apertura como CERRADO
-                db.table("gastos").update({"estado": "cerrado"}).eq("descripcion", f"APERTURA_{hoy}").execute()
+                # 1. CERRAR EL TURNO EN LA DB
+                db.table("gastos").update({"estado": "cerrado"}).eq("descripcion", id_turno_actual).execute()
                 
-                # 2. Cálculos de conciliación (Esperado vs Real)
+                # 2. CÁLCULOS
                 esp_bs = s_ef_bs + f_bs_ini
                 esp_usd = s_di_usd + f_usd_ini
-                dif_bs = r_ef_bs - esp_bs
-                dif_usd = r_ef_usd - esp_usd
-
+                
                 st.balloons()
-                st.success("✅ Caja cerrada y bloqueada exitosamente.")
+                st.success("✅ Turno cerrado. El sistema queda libre para el siguiente empleado.")
 
-                # 3. Generación del Reporte Visual Final (Corregido variable reporte_html)
                 reporte_html = f"""
-                <div style="background: white; color: black; padding: 25px; border: 4px solid #333; font-family: 'Courier New', Courier, monospace; line-height: 1.2;">
-                    <center>
-                        <h2 style="margin:0;">MEDITERRANEO EXPRESS</h2>
-                        <h4 style="margin:0;">REPORTE FINAL DE CIERRE</h4>
-                        <p>Fecha: {hoy}</p>
-                    </center>
-                    <hr style="border: 1px dashed black;">
-                    <table style="width:100%;">
-                        <tr><td><b>VENTAS DEL DÍA:</b></td><td style="text-align:right;">${total_ingreso:,.2f}</td></tr>
-                        <tr><td><b>FONDO INICIAL BS:</b></td><td style="text-align:right;">{f_bs_ini:,.2f}</td></tr>
-                        <tr><td><b>FONDO INICIAL $:</b></td><td style="text-align:right;">${f_usd_ini:,.2f}</td></tr>
-                    </table>
-                    <hr style="border: 1px dashed black;">
-                    <center><b>CUADRE DE CAJA</b></center>
-                    <table style="width:100%; font-size: 14px;">
-                        <tr><td>EFECTIVO BS (ESP):</td><td style="text-align:right;">{esp_bs:,.2f}</td></tr>
-                        <tr><td>EFECTIVO BS (REAL):</td><td style="text-align:right;">{r_ef_bs:,.2f}</td></tr>
-                        <tr><td><b>DIFERENCIA BS:</b></td><td style="text-align:right;"><b>{dif_bs:,.2f}</b></td></tr>
-                        <tr><td colspan="2"><br></td></tr>
-                        <tr><td>EFECTIVO $ (ESP):</td><td style="text-align:right;">${esp_usd:,.2f}</td></tr>
-                        <tr><td>EFECTIVO $ (REAL):</td><td style="text-align:right;">${r_ef_usd:,.2f}</td></tr>
-                        <tr><td><b>DIFERENCIA $:</b></td><td style="text-align:right;"><b>${dif_usd:,.2f}</b></td></tr>
-                    </table>
-                    <hr style="border: 1px dashed black;">
-                    <center><p>CAJA CERRADA POR SISTEMA</p></center>
+                <div style="background: white; color: black; padding: 20px; border: 2px solid black; font-family: monospace;">
+                    <center><h3>REPORTE DE CIERRE DE TURNO</h3></center>
+                    <b>ID TURNO:</b> {id_turno_actual}<br>
+                    <hr>
+                    <b>DIFERENCIAS:</b><br>
+                    - Bs: {r_ef_bs - esp_bs:,.2f}<br>
+                    - $: {r_ef_usd - esp_usd:,.2f}<br>
+                    <hr>
+                    <p>Turno finalizado a las {datetime.now().strftime('%H:%M:%S')}</p>
                 </div>
                 """
                 st.markdown(reporte_html, unsafe_allow_html=True)
-                
-                # Esperar para que el usuario pueda ver el reporte antes de refrescar y bloquear
-                time.sleep(7)
+                time.sleep(5)
                 st.rerun()
-
             except Exception as e:
-                st.error(f"Error técnico durante el cierre: {str(e)}")
+                st.error(f"Error: {e}")
