@@ -121,7 +121,7 @@ if opcion == "📦 Inventario":
                         db.table("inventario").delete().eq("nombre", prod_a_borrar).execute()
                         st.rerun()
 
-# --- 4. MÓDULO VENTA RÁPIDA (VERSIÓN FINAL UNIFICADA Y SIN ERRORES) ---
+# --- 4. MÓDULO VENTA RÁPIDA (CON HISTORIAL Y ANULACIÓN) ---
 elif opcion == "🛒 Venta Rápida":
     from datetime import date, datetime
     import pandas as pd
@@ -171,7 +171,6 @@ elif opcion == "🛒 Venta Rápida":
                     for item in st.session_state.car:
                         if item['p'] == item_sel:
                             item['c'] += cant_sel
-                            # Recalcular precio según nueva cantidad total
                             precio_u = float(p_data['precio_mayor']) if item['c'] >= p_data['min_mayor'] else float(p_data['precio_detal'])
                             item['u'] = precio_u
                             item['t'] = round(precio_u * item['c'], 2)
@@ -204,11 +203,9 @@ elif opcion == "🛒 Venta Rápida":
                 col1, col2, col3, col4, col5 = st.columns([3, 2, 2, 2, 1])
                 col1.write(f"**{item['p']}**")
                 
-                # Editor de cantidad
                 nueva_cant = col2.number_input("Cant.", 1, 9999, value=item['c'], key=f"edit_{i}")
                 if nueva_cant != item['c']:
                     item['c'] = nueva_cant
-                    # Recalculo automático usando los datos guardados en el diccionario
                     precio_u = float(item['p_mayor']) if nueva_cant >= item['min_m'] else float(item['p_detal'])
                     item['u'] = precio_u
                     item['t'] = round(precio_u * nueva_cant, 2)
@@ -238,7 +235,6 @@ elif opcion == "🛒 Venta Rápida":
         pu = col_p2.number_input("Punto Bs", 0.0); ot = col_p2.number_input("Otros Bs", 0.0)
         ze = col_p3.number_input("Zelle $", 0.0); di = col_p3.number_input("Divisas $", 0.0)
         
-        # Cálculo de Vuelto
         total_pagado_bs = ef + pm + pu + ot + (ze * tasa) + (di * tasa)
         vuelto_bs = total_pagado_bs - total_a_cobrar_bs
         
@@ -247,7 +243,7 @@ elif opcion == "🛒 Venta Rápida":
         elif vuelto_bs < 0:
             st.warning(f"⚠️ Faltan: {abs(vuelto_bs):,.2f} Bs.")
 
-        # 5. FINALIZAR Y TICKET
+        # 5. FINALIZAR VENTA
         if st.button("🚀 FINALIZAR VENTA", use_container_width=True, type="primary"):
             try:
                 propina_usd = (total_a_cobrar_bs / tasa) - sub_total_usd
@@ -263,7 +259,6 @@ elif opcion == "🛒 Venta Rápida":
                         "propina": propina_usd / len(st.session_state.car), "fecha": ahora_iso
                     }).execute()
                     
-                    # Descuento de stock seguro
                     p_inv_res = db.table("inventario").select("stock").eq("nombre", x['p']).execute()
                     if p_inv_res.data:
                         nuevo_stk = int(p_inv_res.data[0]['stock'] - x['c'])
@@ -273,11 +268,7 @@ elif opcion == "🛒 Venta Rápida":
                 
                 ticket_html = f"""
                 <div style="background-color: #fff; padding: 20px; color: #000; font-family: monospace; border: 2px solid #000; width: 280px; margin: auto;">
-                    <center>
-                        <h3 style="margin:0;">MEDITERRANEO EXPRESS</h3>
-                        <p style="font-size:10px;">{ahora_print}</p>
-                        <hr>
-                    </center>
+                    <center><h3 style="margin:0;">MEDITERRANEO EXPRESS</h3><p style="font-size:10px;">{ahora_print}</p><hr></center>
                     <table style="width: 100%; font-size: 11px;">
                         {"".join([f"<tr><td>{i['c']}x {i['p'][:15]}</td><td style='text-align:right;'>${i['t']:.2f}</td></tr>" for i in items_factura])}
                     </table>
@@ -286,8 +277,7 @@ elif opcion == "🛒 Venta Rápida":
                         <tr><td><b>TOTAL USD:</b></td><td style="text-align:right;"><b>${sub_total_usd:.2f}</b></td></tr>
                         <tr><td><b>TOTAL BS:</b></td><td style="text-align:right;"><b>{total_a_cobrar_bs:,.2f}</b></td></tr>
                     </table>
-                    <center><br><p style="font-size:10px;">Vuelto: {vuelto_bs:,.2f} Bs</p>
-                    <p style="font-size:10px;">*** Gracias por su compra ***</p></center>
+                    <center><br><p style="font-size:10px;">Vuelto: {vuelto_bs:,.2f} Bs</p><p style="font-size:10px;">*** Gracias por su compra ***</p></center>
                 </div>
                 """
                 st.markdown(ticket_html, unsafe_allow_html=True)
@@ -298,6 +288,36 @@ elif opcion == "🛒 Venta Rápida":
 
             except Exception as e:
                 st.error(f"Error: {e}")
+
+    # --- 6. HISTORIAL CON BOTÓN DE ANULACIÓN ---
+    st.divider()
+    with st.expander("🕒 Últimas 5 Ventas (Historial y Anulaciones)"):
+        res_h = db.table("ventas").select("id, fecha, producto, cantidad, total_usd").order("fecha", desc=True).limit(5).execute()
+        if res_h.data:
+            for v in res_h.data:
+                h_col1, h_col2, h_col3, h_col4 = st.columns([1, 3, 1, 1])
+                h_hora = datetime.fromisoformat(v['fecha']).strftime('%H:%M')
+                h_col1.write(f"**{h_hora}**")
+                h_col2.write(f"{v['cantidad']}x {v['producto']}")
+                h_col3.write(f"${v['total_usd']}")
+                
+                # Botón para anular venta individual
+                if h_col4.button("❌", key=f"rev_{v['id']}", help="Anular esta venta y devolver stock"):
+                    try:
+                        # 1. Recuperar stock actual
+                        p_inv = db.table("inventario").select("stock").eq("nombre", v['producto']).execute()
+                        if p_inv.data:
+                            stock_actual = p_inv.data[0]['stock']
+                            # 2. Devolver cantidad al inventario
+                            db.table("inventario").update({"stock": stock_actual + v['cantidad']}).eq("nombre", v['producto']).execute()
+                            # 3. Borrar la venta
+                            db.table("ventas").delete().eq("id", v['id']).execute()
+                            st.toast(f"Anulada: {v['producto']} (+{v['cantidad']} al stock)")
+                            st.rerun()
+                    except Exception as ex:
+                        st.error(f"No se pudo anular: {ex}")
+        else:
+            st.info("No hay ventas recientes.")
 
 # --- 5. MÓDULO GASTOS ---
 elif opcion == "💸 Gastos":
@@ -427,6 +447,7 @@ elif opcion == "📊 Cierre de Caja":
                 st.rerun()
             except Exception as e:
                 st.error(f"Error al cerrar turno: {e}")
+
 
 
 
