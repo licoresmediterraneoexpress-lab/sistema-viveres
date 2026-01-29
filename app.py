@@ -117,6 +117,11 @@ if opcion == "📦 Inventario":
                         st.rerun()
 
 # --- 4. MÓDULO VENTA RÁPIDA (CORREGIDO: AHORA EN SU PROPIA SECCIÓN) ---
+# Coloca esto al inicio de tu elif opcion == "Nueva Venta"
+res_caja_check = db.table("gastos").select("estado").eq("descripcion", f"APERTURA_{hoy}").execute()
+if res_caja_check.data and res_caja_check.data[0]['estado'] == 'cerrado':
+    st.error("🚫 LA CAJA ESTÁ CERRADA. No se pueden procesar más ventas hoy.")
+    st.stop() # Esto detiene la ejecución del código de ventas
 elif opcion == "🛒 Venta Rápida":
     st.header("🛒 Ventas Mediterraneo Express")
     
