@@ -243,26 +243,28 @@ elif opcion == "💸 Gastos":
             db.table("gastos").insert({"descripcion": desc, "monto_usd": monto, "fecha": datetime.now().isoformat()}).execute()
             st.success("Gasto registrado.")
 
-# --- 6. MÓDULO DE CAJA: TURNOS MÚLTIPLES ---
+# --- 6. MÓDULO DE CAJA: TURNOS MÚLTIPLES (SIN ERRORES DE SINTAXIS) ---
 elif opcion == "📊 Cierre de Caja":
     import time
     from datetime import date, datetime
     import pandas as pd
 
     st.header("📊 Gestión de Turnos y Arqueo")
-    hoy = date.today().isoformat()
     
-    # 1. BUSCAR EL ÚLTIMO REGISTRO DE CAJA (De cualquier fecha, para saber el estado actual)
-    res_ultimo = db.table("gastos").select("*").ilike("descripcion", "APERTURA_%").order("fecha", desc=True).limit(1).execute()
-    ultimo_registro = res_ultimo.data[0] if res_ultimo.data else None
+    # 1. BUSCAR EL ÚLTIMO REGISTRO DE CAJA (Ordenado por fecha descendente)
+    try:
+        res_ultimo = db.table("gastos").select("*").ilike("descripcion", "APERTURA_%").order("fecha", desc=True).limit(1).execute()
+        ultimo_registro = res_ultimo.data[0] if res_ultimo.data else None
+    except Exception as e:
+        ultimo_registro = None
+        st.error(f"Error al conectar con la base de datos: {e}")
     
-    # Determinamos si el sistema está "Abierto" o "Cerrado" actualmente
-    # Si no hay registros o el último está cerrado, se puede abrir un nuevo turno
-    caja_abierta actualmente = ultimo_registro is not None and ultimo_registro.get('estado') == 'abierto'
+    # Determinamos si hay un turno abierto (Variable corregida sin espacios)
+    caja_abierta_actual = ultimo_registro is not None and ultimo_registro.get('estado') == 'abierto'
 
     # --- BLOQUE A: APERTURA DE NUEVO TURNO ---
-    if not caja_abierta_actualmente:
-        st.info("🔓 Sistema listo para iniciar un **Nuevo Turno**.")
+    if not caja_abierta_actual:
+        st.info("🔓 No hay turnos activos. Inicie un nuevo turno para poder registrar ventas.")
         with st.form("form_apertura_turno"):
             st.subheader("🔑 Apertura de Turno")
             col1, col2, col3 = st.columns(3)
@@ -270,10 +272,10 @@ elif opcion == "📊 Cierre de Caja":
             f_bs = col2.number_input("Fondo Inicial Bs", min_value=0.0)
             f_usd = col3.number_input("Fondo Inicial $", min_value=0.0)
             
-            # Generamos un ID único por turno usando el timestamp
+            # Generamos un ID único usando Fecha y Hora
             id_turno = datetime.now().strftime("%Y%m%d_%H%M%S")
             
-            if st.form_submit_button("✅ ABRIR TURNO", use_container_width=True):
+            if st.form_submit_button("✅ ABRIR NUEVO TURNO", use_container_width=True):
                 db.table("gastos").insert({
                     "descripcion": f"APERTURA_{id_turno}",
                     "monto_usd": f_usd + (f_bs / tasa_ap),
@@ -281,7 +283,7 @@ elif opcion == "📊 Cierre de Caja":
                     "fecha": datetime.now().isoformat(),
                     "estado": "abierto"
                 }).execute()
-                st.success(f"Turno {id_turno} iniciado.")
+                st.success(f"🚀 Turno {id_turno} abierto con éxito.")
                 time.sleep(1)
                 st.rerun()
 
@@ -289,66 +291,73 @@ elif opcion == "📊 Cierre de Caja":
     else:
         id_turno_actual = ultimo_registro['descripcion']
         fecha_inicio_turno = ultimo_registro['fecha']
-        f_bs_ini = ultimo_registro['monto_bs_extra']
-        f_usd_ini = ultimo_registro['monto_usd'] - (f_bs_ini / 60)
+        f_bs_ini = float(ultimo_registro.get('monto_bs_extra', 0.0))
+        # Calculamos fondo USD restando el equivalente en Bs
+        f_usd_ini = float(ultimo_registro.get('monto_usd', 0.0)) - (f_bs_ini / 60)
 
         st.warning(f"🔔 Turno Activo: **{id_turno_actual}**")
-        st.write(f"Iniciado el: {fecha_inicio_turno}")
+        st.caption(f"Abierto desde: {fecha_inicio_turno}")
 
         # 2. CONSULTAR VENTAS SOLO DESDE QUE SE ABRIÓ ESTE TURNO
         v_res = db.table("ventas").select("*").gte("fecha", fecha_inicio_turno).execute()
         df_v = pd.DataFrame(v_res.data) if v_res.data else pd.DataFrame()
 
         if not df_v.empty:
-            s_ef_bs = df_v['pago_efectivo'].sum(); s_di_usd = df_v['pago_divisas'].sum()
-            s_pm_bs = df_v['pago_movil'].sum(); s_pu_bs = df_v['pago_punto'].sum()
+            s_ef_bs = df_v['pago_efectivo'].sum()
+            s_di_usd = df_v['pago_divisas'].sum()
+            s_pm_bs = df_v['pago_movil'].sum()
+            s_pu_bs = df_v['pago_punto'].sum()
             total_ingreso = df_v['total_usd'].sum()
         else:
             s_ef_bs = s_di_usd = s_pm_bs = s_pu_bs = total_ingreso = 0.0
 
-        # Interfaz de Sistema
+        # Métricas del Sistema
+        st.subheader("💳 Ventas del Turno (Sistema)")
         c_sys = st.columns(4)
-        c_sys[0].metric("Efec. Bs (Ventas)", f"{s_ef_bs:,.2f}")
-        c_sys[1].metric("Efec. $ (Ventas)", f"{s_di_usd:,.2f}")
+        c_sys[0].metric("Efectivo Bs", f"{s_ef_bs:,.2f}")
+        c_sys[1].metric("Efectivo $", f"{s_di_usd:,.2f}")
         c_sys[2].metric("Pago Móvil", f"{s_pm_bs:,.2f}")
         c_sys[3].metric("Punto", f"{s_pu_bs:,.2f}")
 
         # Arqueo Físico
         st.divider()
-        st.subheader("📝 Arqueo Físico del Turno")
+        st.subheader("📝 Ingresar Dinero Real en Caja")
         with st.container(border=True):
             col_r1, col_r2 = st.columns(2)
-            r_ef_bs = col_r1.number_input("Efectivo Bs en Caja", 0.0)
-            r_ef_usd = col_r1.number_input("Efectivo $ en Caja", 0.0)
-            r_pm_bs = col_r2.number_input("Vouchers Pago Móvil", 0.0)
-            r_pu_bs = col_r2.number_input("Vouchers Punto", 0.0)
+            r_ef_bs = col_r1.number_input("Total Efectivo Bs Real", 0.0)
+            r_ef_usd = col_r1.number_input("Total Efectivo $ Real", 0.0)
+            r_pm_bs = col_r2.number_input("Total Pago Móvil Real", 0.0)
+            r_pu_bs = col_r2.number_input("Total Punto Real", 0.0)
 
-        if st.button("🏮 CERRAR TURNO ACTUAL", use_container_width=True, type="primary"):
+        if st.button("🏮 CERRAR TURNO Y BLOQUEAR VENTAS", use_container_width=True, type="primary"):
             try:
-                # 1. CERRAR EL TURNO EN LA DB
+                # 1. CERRAR EL TURNO
                 db.table("gastos").update({"estado": "cerrado"}).eq("descripcion", id_turno_actual).execute()
                 
-                # 2. CÁLCULOS
+                # 2. CÁLCULOS DE CUADRE
                 esp_bs = s_ef_bs + f_bs_ini
                 esp_usd = s_di_usd + f_usd_ini
-                
+                dif_bs = r_ef_bs - esp_bs
+                dif_usd = r_ef_usd - esp_usd
+
                 st.balloons()
-                st.success("✅ Turno cerrado. El sistema queda libre para el siguiente empleado.")
+                st.success("✅ Turno cerrado exitosamente.")
 
                 reporte_html = f"""
-                <div style="background: white; color: black; padding: 20px; border: 2px solid black; font-family: monospace;">
-                    <center><h3>REPORTE DE CIERRE DE TURNO</h3></center>
-                    <b>ID TURNO:</b> {id_turno_actual}<br>
+                <div style="background: white; color: black; padding: 20px; border: 3px solid black; font-family: monospace;">
+                    <center><h2>REPORTE DE CIERRE</h2></center>
                     <hr>
-                    <b>DIFERENCIAS:</b><br>
-                    - Bs: {r_ef_bs - esp_bs:,.2f}<br>
-                    - $: {r_ef_usd - esp_usd:,.2f}<br>
+                    <b>TURNO:</b> {id_turno_actual}<br>
+                    <b>VENTAS TOTALES:</b> ${total_ingreso:,.2f}<br>
                     <hr>
-                    <p>Turno finalizado a las {datetime.now().strftime('%H:%M:%S')}</p>
+                    <b>DIFERENCIA BS:</b> {dif_bs:,.2f}<br>
+                    <b>DIFERENCIA $:</b> {dif_usd:,.2f}<br>
+                    <hr>
+                    <center>Ventas pausadas hasta nueva apertura</center>
                 </div>
                 """
                 st.markdown(reporte_html, unsafe_allow_html=True)
                 time.sleep(5)
                 st.rerun()
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.error(f"Error al cerrar turno: {e}")
