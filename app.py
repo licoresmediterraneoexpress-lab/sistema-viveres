@@ -121,7 +121,7 @@ if opcion == "📦 Inventario":
                         db.table("inventario").delete().eq("nombre", prod_a_borrar).execute()
                         st.rerun()
 
-# --- 4. MÓDULO VENTA RÁPIDA (CON EDICIÓN DE CARRITO Y TICKET) ---
+# --- 4. MÓDULO VENTA RÁPIDA (VERSION CORREGIDA ANTI-ERRORES) ---
 elif opcion == "🛒 Venta Rápida":
     from datetime import date, datetime
     import pandas as pd
@@ -152,55 +152,62 @@ elif opcion == "🛒 Venta Rápida":
         busc = st.text_input("🔍 Buscar producto...").lower()
         df_f = df_p[df_p['nombre'].str.lower().str.contains(busc)] if busc else df_p
         
-        c1, c2, c3 = st.columns([2, 1, 1])
-        item_sel = c1.selectbox("Seleccione Producto", df_f['nombre'])
-        p_data = df_p[df_p['nombre'] == item_sel].iloc[0]
-        
-        c2.write(f"**Stock:** {p_data['stock']}")
-        c2.write(f"**Precio:** ${p_data['precio_detal']}")
-        
-        cant_max = int(p_data['stock']) if p_data['stock'] > 0 else 1
-        cant_sel = c3.number_input("Cantidad a añadir", 1, max_value=cant_max, key="add_cant")
-        
-        if st.button("➕ AÑADIR AL CARRITO", use_container_width=True):
-            # Buscar si el producto ya está en el carrito para no duplicar filas
-            existe = False
-            for item in st.session_state.car:
-                if item['p'] == item_sel:
-                    item['c'] += cant_sel
-                    # Recalcular precio por si alcanza el mínimo de mayorista
-                    precio_u = float(p_data['precio_mayor']) if item['c'] >= p_data['min_mayor'] else float(p_data['precio_detal'])
-                    item['u'] = precio_u
-                    item['t'] = round(precio_u * item['c'], 2)
-                    existe = True
-                    break
+        if not df_f.empty:
+            c1, c2, c3 = st.columns([2, 1, 1])
+            item_sel = c1.selectbox("Seleccione Producto", df_f['nombre'])
             
-            if not existe:
-                precio_u = float(p_data['precio_mayor']) if cant_sel >= p_data['min_mayor'] else float(p_data['precio_detal'])
-                st.session_state.car.append({
-                    "p": item_sel, "c": cant_sel, "u": precio_u, 
-                    "t": round(precio_u * cant_sel, 2), 
-                    "costo_u": float(p_data['costo']),
-                    "min_m": p_data['min_mayor'],
-                    "p_detal": p_data['precio_detal'],
-                    "p_mayor": p_data['precio_mayor']
-                })
-            st.rerun()
+            # --- CORRECCIÓN DEL ERROR INDEXERROR ---
+            p_match = df_p[df_p['nombre'] == item_sel]
+            if not p_match.empty:
+                p_data = p_match.iloc[0]
+                c2.write(f"**Stock:** {p_data['stock']}")
+                c2.write(f"**Precio:** ${p_data['precio_detal']}")
+                
+                cant_max = int(p_data['stock']) if p_data['stock'] > 0 else 1
+                cant_sel = c3.number_input("Cantidad a añadir", 1, max_value=cant_max, key="add_cant")
+                
+                if st.button("➕ AÑADIR AL CARRITO", use_container_width=True):
+                    existe = False
+                    for item in st.session_state.car:
+                        if item['p'] == item_sel:
+                            item['c'] += cant_sel
+                            precio_u = float(p_data['precio_mayor']) if item['c'] >= p_data['min_mayor'] else float(p_data['precio_detal'])
+                            item['u'] = precio_u
+                            item['t'] = round(precio_u * item['c'], 2)
+                            existe = True
+                            break
+                    
+                    if not existe:
+                        precio_u = float(p_data['precio_mayor']) if cant_sel >= p_data['min_mayor'] else float(p_data['precio_detal'])
+                        st.session_state.car.append({
+                            "p": item_sel, "c": cant_sel, "u": precio_u, 
+                            "t": round(precio_u * cant_sel, 2), 
+                            "costo_u": float(p_data['costo']),
+                            "min_m": p_data['min_mayor'],
+                            "p_detal": p_data['precio_detal'],
+                            "p_mayor": p_data['precio_mayor']
+                        })
+                    st.rerun()
+            else:
+                st.warning("Producto no encontrado.")
+        else:
+            st.error("❌ No hay coincidencias con la búsqueda.")
 
     # --- GESTIÓN DINÁMICA DEL CARRITO ---
     if st.session_state.car:
         st.subheader("📋 Resumen del Pedido")
+        
+        # Usamos una lista de índices para borrar sin causar errores de salto
+        indices_a_borrar = []
         
         for i, item in enumerate(st.session_state.car):
             with st.container(border=True):
                 col1, col2, col3, col4, col5 = st.columns([3, 2, 2, 2, 1])
                 col1.write(f"**{item['p']}**")
                 
-                # Modificar cantidad directamente
                 nueva_cant = col2.number_input("Cant.", 1, 9999, value=item['c'], key=f"edit_{i}")
                 if nueva_cant != item['c']:
                     item['c'] = nueva_cant
-                    # Recalcular precio según nueva cantidad
                     precio_u = float(item['p_mayor']) if nueva_cant >= item['min_m'] else float(item['p_detal'])
                     item['u'] = precio_u
                     item['t'] = round(precio_u * nueva_cant, 2)
@@ -210,8 +217,12 @@ elif opcion == "🛒 Venta Rápida":
                 col4.write(f"Subt: **${item['t']}**")
                 
                 if col5.button("🗑️", key=f"del_{i}"):
-                    st.session_state.car.pop(i)
-                    st.rerun()
+                    indices_a_borrar.append(i)
+
+        if indices_a_borrar:
+            for index in sorted(indices_a_borrar, reverse=True):
+                st.session_state.car.pop(index)
+            st.rerun()
 
         sub_total_usd = sum(float(x['t']) for x in st.session_state.car)
         total_bs_sugerido = sub_total_usd * tasa
@@ -227,6 +238,15 @@ elif opcion == "🛒 Venta Rápida":
         pu = col_p2.number_input("Punto Bs", 0.0); ot = col_p2.number_input("Otros Bs", 0.0)
         ze = col_p3.number_input("Zelle $", 0.0); di = col_p3.number_input("Divisas $", 0.0)
         
+        # --- CÁLCULO DE VUELTO (CAMBIO) ---
+        total_pagado_bs = ef + pm + pu + ot + (ze * tasa) + (di * tasa)
+        vuelto_bs = total_pagado_bs - total_a_cobrar_bs
+        
+        if vuelto_bs > 0:
+            st.success(f"💰 Vuelto al cliente: **{vuelto_bs:,.2f} Bs.** (${vuelto_bs/tasa:,.2f})")
+        elif vuelto_bs < 0:
+            st.warning(f"⚠️ Faltan: {abs(vuelto_bs):,.2f} Bs.")
+
         if st.button("🚀 FINALIZAR VENTA", use_container_width=True, type="primary"):
             try:
                 propina_usd = (total_a_cobrar_bs / tasa) - sub_total_usd
@@ -242,13 +262,15 @@ elif opcion == "🛒 Venta Rápida":
                         "propina": propina_usd / len(st.session_state.car), "fecha": ahora_iso
                     }).execute()
                     
-                    # Descontar Inventario
-                    p_inv = df_p[df_p['nombre'] == x['p']].iloc[0]
-                    db.table("inventario").update({"stock": int(p_inv['stock'] - x['c'])}).eq("nombre", x['p']).execute()
+                    # Actualización de Stock (con búsqueda segura)
+                    p_inv_res = db.table("inventario").select("stock").eq("nombre", x['p']).execute()
+                    if p_inv_res.data:
+                        nuevo_stk = int(p_inv_res.data[0]['stock'] - x['c'])
+                        db.table("inventario").update({"stock": nuevo_stk}).eq("nombre", x['p']).execute()
                 
                 st.success("🎉 VENTA REGISTRADA")
                 
-                # TICKET VISUAL
+                # TICKET
                 ticket_html = f"""
                 <div style="background-color: #fff; padding: 20px; color: #000; font-family: monospace; border: 2px solid #000; width: 280px; margin: auto;">
                     <center>
@@ -256,7 +278,7 @@ elif opcion == "🛒 Venta Rápida":
                         <p style="font-size:10px;">{ahora_print}</p>
                         <hr>
                     </center>
-                    <table style="width: 100%; font-size: 12px;">
+                    <table style="width: 100%; font-size: 11px;">
                         {"".join([f"<tr><td>{i['c']}x {i['p'][:15]}</td><td style='text-align:right;'>${i['t']:.2f}</td></tr>" for i in items_factura])}
                     </table>
                     <hr>
@@ -264,12 +286,13 @@ elif opcion == "🛒 Venta Rápida":
                         <tr><td><b>TOTAL USD:</b></td><td style="text-align:right;"><b>${sub_total_usd:.2f}</b></td></tr>
                         <tr><td><b>TOTAL BS:</b></td><td style="text-align:right;"><b>{total_a_cobrar_bs:,.2f}</b></td></tr>
                     </table>
-                    <center><br><p style="font-size:10px;">*** Gracias por su compra ***</p></center>
+                    <center><br><p style="font-size:10px;">Vuelto: {vuelto_bs:,.2f} Bs</p>
+                    <p style="font-size:10px;">*** Gracias por su compra ***</p></center>
                 </div>
                 """
                 st.markdown(ticket_html, unsafe_allow_html=True)
                 
-                st.session_state.car = [] # Limpiar carrito tras finalizar
+                st.session_state.car = [] 
                 if st.button("🔄 HACER NUEVA VENTA"):
                     st.rerun()
 
@@ -404,6 +427,7 @@ elif opcion == "📊 Cierre de Caja":
                 st.rerun()
             except Exception as e:
                 st.error(f"Error al cerrar turno: {e}")
+
 
 
 
