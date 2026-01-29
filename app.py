@@ -121,12 +121,12 @@ if opcion == "📦 Inventario":
                         db.table("inventario").delete().eq("nombre", prod_a_borrar).execute()
                         st.rerun()
 
-# --- 4. MÓDULO VENTA RÁPIDA (VERSION CORREGIDA ANTI-ERRORES) ---
+# --- 4. MÓDULO VENTA RÁPIDA (VERSIÓN FINAL UNIFICADA Y SIN ERRORES) ---
 elif opcion == "🛒 Venta Rápida":
     from datetime import date, datetime
     import pandas as pd
 
-    # 1. VERIFICACIÓN DE TURNO
+    # 1. VERIFICACIÓN DE TURNO (CANDADO DINÁMICO)
     res_caja = db.table("gastos").select("*").ilike("descripcion", "APERTURA_%").order("fecha", desc=True).limit(1).execute()
     
     if not res_caja.data:
@@ -145,7 +145,7 @@ elif opcion == "🛒 Venta Rápida":
         st.divider()
         tasa = st.number_input("Tasa del Día (Bs/$)", 1.0, 500.0, 60.0)
 
-    # Consulta de productos
+    # 2. CONSULTA Y SELECCIÓN DE PRODUCTOS
     res_p = db.table("inventario").select("*").execute()
     if res_p.data:
         df_p = pd.DataFrame(res_p.data)
@@ -156,7 +156,7 @@ elif opcion == "🛒 Venta Rápida":
             c1, c2, c3 = st.columns([2, 1, 1])
             item_sel = c1.selectbox("Seleccione Producto", df_f['nombre'])
             
-            # --- CORRECCIÓN DEL ERROR INDEXERROR ---
+            # --- PROTECCIÓN ANTI-INDEXERROR ---
             p_match = df_p[df_p['nombre'] == item_sel]
             if not p_match.empty:
                 p_data = p_match.iloc[0]
@@ -171,6 +171,7 @@ elif opcion == "🛒 Venta Rápida":
                     for item in st.session_state.car:
                         if item['p'] == item_sel:
                             item['c'] += cant_sel
+                            # Recalcular precio según nueva cantidad total
                             precio_u = float(p_data['precio_mayor']) if item['c'] >= p_data['min_mayor'] else float(p_data['precio_detal'])
                             item['u'] = precio_u
                             item['t'] = round(precio_u * item['c'], 2)
@@ -189,15 +190,13 @@ elif opcion == "🛒 Venta Rápida":
                         })
                     st.rerun()
             else:
-                st.warning("Producto no encontrado.")
+                st.warning("Seleccione un producto válido.")
         else:
-            st.error("❌ No hay coincidencias con la búsqueda.")
+            st.error("❌ No hay coincidencias.")
 
-    # --- GESTIÓN DINÁMICA DEL CARRITO ---
+    # 3. GESTIÓN DINÁMICA DEL CARRITO
     if st.session_state.car:
         st.subheader("📋 Resumen del Pedido")
-        
-        # Usamos una lista de índices para borrar sin causar errores de salto
         indices_a_borrar = []
         
         for i, item in enumerate(st.session_state.car):
@@ -205,9 +204,11 @@ elif opcion == "🛒 Venta Rápida":
                 col1, col2, col3, col4, col5 = st.columns([3, 2, 2, 2, 1])
                 col1.write(f"**{item['p']}**")
                 
+                # Editor de cantidad
                 nueva_cant = col2.number_input("Cant.", 1, 9999, value=item['c'], key=f"edit_{i}")
                 if nueva_cant != item['c']:
                     item['c'] = nueva_cant
+                    # Recalculo automático usando los datos guardados en el diccionario
                     precio_u = float(item['p_mayor']) if nueva_cant >= item['min_m'] else float(item['p_detal'])
                     item['u'] = precio_u
                     item['t'] = round(precio_u * nueva_cant, 2)
@@ -224,21 +225,20 @@ elif opcion == "🛒 Venta Rápida":
                 st.session_state.car.pop(index)
             st.rerun()
 
+        # 4. TOTALES Y PAGOS
         sub_total_usd = sum(float(x['t']) for x in st.session_state.car)
         total_bs_sugerido = sub_total_usd * tasa
         
         st.divider()
         st.write(f"### Total Sugerido: **{total_bs_sugerido:,.2f} Bs.** (${sub_total_usd:,.2f})")
-        
         total_a_cobrar_bs = st.number_input("MONTO FINAL A COBRAR (Bs)", value=float(total_bs_sugerido))
         
-        # Desglose de pagos
         col_p1, col_p2, col_p3 = st.columns(3)
         ef = col_p1.number_input("Efectivo Bs", 0.0); pm = col_p1.number_input("Pago Móvil Bs", 0.0)
         pu = col_p2.number_input("Punto Bs", 0.0); ot = col_p2.number_input("Otros Bs", 0.0)
         ze = col_p3.number_input("Zelle $", 0.0); di = col_p3.number_input("Divisas $", 0.0)
         
-        # --- CÁLCULO DE VUELTO (CAMBIO) ---
+        # Cálculo de Vuelto
         total_pagado_bs = ef + pm + pu + ot + (ze * tasa) + (di * tasa)
         vuelto_bs = total_pagado_bs - total_a_cobrar_bs
         
@@ -247,6 +247,7 @@ elif opcion == "🛒 Venta Rápida":
         elif vuelto_bs < 0:
             st.warning(f"⚠️ Faltan: {abs(vuelto_bs):,.2f} Bs.")
 
+        # 5. FINALIZAR Y TICKET
         if st.button("🚀 FINALIZAR VENTA", use_container_width=True, type="primary"):
             try:
                 propina_usd = (total_a_cobrar_bs / tasa) - sub_total_usd
@@ -262,7 +263,7 @@ elif opcion == "🛒 Venta Rápida":
                         "propina": propina_usd / len(st.session_state.car), "fecha": ahora_iso
                     }).execute()
                     
-                    # Actualización de Stock (con búsqueda segura)
+                    # Descuento de stock seguro
                     p_inv_res = db.table("inventario").select("stock").eq("nombre", x['p']).execute()
                     if p_inv_res.data:
                         nuevo_stk = int(p_inv_res.data[0]['stock'] - x['c'])
@@ -270,7 +271,6 @@ elif opcion == "🛒 Venta Rápida":
                 
                 st.success("🎉 VENTA REGISTRADA")
                 
-                # TICKET
                 ticket_html = f"""
                 <div style="background-color: #fff; padding: 20px; color: #000; font-family: monospace; border: 2px solid #000; width: 280px; margin: auto;">
                     <center>
@@ -291,8 +291,8 @@ elif opcion == "🛒 Venta Rápida":
                 </div>
                 """
                 st.markdown(ticket_html, unsafe_allow_html=True)
-                
                 st.session_state.car = [] 
+                
                 if st.button("🔄 HACER NUEVA VENTA"):
                     st.rerun()
 
@@ -427,6 +427,7 @@ elif opcion == "📊 Cierre de Caja":
                 st.rerun()
             except Exception as e:
                 st.error(f"Error al cerrar turno: {e}")
+
 
 
 
