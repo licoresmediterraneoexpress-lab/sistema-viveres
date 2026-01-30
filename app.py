@@ -291,7 +291,7 @@ elif opcion == "🛒 Venta Rápida":
                     st.error(f"Error: {e}")
         # // FIN NUEVA FUNCIÓN
 
-# // INICIO NUEVA FUNCIÓN: Centro de Gestión Administrativa (UX Senior)
+# // INICIO NUEVA FUNCIÓN: Centro de Gestión Administrativa (REPARADO)
     st.divider()
     st.header("📊 Centro de Control de Ventas")
 
@@ -301,23 +301,20 @@ elif opcion == "🛒 Venta Rápida":
         fecha_filtro = f_col1.date_input("📅 Fecha de Reporte", date.today())
         busc_general = f_col2.text_input("🔍 Filtro rápido", placeholder="Buscar por Cliente, Producto o Ticket...", key="admin_search")
 
-    # 2. Extracción y Transformación de Datos
+    # 2. Extracción de Datos Directa (Persistencia MySQL/Supabase)
     res_h = db.table("ventas").select("*").gte("fecha", fecha_filtro.isoformat()).order("fecha", desc=True).execute()
 
     if res_h.data:
         df_raw = pd.DataFrame(res_h.data)
         
-        # Normalización de datos críticos
+        # Normalización y Limpieza
         df_raw['id_transaccion'] = df_raw['id_transaccion'].fillna(df_raw['id'].astype(str))
         df_raw['cliente'] = df_raw.get('cliente', 'Cliente General').fillna('Cliente General')
         df_raw['fecha_dt'] = pd.to_datetime(df_raw['fecha'])
-        
-        # Filtrar por el día seleccionado
         df_raw = df_raw[df_raw['fecha_dt'].dt.date == fecha_filtro]
 
         if not df_raw.empty:
-            # Lógica de Agrupación para la "Fila Única por Venta"
-            # Generamos el resumen de productos: "Producto + X más"
+            # Lógica de Agrupación para UI
             def summarize_products(prods):
                 items = list(prods)
                 primero = items[0]
@@ -334,96 +331,76 @@ elif opcion == "🛒 Venta Rápida":
 
             v_maestra['Total Bs'] = v_maestra['total_usd'] * v_maestra['tasa_cambio']
             v_maestra['Hora'] = v_maestra['fecha_dt'].dt.strftime('%H:%M')
-            
-            # Renombrar columnas para la vista final
-            v_maestra = v_maestra.rename(columns={
-                'id_transaccion': 'Ticket',
-                'cliente': 'Cliente',
-                'producto': 'Productos',
-                'total_usd': 'Total $',
-                'fecha_dt': 'Fecha_Sort'
-            })
+            v_maestra = v_maestra.rename(columns={'id_transaccion': 'Ticket', 'cliente': 'Cliente', 'producto': 'Productos', 'total_usd': 'Total $'})
 
-            # 3. Filtro en Tiempo Real (Multicriterio)
+            # Filtro en Tiempo Real
             if busc_general:
-                query = busc_general.lower()
-                v_maestra = v_maestra[
-                    v_maestra['Ticket'].astype(str).str.lower().contains(query) |
-                    v_maestra['Cliente'].str.lower().contains(query) |
-                    v_maestra['Productos'].str.lower().contains(query)
-                ]
+                q = busc_general.lower()
+                v_maestra = v_maestra[v_maestra.apply(lambda x: q in str(x).lower(), axis=1)]
 
-            # 4. Columna de Acciones (Eliminar)
-            # Agregamos una columna de checkbox para simular la selección de eliminación
             v_maestra['Anular'] = False
 
-            # --- VISTA DE TABLA MAESTRA ---
+            # --- VISTA DE TABLA ---
             st.subheader("📋 Relación Diaria")
-            
-            # Configuramos la tabla con st.data_editor para permitir interacción
             edited_df = st.data_editor(
                 v_maestra[['Ticket', 'Hora', 'Cliente', 'Productos', 'Total $', 'Total Bs', 'Anular']],
                 column_config={
-                    "Ticket": st.column_config.TextColumn("Ticket", disabled=True),
-                    "Hora": st.column_config.TextColumn("Hora", disabled=True),
-                    "Cliente": st.column_config.TextColumn("Cliente", disabled=True),
-                    "Productos": st.column_config.TextColumn("Productos", disabled=True),
-                    "Total $": st.column_config.NumberColumn("Total $", format="$ %.2f", disabled=True),
-                    "Total Bs": st.column_config.NumberColumn("Total Bs", format="Bs %.2f", disabled=True),
-                    "Anular": st.column_config.CheckboxColumn("🗑️", help="Marque para anular esta venta")
+                    "Anular": st.column_config.CheckboxColumn("🗑️", help="Marque para eliminar permanentemente"),
+                    "Total $": st.column_config.NumberColumn(format="$ %.2f"),
+                    "Total Bs": st.column_config.NumberColumn(format="Bs %.2f")
                 },
-                use_container_width=True,
-                hide_index=True,
-                key="editor_ventas"
+                use_container_width=True, hide_index=True, key="editor_ventas_fix"
             )
 
-            # 5. Lógica de Eliminación (Acciones)
-            # Si el usuario marcó algún checkbox de "Anular"
-            tickets_a_anular = edited_df[edited_df['Anular'] == True]['Ticket'].tolist()
+            # --- LÓGICA DE ELIMINACIÓN REAL Y PERSISTENTE ---
+            tickets_para_borrar = edited_df[edited_df['Anular'] == True]['Ticket'].tolist()
 
-            if tickets_a_anular:
-                target_tx = tickets_a_anular[0] # Tomamos el primero seleccionado
-                st.warning(f"⚠️ ¿Confirmas la anulación del Ticket **{target_tx}**?")
+            if tickets_para_borrar:
+                tx_id = tickets_para_borrar[0]
+                st.error(f"⚠️ ¿Eliminar permanentemente el Ticket **{tx_id}**?")
                 
-                col_btn1, col_btn2 = st.columns(2)
-                if col_btn1.button("🔥 SÍ, ELIMINAR Y DEVOLVER STOCK", use_container_width=True, type="primary"):
-                    try:
-                        # Buscamos los productos originales de ese ticket para devolver stock
-                        items_devolver = df_raw[df_raw['id_transaccion'] == target_tx]
-                        for _, row in items_devolver.iterrows():
-                            # Obtener stock actual
-                            curr = db.table("inventario").select("stock").eq("nombre", row['producto']).execute()
-                            if curr.data:
-                                nuevo_stock = curr.data[0]['stock'] + row['cantidad']
-                                db.table("inventario").update({"stock": nuevo_stock}).eq("nombre", row['producto']).execute()
-                        
-                        # Borrar la venta
-                        db.table("ventas").delete().eq("id_transaccion", target_tx).execute()
-                        st.success(f"Venta {target_tx} anulada correctamente.")
-                        time.sleep(1)
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error en el proceso: {e}")
+                c_btn1, c_btn2 = st.columns(2)
+                if c_btn1.button("🔥 CONFIRMAR: BORRAR Y DEVOLVER STOCK", use_container_width=True):
+                    with st.spinner("Procesando cambios en Base de Datos..."):
+                        try:
+                            # 1. Obtener los productos vinculados a esa transacción antes de borrar
+                            # Filtramos del df_raw original para tener el detalle preciso
+                            items_de_esta_venta = df_raw[df_raw['id_transaccion'] == tx_id]
+                            
+                            for _, fila in items_de_esta_venta.iterrows():
+                                # 2. Recuperar Stock
+                                prod_nombre = fila['producto']
+                                cant_vendida = fila['cantidad']
+                                
+                                inv_res = db.table("inventario").select("stock").eq("nombre", prod_nombre).execute()
+                                if inv_res.data:
+                                    stock_actual = inv_res.data[0]['stock']
+                                    db.table("inventario").update({"stock": stock_actual + cant_vendida}).eq("nombre", prod_nombre).execute()
+                            
+                            # 3. Borrar de la Base de Datos definitivamente
+                            db.table("ventas").delete().eq("id_transaccion", tx_id).execute()
+                            
+                            st.success(f"Venta {tx_id} eliminada. Inventario actualizado.")
+                            time.sleep(1)
+                            # Limpiar estados de selección para evitar bucles
+                            st.rerun()
+                            
+                        except Exception as e:
+                            st.error(f"Error de persistencia: {str(e)}")
                 
-                if col_btn2.button("❌ CANCELAR", use_container_width=True):
+                if c_btn2.button("❌ CANCELAR", use_container_width=True):
                     st.rerun()
 
-            # 6. Exportación de Datos Visibles
+            # 6. Exportación (Intacta)
             st.divider()
             csv = v_maestra.drop(columns=['Anular']).to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="📥 Descargar Reporte Excel (CSV)",
-                data=csv,
-                file_name=f"reporte_ventas_{fecha_filtro}.csv",
-                mime='text/csv',
-                use_container_width=True
-            )
+            st.download_button("📥 Exportar Reporte Excel", csv, f"ventas_{fecha_filtro}.csv", "text/csv", use_container_width=True)
 
         else:
-            st.info("No hay ventas registradas que coincidan con la búsqueda.")
+            st.info("No hay registros para este filtro.")
     else:
-        st.info(f"No hay actividad de ventas el día {fecha_filtro}.")
-    # // FIN NUEVA FUNCIÓN
+        st.info(f"Sin ventas el {fecha_filtro}.")
+    # // FIN NUEVA FUNCIÓN    
 
 # --- 5. MÓDULO GASTOS ---
 elif opcion == "💸 Gastos":
@@ -459,6 +436,7 @@ elif opcion == "📊 Cierre de Caja":
             db.table("gastos").update({"estado": "cerrado"}).eq("descripcion", ultimo_registro['descripcion']).execute()
             st.success("Turno cerrado.")
             st.rerun()
+
 
 
 
