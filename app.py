@@ -228,6 +228,9 @@ elif opcion == "🛒 Venta Rápida":
                 propina_usd = (total_a_cobrar_bs / tasa) - sub_total_usd
                 ahora = datetime.now()
                 id_tx = f"TX-{ahora.strftime('%Y%m%d%H%M%S')}"
+                
+                # --- GENERACIÓN DE TICKET EN PANTALLA ---
+                st.info(f"🧾 **GENERANDO TICKET: {id_tx}**")
                 for x in st.session_state.car:
                     db.table("ventas").insert({
                         "id_transaccion": id_tx, "producto": x['p'], "cantidad": x['c'], "total_usd": x['t'], "tasa_cambio": tasa,
@@ -235,11 +238,23 @@ elif opcion == "🛒 Venta Rápida":
                         "pago_otros": ot, "pago_divisas": di, "costo_venta": x['costo_u'] * x['c'],
                         "propina": propina_usd / len(st.session_state.car), "fecha": ahora.isoformat()
                     }).execute()
+                    
                     p_inv_res = db.table("inventario").select("stock").eq("nombre", x['p']).execute()
                     if p_inv_res.data:
                         nuevo_stk = int(p_inv_res.data[0]['stock'] - x['c'])
                         db.table("inventario").update({"stock": nuevo_stk}).eq("nombre", x['p']).execute()
-                st.success(f"🎉 VENTA REGISTRADA (Ticket: {id_tx})")
+                
+                # Mensaje detallado de éxito
+                st.balloons()
+                st.success(f"""
+                ✅ **VENTA FINALIZADA CON ÉXITO**
+                - **Ticket ID:** {id_tx}
+                - **Total Cobrado:** {total_a_cobrar_bs:,.2f} Bs.
+                - **Total USD:** ${total_a_cobrar_bs/tasa:,.2f}
+                """)
+                
+                # Pausa para ver el ticket antes de resetear
+                time.sleep(3)
                 st.session_state.car = [] 
                 st.rerun()
             except Exception as e:
@@ -293,3 +308,4 @@ elif opcion == "📊 Cierre de Caja":
             db.table("gastos").update({"estado": "cerrado"}).eq("descripcion", ultimo_registro['descripcion']).execute()
             st.success("Turno cerrado.")
             st.rerun()
+
