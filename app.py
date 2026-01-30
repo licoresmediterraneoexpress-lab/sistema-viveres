@@ -291,106 +291,139 @@ elif opcion == "🛒 Venta Rápida":
                     st.error(f"Error: {e}")
         # // FIN NUEVA FUNCIÓN
 
-# // INICIO NUEVA FUNCIÓN: Historial Administrativo y Gestión de Ventas
+# // INICIO NUEVA FUNCIÓN: Historial Administrativo con UX Avanzada
     st.divider()
     st.header("📊 Centro de Gestión de Ventas")
 
     # Contenedor de Filtros
     with st.container(border=True):
-        f_col1, f_col2, f_col3 = st.columns([2, 2, 2])
-        fecha_filtro = f_col1.date_input("📅 Seleccionar Fecha", date.today())
-        busc_ticket = f_col2.text_input("🔍 Buscar Ticket", placeholder="TX-...", key="filtro_tx_admin")
-        estado_filtro = f_col3.selectbox("📌 Estado", ["Todos", "completada", "anulada"], key="filtro_estado_admin")
+        f_col1, f_col2 = st.columns([1, 2])
+        fecha_filtro = f_col1.date_input("📅 Fecha", date.today())
+        # Buscador que ahora es para Ticket, Cliente o Producto
+        busc_general = f_col2.text_input("🔍 Buscar por Ticket, Cliente o Producto...", placeholder="Ej: Luis, Café, TX-123...", key="filtro_global_admin")
 
-    # Carga de datos optimizada
+    # Carga de datos
     res_h = db.table("ventas").select("*").gte("fecha", fecha_filtro.isoformat()).order("fecha", desc=True).execute()
 
     if res_h.data:
         df_raw = pd.DataFrame(res_h.data)
         
-        # Asegurar columna de identificación
-        if 'id_transaccion' not in df_raw.columns:
-            df_raw['id_transaccion'] = df_raw['id'].astype(str)
-        else:
-            df_raw['id_transaccion'] = df_raw['id_transaccion'].fillna(df_raw['id'].astype(str))
-
-        # Filtro estricto por la fecha seleccionada en el widget
+        # 1. Normalización y Limpieza
+        df_raw['id_transaccion'] = df_raw['id_transaccion'].fillna(df_raw['id'].astype(str))
+        df_raw['cliente'] = df_raw.get('cliente', 'Cliente General').fillna('Cliente General')
         df_raw['fecha_dt'] = pd.to_datetime(df_raw['fecha']).dt.date
         df_raw = df_raw[df_raw['fecha_dt'] == fecha_filtro]
-        
-        if busc_ticket:
-            df_raw = df_raw[df_raw['id_transaccion'].str.contains(busc_ticket, case=False)]
 
         if not df_raw.empty:
-            # Agrupar por transacción para la Tabla Maestra
+            # 2. Lógica de Identificación UX (Agrupación para Resumen)
+            # Agrupamos para saber qué productos tiene cada ticket
+            resumen_productos = df_raw.groupby('id_transaccion')['producto'].apply(list).reset_index()
+            
+            def generar_etiqueta(row):
+                prods = row['producto']
+                primero = prods[0]
+                extras = len(prods) - 1
+                return f"{primero} (+{extras} más)" if extras > 0 else primero
+
+            resumen_productos['identificador_prod'] = resumen_productos.apply(generar_etiqueta, axis=1)
+
+            # 3. Agrupación Maestra para la Tabla
             v_maestra = df_raw.groupby('id_transaccion').agg({
                 'fecha': 'first',
+                'cliente': 'first',
                 'total_usd': 'sum',
                 'tasa_cambio': 'first',
-                'pago_efectivo': 'first',
-                'pago_punto': 'first',
-                'pago_movil': 'first',
-                'pago_zelle': 'first',
-                'pago_divisas': 'first',
-                'pago_otros': 'first'
+                'pago_efectivo': 'sum', # Sumamos por si hay registros parciales
+                'pago_divisas': 'sum'
             }).reset_index()
 
+            # Unimos el resumen de productos a la maestra
+            v_maestra = v_maestra.merge(resumen_productos[['id_transaccion', 'identificador_prod']], on='id_transaccion')
+            
+            # Columna combinada para el Buscador y Visualización
+            v_maestra['Info Venta'] = v_maestra['cliente'] + " - " + v_maestra['identificador_prod']
             v_maestra['total_bs'] = v_maestra['total_usd'] * v_maestra['tasa_cambio']
 
+            # 4. Filtro Multicriterio (UX)
+            if busc_general:
+                mask = (
+                    v_maestra['id_transaccion'].str.contains(busc_general, case=False) |
+                    v_maestra['Info Venta'].str.contains(busc_general, case=False)
+                )
+                v_maestra = v_maestra[mask]
+
+            # --- VISTA TABLA ---
             st.subheader("📋 Relación de Ingresos")
-            df_view = v_maestra.copy()
-            df_view['Hora'] = pd.to_datetime(df_view['fecha']).dt.strftime('%H:%M:%S')
+            df_display = v_maestra.copy()
+            df_display['Hora'] = pd.to_datetime(df_display['fecha']).dt.strftime('%H:%M')
             
             st.dataframe(
-                df_view[['id_transaccion', 'Hora', 'total_usd', 'total_bs']], 
-                column_config={"id_transaccion": "Ticket", "total_usd": "Total $", "total_bs": "Total Bs"},
+                df_display[['id_transaccion', 'Hora', 'Info Venta', 'total_usd', 'total_bs']], 
+                column_config={
+                    "id_transaccion": "Ticket",
+                    "Hora": "Hora",
+                    "Info Venta": "Identificación (Cliente - Producto)",
+                    "total_usd": st.column_config.NumberColumn("Total $", format="$ %.2f"),
+                    "total_bs": st.column_config.NumberColumn("Total Bs", format="Bs %.2f"),
+                },
                 use_container_width=True, hide_index=True
             )
 
-            st.subheader("🔍 Detalle y Operaciones")
-            sel_ticket = st.selectbox("Seleccione un Ticket para operar", ["-- Elegir Ticket --"] + v_maestra['id_transaccion'].tolist())
+            # --- GESTIÓN Y DETALLE ---
+            st.subheader("🔍 Detalle de Transacción")
+            sel_ticket = st.selectbox("Operar Ticket:", ["-- Seleccione --"] + v_maestra['id_transaccion'].tolist())
 
-            if sel_ticket != "-- Elegir Ticket --":
-                detalle = df_raw[df_raw['id_transaccion'] == sel_ticket]
-                malla_det = v_maestra[v_maestra['id_transaccion'] == sel_ticket].iloc[0]
+            if sel_ticket != "-- Seleccione --":
+                detalle_items = df_raw[df_raw['id_transaccion'] == sel_ticket]
+                malla = v_maestra[v_maestra['id_transaccion'] == sel_ticket].iloc[0]
 
                 with st.container(border=True):
-                    d_col1, d_col2 = st.columns([2, 1])
-                    with d_col1:
-                        st.markdown(f"**Productos en {sel_ticket}:**")
-                        for _, item in detalle.iterrows():
-                            st.write(f"- {item['producto']} x{item['cantidad']} (${item['total_usd']:.2f})")
-                    with d_col2:
-                        st.markdown("**Pagos registrados:**")
-                        metodos = {"Efectivo": "pago_efectivo", "Divisas": "pago_divisas", "Punto": "pago_punto", "Zelle": "pago_zelle", "Móvil": "pago_movil"}
-                        for label, col in metodos.items():
-                            if malla_det.get(col, 0) > 0:
-                                st.caption(f"{label}: {malla_det[col]}")
+                    c1, c2 = st.columns(2)
+                    c1.write(f"**Cliente:** {malla['cliente']}")
+                    c1.write(f"**Ticket:** {sel_ticket}")
+                    
+                    st.write("**Desglose de productos:**")
+                    for _, item in detalle_items.iterrows():
+                        st.caption(f"• {item['producto']} x{item['cantidad']} — ${item['total_usd']:.2f}")
 
                     st.divider()
-                    if st.button(f"🗑️ ANULAR VENTA {sel_ticket}", type="secondary", use_container_width=True):
-                        try:
-                            for _, row in detalle.iterrows():
-                                # Restaurar Stock
-                                r_inv = db.table("inventario").select("stock").eq("nombre", row['producto']).execute()
-                                if r_inv.data:
-                                    db.table("inventario").update({"stock": r_inv.data[0]['stock'] + row['cantidad']}).eq("nombre", row['producto']).execute()
-                            # Eliminar registro
-                            db.table("ventas").delete().eq("id_transaccion", sel_ticket).execute()
-                            st.success(f"Venta {sel_ticket} eliminada y stock restaurado.")
-                            time.sleep(1)
+                    # Botón de Anulación con Confirmación
+                    if st.button(f"🚨 ANULAR VENTA {sel_ticket}", type="primary", use_container_width=True):
+                        st.session_state[f"confirm_del_{sel_ticket}"] = True
+                    
+                    if st.session_state.get(f"confirm_del_{sel_ticket}"):
+                        st.error("¿CONFIRMA LA ANULACIÓN? Esta acción devolverá el stock y eliminará el registro.")
+                        col_an1, col_an2 = st.columns(2)
+                        if col_an1.button("SÍ, ANULAR", key=f"yes_{sel_ticket}", use_container_width=True):
+                            try:
+                                for _, row in detalle_items.iterrows():
+                                    # Devolver Stock
+                                    r_inv = db.table("inventario").select("stock").eq("nombre", row['producto']).execute()
+                                    if r_inv.data:
+                                        db.table("inventario").update({"stock": r_inv.data[0]['stock'] + row['cantidad']}).eq("nombre", row['producto']).execute()
+                                # Borrar Venta
+                                db.table("ventas").delete().eq("id_transaccion", sel_ticket).execute()
+                                st.success("Venta anulada con éxito.")
+                                time.sleep(1.5)
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+                        if col_an2.button("NO, CANCELAR", key=f"no_{sel_ticket}", use_container_width=True):
+                            st.session_state[f"confirm_del_{sel_ticket}"] = False
                             st.rerun()
-                        except Exception as e:
-                            st.error(f"Error: {e}")
 
-            # Exportación
+            # --- EXPORTACIÓN ---
+            st.divider()
+            col_exp1, col_exp2 = st.columns(2)
             csv = v_maestra.to_csv(index=False).encode('utf-8')
-            st.download_button("📥 Exportar Reporte Excel (CSV)", csv, f"ventas_{fecha_filtro}.csv", "text/csv", use_container_width=True)
+            col_exp1.download_button("📥 Exportar Excel (CSV)", csv, f"reporte_{fecha_filtro}.csv", "text/csv", use_container_width=True)
+            col_exp2.button("📄 Generar PDF (Disponible en Pro)", use_container_width=True, disabled=True)
+
         else:
-            st.info("No hay ventas que coincidan con los filtros.")
+            st.info("No hay ventas para los criterios seleccionados.")
     else:
-        st.info(f"No hay registros para el día {fecha_filtro}.")
-    # // FIN NUEVA FUNCIÓN: Historial Administrativo
+        st.info(f"No hay registros para la fecha: {fecha_filtro}")
+    # // FIN NUEVA FUNCIÓN
 
 # --- 5. MÓDULO GASTOS ---
 elif opcion == "💸 Gastos":
@@ -426,6 +459,7 @@ elif opcion == "📊 Cierre de Caja":
             db.table("gastos").update({"estado": "cerrado"}).eq("descripcion", ultimo_registro['descripcion']).execute()
             st.success("Turno cerrado.")
             st.rerun()
+
 
 
 
