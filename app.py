@@ -291,7 +291,7 @@ elif opcion == "🛒 Venta Rápida":
                     st.error(f"Error: {e}")
         # // FIN NUEVA FUNCIÓN
 
-   # // INICIO NUEVA FUNCIÓN: Historial Administrativo y Gestión de Ventas
+# // INICIO NUEVA FUNCIÓN: Historial Administrativo y Gestión de Ventas
 st.divider()
 st.header("📊 Centro de Gestión de Ventas")
 
@@ -451,6 +451,7 @@ elif opcion == "📊 Cierre de Caja":
             db.table("gastos").update({"estado": "cerrado"}).eq("descripcion", ultimo_registro['descripcion']).execute()
             st.success("Turno cerrado.")
             st.rerun()
+
 
 
 
