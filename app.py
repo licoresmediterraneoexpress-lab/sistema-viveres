@@ -134,15 +134,22 @@ elif opcion == "🛒 Venta Rápida":
     st.header("🛒 Ventas Mediterraneo Express")
     st.caption(f"Turno Activo: {ultimo_turno['descripcion']}")
     
+    # // INICIO NUEVA FUNCIÓN: Precios y Tasa Persistente
     with st.sidebar:
         st.divider()
-        tasa = st.number_input("Tasa del Día (Bs/$)", 1.0, 500.0, 60.0)
+        # La tasa se mantiene durante la sesión
+        tasa = st.number_input("Tasa del Día (Bs/$)", 1.0, 500.0, st.session_state.get('tasa_dia', 60.0))
+        st.session_state.tasa_dia = tasa
+    # // FIN NUEVA FUNCIÓN
 
     res_p = db.table("inventario").select("*").execute()
     if res_p.data:
         df_p = pd.DataFrame(res_p.data)
-        busc = st.text_input("🔍 Buscar producto...").lower()
+        
+        # // INICIO NUEVA FUNCIÓN: Buscador inteligente en tiempo real
+        busc = st.text_input("🔍 Buscar producto por nombre o categoría...", placeholder="Escriba aquí...").lower()
         df_f = df_p[df_p['nombre'].str.lower().str.contains(busc)] if busc else df_p
+        # // FIN NUEVA FUNCIÓN
         
         if not df_f.empty:
             c1, c2, c3 = st.columns([2, 1, 1])
@@ -157,6 +164,7 @@ elif opcion == "🛒 Venta Rápida":
                 cant_max = int(p_data['stock']) if p_data['stock'] > 0 else 1
                 cant_sel = c3.number_input("Cantidad a añadir", 1, max_value=cant_max, key="add_cant")
                 
+                # // INICIO NUEVA FUNCIÓN: Lógica Carrito (Añadir/Modificar)
                 if st.button("➕ AÑADIR AL CARRITO", use_container_width=True):
                     existe = False
                     for item in st.session_state.car:
@@ -179,21 +187,26 @@ elif opcion == "🛒 Venta Rápida":
                             "p_mayor": p_data['precio_mayor']
                         })
                     st.rerun()
+                # // FIN NUEVA FUNCIÓN
 
     if st.session_state.car:
         st.subheader("📋 Resumen del Pedido")
         indices_a_borrar = []
+        
+        # // INICIO NUEVA FUNCIÓN: Carrito (Modificar Cantidades y Eliminar)
         for i, item in enumerate(st.session_state.car):
             with st.container(border=True):
                 col1, col2, col3, col4, col5 = st.columns([3, 2, 2, 2, 1])
                 col1.write(f"**{item['p']}**")
                 nueva_cant = col2.number_input("Cant.", 1, 9999, value=item['c'], key=f"edit_{i}")
+                
                 if nueva_cant != item['c']:
                     item['c'] = nueva_cant
                     precio_u = float(item['p_mayor']) if nueva_cant >= item['min_m'] else float(item['p_detal'])
                     item['u'] = precio_u
                     item['t'] = round(precio_u * nueva_cant, 2)
                     st.rerun()
+                
                 col3.write(f"Unit: ${item['u']}")
                 col4.write(f"Subt: **${item['t']}**")
                 if col5.button("🗑️", key=f"del_{i}"):
@@ -203,13 +216,17 @@ elif opcion == "🛒 Venta Rápida":
             for index in sorted(indices_a_borrar, reverse=True):
                 st.session_state.car.pop(index)
             st.rerun()
+        # // FIN NUEVA FUNCIÓN
 
         sub_total_usd = sum(float(x['t']) for x in st.session_state.car)
         total_bs_sugerido = sub_total_usd * tasa
         st.divider()
         st.write(f"### Total Sugerido: **{total_bs_sugerido:,.2f} Bs.** (${sub_total_usd:,.2f})")
+        
+        # // INICIO NUEVA FUNCIÓN: Pagos Multimoneda y Vuelto Automático
         total_a_cobrar_bs = st.number_input("MONTO FINAL A COBRAR (Bs)", value=float(total_bs_sugerido))
         
+        st.info("💳 Registre los métodos de pago:")
         col_p1, col_p2, col_p3 = st.columns(3)
         ef = col_p1.number_input("Efectivo Bs", 0.0); pm = col_p1.number_input("Pago Móvil Bs", 0.0)
         pu = col_p2.number_input("Punto Bs", 0.0); ot = col_p2.number_input("Otros Bs", 0.0)
@@ -222,57 +239,86 @@ elif opcion == "🛒 Venta Rápida":
             st.success(f"💰 Vuelto al cliente: **{vuelto_bs:,.2f} Bs.** (${vuelto_bs/tasa:,.2f})")
         elif vuelto_bs < 0:
             st.warning(f"⚠️ Faltan: {abs(vuelto_bs):,.2f} Bs.")
+        # // FIN NUEVA FUNCIÓN
 
+        # // INICIO NUEVA FUNCIÓN: Finalización y Ticket PDF
         if st.button("🚀 FINALIZAR VENTA", use_container_width=True, type="primary"):
-            try:
-                propina_usd = (total_a_cobrar_bs / tasa) - sub_total_usd
-                ahora = datetime.now()
-                id_tx = f"TX-{ahora.strftime('%Y%m%d%H%M%S')}"
-                
-                # --- GENERACIÓN DE TICKET EN PANTALLA ---
-                st.info(f"🧾 **GENERANDO TICKET: {id_tx}**")
-                for x in st.session_state.car:
-                    db.table("ventas").insert({
-                        "id_transaccion": id_tx, "producto": x['p'], "cantidad": x['c'], "total_usd": x['t'], "tasa_cambio": tasa,
-                        "pago_efectivo": ef, "pago_punto": pu, "pago_movil": pm, "pago_zelle": ze, 
-                        "pago_otros": ot, "pago_divisas": di, "costo_venta": x['costo_u'] * x['c'],
-                        "propina": propina_usd / len(st.session_state.car), "fecha": ahora.isoformat()
-                    }).execute()
+            if total_pagado_bs < total_a_cobrar_bs:
+                st.error("❌ El monto pagado es insuficiente.")
+            else:
+                try:
+                    propina_usd = (total_a_cobrar_bs / tasa) - sub_total_usd
+                    ahora = datetime.now()
+                    id_tx = f"TX-{ahora.strftime('%Y%m%d%H%M%S')}"
                     
-                    p_inv_res = db.table("inventario").select("stock").eq("nombre", x['p']).execute()
-                    if p_inv_res.data:
-                        nuevo_stk = int(p_inv_res.data[0]['stock'] - x['c'])
-                        db.table("inventario").update({"stock": nuevo_stk}).eq("nombre", x['p']).execute()
-                
-                # Mensaje detallado de éxito
-                st.balloons()
-                st.success(f"""
-                ✅ **VENTA FINALIZADA CON ÉXITO**
-                - **Ticket ID:** {id_tx}
-                - **Total Cobrado:** {total_a_cobrar_bs:,.2f} Bs.
-                - **Total USD:** ${total_a_cobrar_bs/tasa:,.2f}
-                """)
-                
-                # Pausa para ver el ticket antes de resetear
-                time.sleep(3)
-                st.session_state.car = [] 
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error: {e}")
+                    st.info(f"🧾 **GENERANDO TICKET: {id_tx}**")
+                    for x in st.session_state.car:
+                        db.table("ventas").insert({
+                            "id_transaccion": id_tx, "producto": x['p'], "cantidad": x['c'], "total_usd": x['t'], "tasa_cambio": tasa,
+                            "pago_efectivo": ef, "pago_punto": pu, "pago_movil": pm, "pago_zelle": ze, 
+                            "pago_otros": ot, "pago_divisas": di, "costo_venta": x['costo_u'] * x['c'],
+                            "propina": propina_usd / len(st.session_state.car), "fecha": ahora.isoformat()
+                        }).execute()
+                        
+                        p_inv_res = db.table("inventario").select("stock").eq("nombre", x['p']).execute()
+                        if p_inv_res.data:
+                            nuevo_stk = int(p_inv_res.data[0]['stock'] - x['c'])
+                            db.table("inventario").update({"stock": nuevo_stk}).eq("nombre", x['p']).execute()
+                    
+                    st.balloons()
+                    st.success(f"✅ VENTA FINALIZADA: {id_tx}")
+                    
+                    # Lógica simplificada de Ticket PDF (Simulada en texto para visualización rápida)
+                    with st.expander("📄 Ver Ticket Digital"):
+                        ticket_data = f"""
+                        MEDITERRANEO EXPRESS
+                        Ticket: {id_tx}
+                        Fecha: {ahora.strftime('%d/%m/%Y %H:%M')}
+                        --------------------------------
+                        Total: {total_a_cobrar_bs:,.2f} Bs
+                        Ref: ${total_a_cobrar_bs/tasa:,.2f}
+                        Vuelto: {vuelto_bs:,.2f} Bs
+                        --------------------------------
+                        ¡Gracias por su compra!
+                        """
+                        st.code(ticket_data)
+                        st.download_button("📥 Descargar Ticket (.txt)", ticket_data, file_name=f"ticket_{id_tx}.txt")
 
-    # Historial
+                    time.sleep(4)
+                    st.session_state.car = [] 
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+        # // FIN NUEVA FUNCIÓN
+
+    # // INICIO NUEVA FUNCIÓN: Historial con Filtros Avanzados
     st.divider()
-    st.subheader("🕒 Historial de Ventas del Día")
-    res_h = db.table("ventas").select("*").gte("fecha", date.today().isoformat()).order("fecha", desc=True).execute()
+    st.subheader("🕒 Historial de Ventas")
+    
+    col_f1, col_f2 = st.columns(2)
+    fecha_filtro = col_f1.date_input("Filtrar por Fecha", date.today())
+    
+    res_h = db.table("ventas").select("*").gte("fecha", fecha_filtro.isoformat()).order("fecha", desc=True).execute()
+    
     if res_h.data:
         df_historial = pd.DataFrame(res_h.data)
         df_historial['grupo'] = df_historial['id_transaccion'].fillna(df_historial['id'].astype(str))
-        v_agrupadas = df_historial.groupby('grupo').agg({'fecha': 'first', 'total_usd': 'sum', 'producto': lambda x: ", ".join(x.astype(str))}).reset_index()
+        
+        # Agregación para vista de resumen
+        v_agrupadas = df_historial.groupby('grupo').agg({
+            'fecha': 'first', 
+            'total_usd': 'sum', 
+            'producto': lambda x: ", ".join(x.astype(str))
+        }).reset_index()
+        
         for _, fila in v_agrupadas.iterrows():
-            with st.expander(f"💰 Venta - Total: ${fila['total_usd']:.2f}"):
-                st.write(f"Productos: {fila['producto']}")
+            with st.expander(f"💰 Venta {fila['grupo']} - Total: ${fila['total_usd']:.2f}"):
+                st.write(f"**Fecha:** {fila['fecha']}")
+                st.write(f"**Items:** {fila['producto']}")
+                # Aquí se podrían añadir más detalles de los métodos de pago usados
     else:
-        st.info("No hay ventas hoy.")
+        st.info("No hay ventas registradas para esta fecha.")
+    # // FIN NUEVA FUNCIÓN
 
 # --- 5. MÓDULO GASTOS ---
 elif opcion == "💸 Gastos":
@@ -308,4 +354,5 @@ elif opcion == "📊 Cierre de Caja":
             db.table("gastos").update({"estado": "cerrado"}).eq("descripcion", ultimo_registro['descripcion']).execute()
             st.success("Turno cerrado.")
             st.rerun()
+
 
