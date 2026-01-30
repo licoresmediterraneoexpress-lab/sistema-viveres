@@ -111,15 +111,16 @@ if opcion == "📦 Inventario":
                         except Exception as e:
                             st.error(f"Error: {e}")
 
-    with col_der:
-        with st.expander("🗑️ ELIMINAR PRODUCTO"):
-            if not df_inv.empty:
-                prod_a_borrar = st.selectbox("Seleccione para eliminar", ["---"] + df_inv['nombre'].tolist(), key="select_del")
-                pass_admin = st.text_input("Clave de Seguridad", type="password", key="del_pass")
-                if st.button("❌ ELIMINAR DEFINITIVAMENTE"):
-                    if pass_admin == CLAVE_ADMIN and prod_a_borrar != "---":
-                        db.table("inventario").delete().eq("nombre", prod_a_borrar).execute()
-                        st.rerun()
+with col_der:
+            with st.expander("🗑️ ELIMINAR PRODUCTO"):
+                if not df_inv.empty:
+                    prod_a_borrar = st.selectbox("Seleccione para eliminar", ["---"] + df_inv['nombre'].tolist(), key="select_del")
+                    pass_admin = st.text_input("Clave de Seguridad", type="password", key="del_pass")
+                    if st.button("❌ ELIMINAR DEFINITIVAMENTE"):
+                        if pass_admin == CLAVE_ADMIN and prod_a_borrar != "---":
+                            db.table("inventario").delete().eq("nombre", prod_a_borrar).execute()
+                            st.success(f"Producto {prod_a_borrar} eliminado")
+                            st.rerun()
 
 # --- 4. MÓDULO VENTA RÁPIDA (CON HISTORIAL Y ANULACIÓN) ---
     elif opcion == "🛒 Venta Rápida":
@@ -432,6 +433,7 @@ elif opcion == "📊 Cierre de Caja":
                 st.rerun()
             except Exception as e:
                 st.error(f"Error al cerrar turno: {e}")
+
 
 
 
