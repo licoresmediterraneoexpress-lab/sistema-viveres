@@ -237,7 +237,7 @@ elif opcion == "🛒 Venta Rápida":
                 col_v1.metric("Vuelto Bs", f"{max(0, vuelto_bs):,.2f} Bs")
                 col_v2.metric("Vuelto $", f"${max(0, vuelto_bs/tasa):,.2f}")
 
-        # 6. Finalización Pro
+       # 6. Finalización Pro
         if st.button("🚀 FINALIZAR VENTA", use_container_width=True, type="primary"):
             if total_pagado_bs < (monto_final_bs - 0.05):
                 st.error("Monto pagado insuficiente.")
@@ -245,6 +245,54 @@ elif opcion == "🛒 Venta Rápida":
                 try:
                     ahora = datetime.now()
                     id_tx = f"TX-{ahora.strftime('%y%m%d%H%M%S')}"
+                    
+                    with st.status("Procesando transacción...", expanded=True) as status:
+                        for x in st.session_state.car:
+                            # 1. Insertar Venta
+                            db.table("ventas").insert({
+                                "id_transaccion": id_tx, "producto": x['p'], "cantidad": x['c'], 
+                                "total_usd": x['t'], "tasa_cambio": tasa, "pago_efectivo": ef_bs, 
+                                "pago_punto": pu_bs, "pago_movil": pm_bs, "pago_zelle": ze_usd, 
+                                "pago_divisas": di_usd, "costo_venta": x['costo_u'] * x['c'], "fecha": ahora.isoformat()
+                            }).execute()
+                            
+                            # 2. Descontar Inventario
+                            inv = db.table("inventario").select("stock").eq("nombre", x['p']).execute()
+                            if inv.data:
+                                db.table("inventario").update({"stock": inv.data[0]['stock'] - x['c']}).eq("nombre", x['p']).execute()
+                        
+                        status.update(label="✅ Venta Exitosa", state="complete")
+
+                    # 3. Construir Ticket para persistencia
+                    ticket = f"""
+==============================
+    MEDITERRANEO EXPRESS
+    Ticket: {id_tx}
+    Fecha: {ahora.strftime('%d/%m/%Y %H:%M')}
+==============================
+PRODUCTOS:
+"""
+                    for x in st.session_state.car:
+                        ticket += f"{x['p'][:18]:<18} x{x['c']} ${x['t']}\n"
+                    
+                    ticket += f"""------------------------------
+TOTAL BS:     {monto_final_bs:>10.2f}
+TOTAL USD:    ${(monto_final_bs/tasa):>10.2f}
+TASA:         {tasa:>10.2f}
+------------------------------
+PAGADO BS:    {total_pagado_bs:>10.2f}
+VUELTO BS:    {max(0, vuelto_bs):>10.2f}
+==============================
+ ¡GRACIAS POR SU COMPRA!
+==============================
+"""
+                    st.session_state.ultimo_ticket = ticket
+                    st.session_state.venta_finalizada = True
+                    st.balloons()
+                    st.rerun()
+
+                except Exception as e:
+                    st.error(f"Error crítico al guardar: {e}")
 
 # // INICIO NUEVA FUNCIÓN: Centro de Gestión Administrativa (REPARADO)
     st.divider()
@@ -391,6 +439,7 @@ elif opcion == "📊 Cierre de Caja":
             db.table("gastos").update({"estado": "cerrado"}).eq("descripcion", ultimo_registro['descripcion']).execute()
             st.success("Turno cerrado.")
             st.rerun()
+
 
 
 
