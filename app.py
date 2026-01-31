@@ -146,23 +146,67 @@ elif opcion == "🛒 Venta Rápida":
     if res_p.data:
         df_p = pd.DataFrame(res_p.data)
         
-        # // INICIO NUEVA FUNCIÓN: Buscador inteligente en tiempo real
-        busc = st.text_input("🔍 Buscar producto por nombre o categoría...", placeholder="Escriba aquí...").lower()
-        df_f = df_p[df_p['nombre'].str.lower().str.contains(busc)] if busc else df_p
-        # // FIN NUEVA FUNCIÓN
-        
+       # // INICIO BLOQUE DE VENTAS OPTIMIZADO: Buscador Incremental
+st.subheader("🛒 Facturación de Productos")
+
+# 1. Cargamos datos (idealmente df_p ya viene de una consulta previa a 'inventario')
+# Nos aseguramos de que df_p tenga datos
+if 'df_p' in locals() and not df_p.empty:
+    
+    with st.container(border=True):
+        # Buscador dinámico
+        busc = st.text_input("🔍 Buscar producto...", placeholder="Escriba nombre o categoría...", key="main_search").strip().lower()
+
+        # Filtrado instantáneo con Pandas
+        if busc:
+            # Filtra por nombre o categoría (si existe la columna)
+            df_f = df_p[
+                df_p['nombre'].str.lower().str.contains(busc, na=False) | 
+                (df_p['categoria'].str.lower().str.contains(busc, na=False) if 'categoria' in df_p.columns else False)
+            ]
+        else:
+            # Si no hay búsqueda, mostramos un mensaje o los más vendidos (aquí mostramos todos)
+            df_f = df_p
+
         if not df_f.empty:
             c1, c2, c3 = st.columns([2, 1, 1])
-            item_sel = c1.selectbox("Seleccione Producto", df_f['nombre'])
-            p_match = df_p[df_p['nombre'] == item_sel]
+            
+            # Selectbox dinámico basado en el filtro
+            item_sel = c1.selectbox(
+                f"Resultados ({len(df_f)})", 
+                options=df_f['nombre'].tolist(),
+                key="item_selector"
+            )
+            
+            # Extraer data del producto seleccionado
+            p_match = df_f[df_f['nombre'] == item_sel]
             
             if not p_match.empty:
                 p_data = p_match.iloc[0]
-                c2.write(f"**Stock:** {p_data['stock']}")
-                c2.write(f"**Precio:** ${p_data['precio_detal']}")
                 
-                cant_max = int(p_data['stock']) if p_data['stock'] > 0 else 1
-                cant_sel = c3.number_input("Cantidad a añadir", 1, max_value=cant_max, key="add_cant")
+                # Visualización de info con colores/estilo
+                with c2:
+                    st.metric("Stock", f"{p_data['stock']:.0f}")
+                    st.write(f"**Precio:** ${p_data['precio_detal']:.2f}")
+                
+                with c3:
+                    cant_max = int(p_data['stock']) if p_data['stock'] > 0 else 0
+                    cant_sel = st.number_input(
+                        "Cantidad", 
+                        min_value=0 if cant_max == 0 else 1, 
+                        max_value=max(1, cant_max), 
+                        value=1 if cant_max > 0 else 0,
+                        key="cant_input"
+                    )
+                    
+                    if st.button("➕ Añadir al Carrito", use_container_width=True, disabled=(cant_max == 0)):
+                        # Aquí iría tu lógica actual de st.session_state.carrito.append(...)
+                        st.toast(f"Añadido: {item_sel}", icon="✅")
+        else:
+            st.warning("⚠️ No se encontraron productos coincidentes.")
+else:
+    st.error("❌ No hay productos cargados en el inventario.")
+# // FIN BLOQUE DE VENTAS
                 
                 # // INICIO NUEVA FUNCIÓN: Lógica Carrito (Añadir/Modificar)
                 if st.button("➕ AÑADIR AL CARRITO", use_container_width=True):
@@ -436,6 +480,7 @@ elif opcion == "📊 Cierre de Caja":
             db.table("gastos").update({"estado": "cerrado"}).eq("descripcion", ultimo_registro['descripcion']).execute()
             st.success("Turno cerrado.")
             st.rerun()
+
 
 
 
