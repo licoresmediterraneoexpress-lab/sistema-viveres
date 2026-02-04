@@ -666,22 +666,3 @@ elif opcion == "📊 Cierre de Caja":
             except Exception as e:
                 st.error(f"Error al procesar el cierre: {e}")
 
-# --- DIAGRAMA DEL FLUJO DE TRABAJO ---
-#
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
