@@ -626,11 +626,6 @@ if opcion == "📦 Inventario":
     else:
         st.info("💡 No hay productos.")
 
-import streamlit as st
-import pandas as pd
-from datetime import datetime
-import time
-
 # --- 3. MÓDULO INVENTARIO (PRESERVADO INTEGRAMENTE) ---
 if opcion == "📦 Inventario":
     st.header("📦 Centro de Control de Inventario")
@@ -811,3 +806,4 @@ elif opcion == "📊 Cierre de Caja":
                         st.error("Error: La columna 'total_ganancias' (plural) no existe. Intente renombrarla en Supabase a plural.")
                     else:
                         st.error(f"Error al cerrar: {e}")
+
