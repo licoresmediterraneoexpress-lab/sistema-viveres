@@ -547,22 +547,98 @@ elif opcion == "💸 Gastos":
             db.table("gastos").insert({"descripcion": desc, "monto_usd": monto, "fecha": datetime.now().isoformat()}).execute()
             st.success("Gasto registrado.")
 
-import streamlit as st
-import pandas as pd
-from datetime import datetime
-import time
+# --- CONFIGURACIÓN DE PÁGINA Y SIDEBAR (EJEMPLO) ---
+# (Asumiendo que 'opcion' viene de un st.sidebar.option_menu o selectbox)
+
+# --- 3. MÓDULO INVENTARIO ---
+if opcion == "📦 Inventario":
+    st.header("📦 Centro de Control de Inventario")
+    st.markdown("---")
+
+    # 1. CARGA Y PREPARACIÓN DE DATOS
+    try:
+        res = db.table("inventario").select("*").execute()
+        df_inv = pd.DataFrame(res.data) if res.data else pd.DataFrame()
+    except Exception as e:
+        st.error(f"Error de conexión con la base de datos: {e}")
+        df_inv = pd.DataFrame()
+
+    if not df_inv.empty:
+        # Estandarización de tipos
+        numeric_cols = ['stock', 'costo', 'precio_detal', 'precio_mayor', 'min_mayor']
+        for col in numeric_cols:
+            df_inv[col] = pd.to_numeric(df_inv[col], errors='coerce').fillna(0)
+
+        # Métrica Rápidas
+        df_inv['valor_costo'] = df_inv['stock'] * df_inv['costo']
+        df_inv['valor_venta'] = df_inv['stock'] * df_inv['precio_detal']
+        
+        m1, m2, m3 = st.columns(3)
+        m1.metric("🛒 Inversión Total", f"${df_inv['valor_costo'].sum():,.2f}")
+        m2.metric("💰 Valor de Venta", f"${df_inv['valor_venta'].sum():,.2f}")
+        m3.metric("📈 Ganancia Est.", f"${(df_inv['valor_venta'].sum() - df_inv['valor_costo'].sum()):,.2f}")
+
+        # Buscador
+        busqueda = st.text_input("🔍 Buscar producto por nombre...", placeholder="Ej: Harina Pan...")
+        df_filtrado = df_inv[df_inv['nombre'].str.contains(busqueda, case=False, na=False)] if busqueda else df_inv
+
+        # Visualización
+        vista_tabla = df_filtrado.copy()
+        for col in ['costo', 'precio_detal', 'precio_mayor']:
+            vista_tabla[col] = vista_tabla[col].apply(lambda x: f"$ {x:,.2f}")
+
+        st.dataframe(vista_tabla[['nombre', 'stock', 'costo', 'precio_detal', 'precio_mayor', 'min_mayor']], use_container_width=True, hide_index=True)
+
+        # Diálogo de Edición
+        @st.dialog("✏️ Editar Información del Producto")
+        def editar_producto_dialog(item_data):
+            id_producto = item_data['id']
+            with st.form("form_edicion"):
+                col_a, col_b, col_min = st.columns([1.5, 1.5, 1])
+                new_stock = col_a.number_input("Stock", value=int(item_data['stock']), step=1)
+                new_costo = col_b.number_input("Costo", value=float(item_data['costo']), format="%.2f")
+                new_min_mayor = col_min.number_input("Mín. Mayor", value=int(item_data['min_mayor']), step=1)
+                
+                new_detal = st.number_input("Precio Detal", value=float(item_data['precio_detal']), format="%.2f")
+                new_mayor = st.number_input("Precio Mayor", value=float(item_data['precio_mayor']), format="%.2f")
+                
+                if st.form_submit_button("💾 GUARDAR CAMBIOS", use_container_width=True):
+                    actualizacion = {
+                        "stock": int(new_stock), "costo": float(new_costo),
+                        "precio_detal": float(new_detal), "precio_mayor": float(new_mayor),
+                        "min_mayor": int(new_min_mayor)
+                    }
+                    try:
+                        db.table("inventario").update(actualizacion).eq("id", id_producto).execute()
+                        st.success("✅ Actualizado")
+                        if hasattr(st, 'cache_data'): st.cache_data.clear()
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+
+        # Acciones
+        seleccion = st.selectbox("Selecciona para modificar:", options=df_filtrado['nombre'].tolist(), index=None)
+        if seleccion:
+            fila = df_inv[df_inv['nombre'] == seleccion].iloc[0].to_dict()
+            if st.button(f"Modificar {seleccion}"):
+                editar_producto_dialog(fila)
+    else:
+        st.info("💡 No hay productos.")
 
 # --- 6. MÓDULO DE CAJA (GESTIÓN DE TURNOS ESTRATÉGICA) ---
 elif opcion == "📊 Cierre de Caja":
     st.header("📊 Gestión de Turnos y Arqueo")
     st.markdown("---")
 
-    # 1. IDENTIFICAR ESTADO DEL TURNO (Lógica agnóstica a la fecha)
-    # Buscamos el último registro de apertura que no ha sido cerrado
-    res_ultimo = db.table("gastos").select("*").ilike("descripcion", "APERTURA_%").order("fecha", desc=True).limit(1).execute()
-    ultimo_registro = res_ultimo.data[0] if res_ultimo.data else None
+    # 1. IDENTIFICAR ESTADO DEL TURNO
+    try:
+        res_ultimo = db.table("gastos").select("*").ilike("descripcion", "APERTURA_%").order("fecha", desc=True).limit(1).execute()
+        ultimo_registro = res_ultimo.data[0] if res_ultimo.data else None
+    except Exception as e:
+        st.error(f"Error al conectar con turnos: {e}")
+        ultimo_registro = None
     
-    # Un turno está abierto solo si el último registro de apertura tiene estado 'abierto'
     caja_abierta_actual = ultimo_registro is not None and ultimo_registro.get('estado') == 'abierto'
 
     if not caja_abierta_actual:
@@ -580,64 +656,58 @@ elif opcion == "📊 Cierre de Caja":
                 id_turno = datetime.now().strftime("%Y%m%d_%H%M%S")
                 data_apertura = {
                     "descripcion": f"APERTURA_{id_turno}",
-                    "monto_usd": f_usd, # Fondo inicial en $
-                    "monto_bs_extra": f_bs, # Fondo inicial en Bs
+                    "monto_usd": f_usd,
+                    "monto_bs_extra": f_bs,
                     "fecha": datetime.now().isoformat(),
                     "estado": "abierto",
-                    "tasa_referencia": tasa_ap # Guardamos la tasa de apertura
+                    "tasa_referencia": tasa_ap
                 }
                 db.table("gastos").insert(data_apertura).execute()
-                st.success(f"🚀 Turno {id_turno} iniciado con éxito.")
+                st.success(f"🚀 Turno {id_turno} iniciado.")
                 time.sleep(1)
                 st.rerun()
     else:
-        # --- LÓGICA DE TURNO ABIERTO (DATA ANALYTICS EN TIEMPO REAL) ---
+        # --- LÓGICA DE TURNO ABIERTO ---
         fecha_apertura = ultimo_registro['fecha']
         st.warning(f"🔔 TURNO ACTIVO DESDE: {pd.to_datetime(fecha_apertura).strftime('%d/%m/%Y %H:%M:%S')}")
 
-        # 2. CÁLCULO DE VENTAS DESDE LA APERTURA (Filtro por Timestamp)
-        # Traemos todas las ventas cuyo timestamp sea superior a la fecha de apertura
+        # 2. CÁLCULO DE VENTAS DESDE LA APERTURA
         res_ventas = db.table("ventas").select("*").gte("created_at", fecha_apertura).execute()
         df_ventas = pd.DataFrame(res_ventas.data) if res_ventas.data else pd.DataFrame()
 
         if not df_ventas.empty:
-            # Procesamiento de datos
             df_ventas['total_usd'] = pd.to_numeric(df_ventas['total_usd'])
-            df_ventas['costo_total'] = pd.to_numeric(df_ventas.get('costo_total', 0)) # Asumiendo columna de costo en ventas
+            df_ventas['costo_total'] = pd.to_numeric(df_ventas.get('costo_total', 0))
 
-            # Métricas por método de pago
             metodos = df_ventas.groupby('metodo_pago')['total_usd'].sum()
             total_bruto = df_ventas['total_usd'].sum()
             total_costo = df_ventas['costo_total'].sum()
             ganancia = total_bruto - total_costo
 
-            # --- PANEL DE RESUMEN EN TIEMPO REAL ---
-            st.markdown("### 📈 Resumen Acumulado del Turno")
+            # Panel Resumen
+            st.markdown("### 📈 Resumen Acumulado")
             m1, m2, m3 = st.columns(3)
-            m1.metric("💰 Ventas Totales (Bruto)", f"$ {total_bruto:,.2f}")
-            m2.metric("📦 Costo de Inventario", f"$ {total_costo:,.2f}")
-            m3.metric("💹 Ganancia Estimada", f"$ {ganancia:,.2f}", delta=f"{(ganancia/total_bruto*100) if total_bruto > 0 else 0:.1f}% Margin")
+            m1.metric("💰 Ventas Totales", f"$ {total_bruto:,.2f}")
+            m2.metric("📦 Costo Inv.", f"$ {total_costo:,.2f}")
+            m3.metric("💹 Ganancia Est.", f"$ {ganancia:,.2f}")
 
-            st.write("#### Desglose por Método de Pago")
+            st.write("#### Desglose por Pago")
             cols_metodos = st.columns(len(metodos))
             for i, (metodo, monto) in enumerate(metodos.items()):
                 cols_metodos[i].info(f"**{metodo}**\n\n$ {monto:,.2f}")
         else:
-            st.info("Aún no se han registrado ventas en este turno.")
+            st.info("Sin ventas registradas en este turno.")
             total_bruto = total_costo = ganancia = 0
 
         st.markdown("---")
         
         # --- INTERFAZ DE CIERRE ---
-        st.subheader("🏮 Cierre de Arqueo y Turno")
+        st.subheader("🏮 Cierre de Arqueo")
         col_c1, col_c2 = st.columns(2)
-        
-        # El usuario ingresa cuánto tiene físicamente para comparar
-        efectivo_real = col_c1.number_input("Total Efectivo Físico en Caja ($)", min_value=0.0)
-        observaciones = col_c2.text_area("Notas del Cierre", placeholder="Ej: Faltante de 2$ por cambio...")
+        efectivo_real = col_c1.number_input("Total Efectivo Físico ($)", min_value=0.0)
+        observaciones = col_c2.text_area("Notas", placeholder="Ej: Sin novedades...")
 
-        if st.button("🔴 FINALIZAR TURNO Y GUARDAR REPORTE", type="primary", use_container_width=True):
-            # 1. Preparar el registro de cierre
+        if st.button("🔴 FINALIZAR TURNO", type="primary", use_container_width=True):
             id_cierre = ultimo_registro['descripcion'].replace("APERTURA", "CIERRE")
             resumen_cierre = {
                 "descripcion": id_cierre,
@@ -652,17 +722,11 @@ elif opcion == "📊 Cierre de Caja":
             }
             
             try:
-                # 2. Actualizar el estado de la apertura a 'cerrado'
                 db.table("gastos").update({"estado": "cerrado"}).eq("descripcion", ultimo_registro['descripcion']).execute()
-                
-                # 3. Insertar el registro de cierre en la tabla de cierres (o gastos como historial)
-                # Aquí puedes usar una tabla dedicada llamada 'cierres_caja' si la tienes
                 db.table("gastos").insert(resumen_cierre).execute()
-                
                 st.balloons()
-                st.success(f"✅ Turno Cerrado. Ganancia del periodo: $ {ganancia:,.2f}")
+                st.success("✅ Turno Cerrado Correctamente")
                 time.sleep(2)
                 st.rerun()
             except Exception as e:
-                st.error(f"Error al procesar el cierre: {e}")
-
+                st.error(f"Error: {e}")
