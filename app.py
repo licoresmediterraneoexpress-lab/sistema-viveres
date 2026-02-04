@@ -47,6 +47,7 @@ if opcion == "📦 Inventario":
 
     # 1. CARGA Y PREPARACIÓN DE DATOS
     try:
+        # Consultamos directamente a Supabase
         res = db.table("inventario").select("*").execute()
         df_inv = pd.DataFrame(res.data) if res.data else pd.DataFrame()
     except Exception as e:
@@ -80,14 +81,13 @@ if opcion == "📦 Inventario":
             df_filtrado = df_inv
 
         # --- PREPARACIÓN DE TABLA VISUAL (TREEVIEW STYLE) ---
-        # Creamos una copia para visualización formateada
         vista_tabla = df_filtrado.copy()
         
-        # Formateo de divisas
+        # Formateo de divisas para visualización
         for col in ['costo', 'precio_detal', 'precio_mayor']:
             vista_tabla[col] = vista_tabla[col].apply(lambda x: f"$ {x:,.2f}")
 
-        # Renombrado de columnas según requerimiento
+        # Renombrado de columnas
         vista_tabla = vista_tabla.rename(columns={
             'nombre': 'PRODUCTO',
             'stock': 'STOCK',
@@ -104,38 +104,52 @@ if opcion == "📦 Inventario":
             height=400
         )
 
-        # --- LÓGICA DE MODIFICACIÓN (POP-UP / DIALOG) ---
+        # --- LÓGICA DE MODIFICACIÓN (CORREGIDA) ---
         @st.dialog("✏️ Editar Información del Producto")
-        def editar_producto_dialog(item):
-            st.write(f"Editando: **{item['nombre']}**")
+        def editar_producto_dialog(item_data):
+            # Aseguramos la captura del ID único
+            id_producto = item_data['id']
+            st.write(f"Editando: **{item_data['nombre']}**")
+            st.caption(f"ID del registro: {id_producto}")
             st.divider()
             
             with st.form("form_edicion"):
                 col_a, col_b = st.columns(2)
-                new_stock = col_a.number_input("Cantidad en Stock", value=int(item['stock']), step=1)
-                new_costo = col_b.number_input("Precio de Costo ($)", value=float(item['costo']), format="%.2f")
+                # Forzamos los valores a tipos nativos de Python para evitar conflictos con Supabase
+                new_stock = col_a.number_input("Cantidad en Stock", value=int(item_data['stock']), step=1)
+                new_costo = col_b.number_input("Precio de Costo ($)", value=float(item_data['costo']), format="%.2f")
                 
                 col_c, col_d = st.columns(2)
-                new_detal = col_c.number_input("Precio Venta Detal ($)", value=float(item['precio_detal']), format="%.2f")
-                new_mayor = col_d.number_input("Precio Venta Mayor ($)", value=float(item['precio_mayor']), format="%.2f")
+                new_detal = col_c.number_input("Precio Venta Detal ($)", value=float(item_data['precio_detal']), format="%.2f")
+                new_mayor = col_d.number_input("Precio Venta Mayor ($)", value=float(item_data['precio_mayor']), format="%.2f")
                 
                 st.markdown("<br>", unsafe_allow_html=True)
                 btn_save = st.form_submit_button("💾 GUARDAR CAMBIOS", use_container_width=True)
 
                 if btn_save:
-                    actualizacion = {
+                    # Construcción de datos con tipado estricto
+                    datos_actualizados = {
                         "stock": int(new_stock),
                         "costo": float(new_costo),
                         "precio_detal": float(new_detal),
                         "precio_mayor": float(new_mayor)
                     }
+                    
                     try:
-                        db.table("inventario").update(actualizacion).eq("id", item['id']).execute()
-                        st.success("✅ Producto actualizado correctamente")
-                        time.sleep(1.2)
+                        # Ejecución de la sentencia de actualización
+                        db.table("inventario").update(datos_actualizados).eq("id", id_producto).execute()
+                        
+                        # Persistencia y Refresco
+                        st.success("✅ Cambios guardados en la base de datos")
+                        
+                        # Limpiar caché si existe
+                        if hasattr(st, 'cache_data'):
+                            st.cache_data.clear()
+                        
+                        time.sleep(1)
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Error al guardar: {e}")
+                        st.error(f"Error crítico de Supabase: {e}")
 
         # Panel de Acciones (Bajo la tabla)
         st.markdown("---")
@@ -143,7 +157,6 @@ if opcion == "📦 Inventario":
         
         with c1:
             st.subheader("🛠️ Acciones de Fila")
-            # Selector para elegir qué editar basado en la búsqueda actual
             seleccion = st.selectbox(
                 "Selecciona un producto de la lista para modificar:",
                 options=df_filtrado['nombre'].tolist(),
@@ -152,7 +165,8 @@ if opcion == "📦 Inventario":
             )
             
             if seleccion:
-                fila_datos = df_filtrado[df_filtrado['nombre'] == seleccion].iloc[0]
+                # Localizamos la fila en el DataFrame original para obtener el ID real
+                fila_datos = df_inv[df_inv['nombre'] == seleccion].iloc[0].to_dict()
                 if st.button(f"Modificar {seleccion}", icon="✏️"):
                     editar_producto_dialog(fila_datos)
 
@@ -163,10 +177,15 @@ if opcion == "📦 Inventario":
                 password = st.text_input("Clave de Seguridad", type="password")
                 if st.button("Confirmar Eliminación", type="primary"):
                     if password == CLAVE_ADMIN and prod_del != "---":
-                        db.table("inventario").delete().eq("nombre", prod_del).execute()
-                        st.warning(f"Producto {prod_del} eliminado.")
-                        time.sleep(1)
-                        st.rerun()
+                        try:
+                            db.table("inventario").delete().eq("nombre", prod_del).execute()
+                            st.warning(f"Producto {prod_del} eliminado.")
+                            if hasattr(st, 'cache_data'):
+                                st.cache_data.clear()
+                            time.sleep(1)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error al eliminar: {e}")
                     else:
                         st.error("Clave incorrecta o producto no seleccionado")
 
@@ -195,6 +214,8 @@ if opcion == "📦 Inventario":
                         }
                         db.table("inventario").insert(nuevo_p).execute()
                         st.success(f"¡{n_nombre} agregado al sistema!")
+                        if hasattr(st, 'cache_data'):
+                            st.cache_data.clear()
                         time.sleep(1)
                         st.rerun()
                     except Exception as e:
@@ -544,6 +565,7 @@ elif opcion == "📊 Cierre de Caja":
             db.table("gastos").update({"estado": "cerrado"}).eq("descripcion", ultimo_registro['descripcion']).execute()
             st.success("Turno cerrado.")
             st.rerun()
+
 
 
 
