@@ -42,18 +42,21 @@ if opcion == "📦 Inventario":
     st.header("📦 Centro de Control de Inventario")
     st.markdown("---")
 
+    # 1. CARGA Y PREPARACIÓN DE DATOS
     try:
         res = db.table("inventario").select("*").execute()
         df_inv = pd.DataFrame(res.data) if res.data else pd.DataFrame()
     except Exception as e:
-        st.error(f"Error de conexión: {e}")
+        st.error(f"Error de conexión con la base de datos: {e}")
         df_inv = pd.DataFrame()
 
     if not df_inv.empty:
+        # Estandarización de tipos de datos
         numeric_cols = ['stock', 'costo', 'precio_detal', 'precio_mayor', 'min_mayor']
         for col in numeric_cols:
             df_inv[col] = pd.to_numeric(df_inv[col], errors='coerce').fillna(0)
 
+        # Cálculo de Métricas
         df_inv['valor_costo'] = df_inv['stock'] * df_inv['costo']
         df_inv['valor_venta'] = df_inv['stock'] * df_inv['precio_detal']
         
@@ -63,75 +66,91 @@ if opcion == "📦 Inventario":
         m3.metric("📈 Ganancia Est.", f"${(df_inv['valor_venta'].sum() - df_inv['valor_costo'].sum()):,.2f}")
 
         st.markdown("### 📋 Listado de Existencias")
-        busqueda = st.text_input("🔍 Buscar producto por nombre...", placeholder="Ej: Harina Pan...")
 
+        # Buscador Inteligente
+        busqueda = st.text_input("🔍 Buscar producto por nombre...", placeholder="Ej: Harina Pan, Refresco...")
         df_filtrado = df_inv[df_inv['nombre'].str.contains(busqueda, case=False, na=False)] if busqueda else df_inv
 
+        # Tabla Visual
         vista_tabla = df_filtrado.copy()
         for col in ['costo', 'precio_detal', 'precio_mayor']:
             vista_tabla[col] = vista_tabla[col].apply(lambda x: f"$ {x:,.2f}")
 
         st.dataframe(
-            vista_tabla.rename(columns={'nombre':'PRODUCTO','stock':'STOCK','costo':'COSTO','precio_detal':'DETAL','precio_mayor':'MAYOR','min_mayor':'MIN. MAYOR'})
-            [['PRODUCTO', 'STOCK', 'COSTO', 'DETAL', 'MAYOR', 'MIN. MAYOR']], 
+            vista_tabla.rename(columns={
+                'nombre': 'PRODUCTO', 'stock': 'STOCK', 'costo': 'PRECIO COSTO',
+                'precio_detal': 'PRECIO VENTA', 'precio_mayor': 'VENTA MAYOR', 'min_mayor': 'MIN. MAYOR'
+            })[['PRODUCTO', 'STOCK', 'PRECIO COSTO', 'PRECIO VENTA', 'VENTA MAYOR', 'MIN. MAYOR']], 
             use_container_width=True, hide_index=True, height=400
         )
 
+        # Diálogo de Edición Refactorizado
         @st.dialog("✏️ Editar Información del Producto")
         def editar_producto_dialog(item_data):
             id_producto = item_data['id']
+            st.write(f"Editando: **{item_data['nombre']}**")
             with st.form("form_edicion"):
                 col_a, col_b, col_min = st.columns([1.5, 1.5, 1])
-                new_stock = col_a.number_input("Stock", value=int(item_data['stock']), step=1)
-                new_costo = col_b.number_input("Costo ($)", value=float(item_data['costo']), format="%.2f")
+                new_stock = col_a.number_input("Cantidad en Stock", value=int(item_data['stock']), step=1)
+                new_costo = col_b.number_input("Costo Unitario ($)", value=float(item_data['costo']), format="%.2f")
                 new_min_mayor = col_min.number_input("Mín. Mayor", value=int(item_data['min_mayor']), step=1)
-                new_detal = st.number_input("Precio Detal ($)", value=float(item_data['precio_detal']), format="%.2f")
-                new_mayor = st.number_input("Precio Mayor ($)", value=float(item_data['precio_mayor']), format="%.2f")
+                
+                col_c, col_d = st.columns(2)
+                new_detal = col_c.number_input("Precio Venta Detal ($)", value=float(item_data['precio_detal']), format="%.2f")
+                new_mayor = col_d.number_input("Precio Venta Mayor ($)", value=float(item_data['precio_mayor']), format="%.2f")
                 
                 if st.form_submit_button("💾 GUARDAR CAMBIOS", use_container_width=True):
                     upd = {
-                        "stock": int(new_stock), "costo": float(new_costo), 
-                        "precio_detal": float(new_detal), "precio_mayor": float(new_mayor), 
+                        "stock": int(new_stock), "costo": float(new_costo),
+                        "precio_detal": float(new_detal), "precio_mayor": float(new_mayor),
                         "min_mayor": int(new_min_mayor)
                     }
                     try:
                         db.table("inventario").update(upd).eq("id", id_producto).execute()
-                        st.success("✅ Actualizado"); time.sleep(1); st.rerun()
+                        st.success("✅ Cambios guardados correctamente")
+                        if hasattr(st, 'cache_data'): st.cache_data.clear()
+                        time.sleep(1); st.rerun()
                     except Exception as e:
-                        st.error(f"Error: {e}")
+                        st.error(f"Error de actualización: {e}")
 
+        # Panel de Acciones
         st.markdown("---")
         c1, c2 = st.columns([2, 1])
         with c1:
-            seleccion = st.selectbox("Seleccione producto para editar:", options=df_filtrado['nombre'].tolist(), index=None)
+            st.subheader("🛠️ Gestión Directa")
+            seleccion = st.selectbox("Selecciona un producto para modificar:", options=df_filtrado['nombre'].tolist(), index=None)
             if seleccion:
                 fila_datos = df_inv[df_inv['nombre'] == seleccion].iloc[0].to_dict()
                 if st.button(f"Modificar {seleccion}", icon="✏️"):
                     editar_producto_dialog(fila_datos)
+
         with c2:
             st.subheader("🗑️ Eliminar")
-            with st.expander("Confirmar"):
-                prod_del = st.selectbox("Producto:", options=["---"] + df_inv['nombre'].tolist())
-                password = st.text_input("Clave", type="password")
+            with st.expander("Zona de Peligro"):
+                prod_del = st.selectbox("Producto a eliminar:", options=["---"] + df_inv['nombre'].tolist())
+                password = st.text_input("Clave Administrativa", type="password")
                 if st.button("Eliminar Permanentemente", type="primary"):
                     if password == CLAVE_ADMIN and prod_del != "---":
                         db.table("inventario").delete().eq("nombre", prod_del).execute()
                         st.rerun()
 
-    with st.expander("➕ REGISTRAR NUEVO PRODUCTO"):
-        with st.form("nuevo_p", clear_on_submit=True):
+    # Registro de nuevos productos (Mantenido funcionalmente)
+    with st.expander("➕ REGISTRAR NUEVO PRODUCTO EN EL SISTEMA"):
+        with st.form("nuevo_registro", clear_on_submit=True):
             f1, f2, f_m = st.columns([2, 1, 1])
-            n_nombre = f1.text_input("Nombre").upper().strip()
+            n_nombre = f1.text_input("Nombre del Producto").upper().strip()
             n_stock = f2.number_input("Stock Inicial", min_value=0, step=1)
-            n_min_m = f_m.number_input("Mín. Mayor", min_value=1, value=1)
+            n_min_m = f_m.number_input("Mín. para Mayor", min_value=1, value=1)
             f3, f4, f5 = st.columns(3)
             n_costo = f3.number_input("Costo ($)", min_value=0.0, format="%.2f")
             n_detal = f4.number_input("Precio Detal ($)", min_value=0.0, format="%.2f")
             n_mayor = f5.number_input("Precio Mayor ($)", min_value=0.0, format="%.2f")
-            if st.form_submit_button("🚀 Registrar"):
+            if st.form_submit_button("🚀 Registrar en Base de Datos"):
                 if n_nombre:
-                    db.table("inventario").insert({"nombre": n_nombre, "stock": n_stock, "costo": n_costo, "precio_detal": n_detal, "precio_mayor": n_mayor, "min_mayor": n_min_m}).execute()
-                    st.success("Registrado"); time.sleep(1); st.rerun()
+                    try:
+                        db.table("inventario").insert({"nombre": n_nombre, "stock": n_stock, "costo": n_costo, "precio_detal": n_detal, "precio_mayor": n_mayor, "min_mayor": n_min_m}).execute()
+                        st.success(f"¡{n_nombre} registrado!"); time.sleep(1); st.rerun()
+                    except Exception as e: st.error(f"Error: {e}")
 
 # --- 4. MÓDULO VENTA RÁPIDA ---
 elif opcion == "🛒 Venta Rápida":
@@ -248,121 +267,6 @@ elif opcion == "💸 Gastos":
             db.table("gastos").insert({"descripcion": desc, "monto_usd": monto, "fecha": datetime.now().isoformat()}).execute()
             st.success("Gasto registrado.")
 
-# --- 3. MÓDULO INVENTARIO ---
-if opcion == "📦 Inventario":
-    st.header("📦 Centro de Control de Inventario")
-    st.markdown("---")
-
-    # 1. CARGA Y PREPARACIÓN DE DATOS
-    try:
-        res = db.table("inventario").select("*").execute()
-        df_inv = pd.DataFrame(res.data) if res.data else pd.DataFrame()
-    except Exception as e:
-        st.error(f"Error de conexión con la base de datos: {e}")
-        df_inv = pd.DataFrame()
-
-    if not df_inv.empty:
-        # Estandarización de tipos de datos
-        numeric_cols = ['stock', 'costo', 'precio_detal', 'precio_mayor', 'min_mayor']
-        for col in numeric_cols:
-            df_inv[col] = pd.to_numeric(df_inv[col], errors='coerce').fillna(0)
-
-        # Cálculo de Métricas
-        df_inv['valor_costo'] = df_inv['stock'] * df_inv['costo']
-        df_inv['valor_venta'] = df_inv['stock'] * df_inv['precio_detal']
-        
-        m1, m2, m3 = st.columns(3)
-        m1.metric("🛒 Inversión Total", f"${df_inv['valor_costo'].sum():,.2f}")
-        m2.metric("💰 Valor de Venta", f"${df_inv['valor_venta'].sum():,.2f}")
-        m3.metric("📈 Ganancia Est.", f"${(df_inv['valor_venta'].sum() - df_inv['valor_costo'].sum()):,.2f}")
-
-        st.markdown("### 📋 Listado de Existencias")
-
-        # Buscador Inteligente
-        busqueda = st.text_input("🔍 Buscar producto por nombre...", placeholder="Ej: Harina Pan, Refresco...")
-        df_filtrado = df_inv[df_inv['nombre'].str.contains(busqueda, case=False, na=False)] if busqueda else df_inv
-
-        # Tabla Visual
-        vista_tabla = df_filtrado.copy()
-        for col in ['costo', 'precio_detal', 'precio_mayor']:
-            vista_tabla[col] = vista_tabla[col].apply(lambda x: f"$ {x:,.2f}")
-
-        st.dataframe(
-            vista_tabla.rename(columns={
-                'nombre': 'PRODUCTO', 'stock': 'STOCK', 'costo': 'PRECIO COSTO',
-                'precio_detal': 'PRECIO VENTA', 'precio_mayor': 'VENTA MAYOR', 'min_mayor': 'MIN. MAYOR'
-            })[['PRODUCTO', 'STOCK', 'PRECIO COSTO', 'PRECIO VENTA', 'VENTA MAYOR', 'MIN. MAYOR']], 
-            use_container_width=True, hide_index=True, height=400
-        )
-
-        # Diálogo de Edición Refactorizado
-        @st.dialog("✏️ Editar Información del Producto")
-        def editar_producto_dialog(item_data):
-            id_producto = item_data['id']
-            st.write(f"Editando: **{item_data['nombre']}**")
-            with st.form("form_edicion"):
-                col_a, col_b, col_min = st.columns([1.5, 1.5, 1])
-                new_stock = col_a.number_input("Cantidad en Stock", value=int(item_data['stock']), step=1)
-                new_costo = col_b.number_input("Costo Unitario ($)", value=float(item_data['costo']), format="%.2f")
-                new_min_mayor = col_min.number_input("Mín. Mayor", value=int(item_data['min_mayor']), step=1)
-                
-                col_c, col_d = st.columns(2)
-                new_detal = col_c.number_input("Precio Venta Detal ($)", value=float(item_data['precio_detal']), format="%.2f")
-                new_mayor = col_d.number_input("Precio Venta Mayor ($)", value=float(item_data['precio_mayor']), format="%.2f")
-                
-                if st.form_submit_button("💾 GUARDAR CAMBIOS", use_container_width=True):
-                    upd = {
-                        "stock": int(new_stock), "costo": float(new_costo),
-                        "precio_detal": float(new_detal), "precio_mayor": float(new_mayor),
-                        "min_mayor": int(new_min_mayor)
-                    }
-                    try:
-                        db.table("inventario").update(upd).eq("id", id_producto).execute()
-                        st.success("✅ Cambios guardados correctamente")
-                        if hasattr(st, 'cache_data'): st.cache_data.clear()
-                        time.sleep(1); st.rerun()
-                    except Exception as e:
-                        st.error(f"Error de actualización: {e}")
-
-        # Panel de Acciones
-        st.markdown("---")
-        c1, c2 = st.columns([2, 1])
-        with c1:
-            st.subheader("🛠️ Gestión Directa")
-            seleccion = st.selectbox("Selecciona un producto para modificar:", options=df_filtrado['nombre'].tolist(), index=None)
-            if seleccion:
-                fila_datos = df_inv[df_inv['nombre'] == seleccion].iloc[0].to_dict()
-                if st.button(f"Modificar {seleccion}", icon="✏️"):
-                    editar_producto_dialog(fila_datos)
-
-        with c2:
-            st.subheader("🗑️ Eliminar")
-            with st.expander("Zona de Peligro"):
-                prod_del = st.selectbox("Producto a eliminar:", options=["---"] + df_inv['nombre'].tolist())
-                password = st.text_input("Clave Administrativa", type="password")
-                if st.button("Eliminar Permanentemente", type="primary"):
-                    if password == CLAVE_ADMIN and prod_del != "---":
-                        db.table("inventario").delete().eq("nombre", prod_del).execute()
-                        st.rerun()
-
-    # Registro de nuevos productos (Mantenido funcionalmente)
-    with st.expander("➕ REGISTRAR NUEVO PRODUCTO EN EL SISTEMA"):
-        with st.form("nuevo_registro", clear_on_submit=True):
-            f1, f2, f_m = st.columns([2, 1, 1])
-            n_nombre = f1.text_input("Nombre del Producto").upper().strip()
-            n_stock = f2.number_input("Stock Inicial", min_value=0, step=1)
-            n_min_m = f_m.number_input("Mín. para Mayor", min_value=1, value=1)
-            f3, f4, f5 = st.columns(3)
-            n_costo = f3.number_input("Costo ($)", min_value=0.0, format="%.2f")
-            n_detal = f4.number_input("Precio Detal ($)", min_value=0.0, format="%.2f")
-            n_mayor = f5.number_input("Precio Mayor ($)", min_value=0.0, format="%.2f")
-            if st.form_submit_button("🚀 Registrar en Base de Datos"):
-                if n_nombre:
-                    try:
-                        db.table("inventario").insert({"nombre": n_nombre, "stock": n_stock, "costo": n_costo, "precio_detal": n_detal, "precio_mayor": n_mayor, "min_mayor": n_min_m}).execute()
-                        st.success(f"¡{n_nombre} registrado!"); time.sleep(1); st.rerun()
-                    except Exception as e: st.error(f"Error: {e}")
-
 # --- 4. MÓDULO GESTIÓN DE CAJA ---
 elif opcion == "📊 Cierre de Caja":
     st.header("📊 Gestión de Turnos y Arqueo")
@@ -442,3 +346,4 @@ elif opcion == "📊 Cierre de Caja":
                 db.table("cierres").update(data_cl).eq("id", id_cierre).execute()
                 st.balloons(); st.success("Turno finalizado y guardado."); time.sleep(1.5); st.rerun()
             except Exception as e: st.error(f"Error al cerrar: {e}")
+
