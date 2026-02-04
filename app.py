@@ -248,9 +248,6 @@ elif opcion == "💸 Gastos":
             db.table("gastos").insert({"descripcion": desc, "monto_usd": monto, "fecha": datetime.now().isoformat()}).execute()
             st.success("Gasto registrado.")
 
-# --- CONFIGURACIÓN DE PÁGINA Y SIDEBAR (EJEMPLO) ---
-# (Asumiendo que 'opcion' viene de un st.sidebar.option_menu o selectbox)
-
 # --- 3. MÓDULO INVENTARIO ---
 if opcion == "📦 Inventario":
     st.header("📦 Centro de Control de Inventario")
@@ -265,85 +262,12 @@ if opcion == "📦 Inventario":
         df_inv = pd.DataFrame()
 
     if not df_inv.empty:
-        # Estandarización de tipos
+        # Estandarización de tipos de datos
         numeric_cols = ['stock', 'costo', 'precio_detal', 'precio_mayor', 'min_mayor']
         for col in numeric_cols:
             df_inv[col] = pd.to_numeric(df_inv[col], errors='coerce').fillna(0)
 
-        # Métrica Rápidas
-        df_inv['valor_costo'] = df_inv['stock'] * df_inv['costo']
-        df_inv['valor_venta'] = df_inv['stock'] * df_inv['precio_detal']
-        
-        m1, m2, m3 = st.columns(3)
-        m1.metric("🛒 Inversión Total", f"${df_inv['valor_costo'].sum():,.2f}")
-        m2.metric("💰 Valor de Venta", f"${df_inv['valor_venta'].sum():,.2f}")
-        m3.metric("📈 Ganancia Est.", f"${(df_inv['valor_venta'].sum() - df_inv['valor_costo'].sum()):,.2f}")
-
-        # Buscador
-        busqueda = st.text_input("🔍 Buscar producto por nombre...", placeholder="Ej: Harina Pan...")
-        df_filtrado = df_inv[df_inv['nombre'].str.contains(busqueda, case=False, na=False)] if busqueda else df_inv
-
-        # Visualización
-        vista_tabla = df_filtrado.copy()
-        for col in ['costo', 'precio_detal', 'precio_mayor']:
-            vista_tabla[col] = vista_tabla[col].apply(lambda x: f"$ {x:,.2f}")
-
-        st.dataframe(vista_tabla[['nombre', 'stock', 'costo', 'precio_detal', 'precio_mayor', 'min_mayor']], use_container_width=True, hide_index=True)
-
-        # Diálogo de Edición
-        @st.dialog("✏️ Editar Información del Producto")
-        def editar_producto_dialog(item_data):
-            id_producto = item_data['id']
-            with st.form("form_edicion"):
-                col_a, col_b, col_min = st.columns([1.5, 1.5, 1])
-                new_stock = col_a.number_input("Stock", value=int(item_data['stock']), step=1)
-                new_costo = col_b.number_input("Costo", value=float(item_data['costo']), format="%.2f")
-                new_min_mayor = col_min.number_input("Mín. Mayor", value=int(item_data['min_mayor']), step=1)
-                
-                new_detal = st.number_input("Precio Detal", value=float(item_data['precio_detal']), format="%.2f")
-                new_mayor = st.number_input("Precio Mayor", value=float(item_data['precio_mayor']), format="%.2f")
-                
-                if st.form_submit_button("💾 GUARDAR CAMBIOS", use_container_width=True):
-                    actualizacion = {
-                        "stock": int(new_stock), "costo": float(new_costo),
-                        "precio_detal": float(new_detal), "precio_mayor": float(new_mayor),
-                        "min_mayor": int(new_min_mayor)
-                    }
-                    try:
-                        db.table("inventario").update(actualizacion).eq("id", id_producto).execute()
-                        st.success("✅ Actualizado")
-                        if hasattr(st, 'cache_data'): st.cache_data.clear()
-                        time.sleep(1)
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error: {e}")
-
-        # Acciones
-        seleccion = st.selectbox("Selecciona para modificar:", options=df_filtrado['nombre'].tolist(), index=None)
-        if seleccion:
-            fila = df_inv[df_inv['nombre'] == seleccion].iloc[0].to_dict()
-            if st.button(f"Modificar {seleccion}"):
-                editar_producto_dialog(fila)
-    else:
-        st.info("💡 No hay productos.")
-
-# --- 3. MÓDULO INVENTARIO (PRESERVADO INTEGRAMENTE) ---
-if opcion == "📦 Inventario":
-    st.header("📦 Centro de Control de Inventario")
-    st.markdown("---")
-
-    try:
-        res = db.table("inventario").select("*").execute()
-        df_inv = pd.DataFrame(res.data) if res.data else pd.DataFrame()
-    except Exception as e:
-        st.error(f"Error de conexión: {e}")
-        df_inv = pd.DataFrame()
-
-    if not df_inv.empty:
-        numeric_cols = ['stock', 'costo', 'precio_detal', 'precio_mayor', 'min_mayor']
-        for col in numeric_cols:
-            df_inv[col] = pd.to_numeric(df_inv[col], errors='coerce').fillna(0)
-
+        # Cálculo de Métricas
         df_inv['valor_costo'] = df_inv['stock'] * df_inv['costo']
         df_inv['valor_venta'] = df_inv['stock'] * df_inv['precio_detal']
         
@@ -353,159 +277,168 @@ if opcion == "📦 Inventario":
         m3.metric("📈 Ganancia Est.", f"${(df_inv['valor_venta'].sum() - df_inv['valor_costo'].sum()):,.2f}")
 
         st.markdown("### 📋 Listado de Existencias")
-        busqueda = st.text_input("🔍 Buscar producto por nombre...", placeholder="Ej: Harina Pan...")
+
+        # Buscador Inteligente
+        busqueda = st.text_input("🔍 Buscar producto por nombre...", placeholder="Ej: Harina Pan, Refresco...")
         df_filtrado = df_inv[df_inv['nombre'].str.contains(busqueda, case=False, na=False)] if busqueda else df_inv
 
+        # Tabla Visual
         vista_tabla = df_filtrado.copy()
         for col in ['costo', 'precio_detal', 'precio_mayor']:
             vista_tabla[col] = vista_tabla[col].apply(lambda x: f"$ {x:,.2f}")
 
         st.dataframe(
-            vista_tabla.rename(columns={'nombre':'PRODUCTO','stock':'STOCK','costo':'COSTO','precio_detal':'DETAL','precio_mayor':'MAYOR','min_mayor':'MIN. MAYOR'})
-            [['PRODUCTO', 'STOCK', 'COSTO', 'DETAL', 'MAYOR', 'MIN. MAYOR']], 
+            vista_tabla.rename(columns={
+                'nombre': 'PRODUCTO', 'stock': 'STOCK', 'costo': 'PRECIO COSTO',
+                'precio_detal': 'PRECIO VENTA', 'precio_mayor': 'VENTA MAYOR', 'min_mayor': 'MIN. MAYOR'
+            })[['PRODUCTO', 'STOCK', 'PRECIO COSTO', 'PRECIO VENTA', 'VENTA MAYOR', 'MIN. MAYOR']], 
             use_container_width=True, hide_index=True, height=400
         )
 
-        @st.dialog("✏️ Editar Producto")
+        # Diálogo de Edición Refactorizado
+        @st.dialog("✏️ Editar Información del Producto")
         def editar_producto_dialog(item_data):
             id_producto = item_data['id']
+            st.write(f"Editando: **{item_data['nombre']}**")
             with st.form("form_edicion"):
                 col_a, col_b, col_min = st.columns([1.5, 1.5, 1])
-                new_stock = col_a.number_input("Stock", value=int(item_data['stock']), step=1)
-                new_costo = col_b.number_input("Costo ($)", value=float(item_data['costo']), format="%.2f")
+                new_stock = col_a.number_input("Cantidad en Stock", value=int(item_data['stock']), step=1)
+                new_costo = col_b.number_input("Costo Unitario ($)", value=float(item_data['costo']), format="%.2f")
                 new_min_mayor = col_min.number_input("Mín. Mayor", value=int(item_data['min_mayor']), step=1)
-                new_detal = st.number_input("Precio Detal ($)", value=float(item_data['precio_detal']), format="%.2f")
-                new_mayor = st.number_input("Precio Mayor ($)", value=float(item_data['precio_mayor']), format="%.2f")
+                
+                col_c, col_d = st.columns(2)
+                new_detal = col_c.number_input("Precio Venta Detal ($)", value=float(item_data['precio_detal']), format="%.2f")
+                new_mayor = col_d.number_input("Precio Venta Mayor ($)", value=float(item_data['precio_mayor']), format="%.2f")
+                
                 if st.form_submit_button("💾 GUARDAR CAMBIOS", use_container_width=True):
-                    upd = {"stock": int(new_stock), "costo": float(new_costo), "precio_detal": float(new_detal), "precio_mayor": float(new_mayor), "min_mayor": int(new_min_mayor)}
-                    db.table("inventario").update(upd).eq("id", id_producto).execute()
-                    st.success("Actualizado")
-                    time.sleep(1); st.rerun()
+                    upd = {
+                        "stock": int(new_stock), "costo": float(new_costo),
+                        "precio_detal": float(new_detal), "precio_mayor": float(new_mayor),
+                        "min_mayor": int(new_min_mayor)
+                    }
+                    try:
+                        db.table("inventario").update(upd).eq("id", id_producto).execute()
+                        st.success("✅ Cambios guardados correctamente")
+                        if hasattr(st, 'cache_data'): st.cache_data.clear()
+                        time.sleep(1); st.rerun()
+                    except Exception as e:
+                        st.error(f"Error de actualización: {e}")
 
+        # Panel de Acciones
         st.markdown("---")
-        seleccion = st.selectbox("Seleccione producto para editar:", options=df_filtrado['nombre'].tolist(), index=None)
-        if seleccion:
-            fila_datos = df_inv[df_inv['nombre'] == seleccion].iloc[0].to_dict()
-            if st.button(f"Modificar {seleccion}", icon="✏️"):
-                editar_producto_dialog(fila_datos)
+        c1, c2 = st.columns([2, 1])
+        with c1:
+            st.subheader("🛠️ Gestión Directa")
+            seleccion = st.selectbox("Selecciona un producto para modificar:", options=df_filtrado['nombre'].tolist(), index=None)
+            if seleccion:
+                fila_datos = df_inv[df_inv['nombre'] == seleccion].iloc[0].to_dict()
+                if st.button(f"Modificar {seleccion}", icon="✏️"):
+                    editar_producto_dialog(fila_datos)
 
-    # Registro de nuevos productos
-    with st.expander("➕ REGISTRAR NUEVO PRODUCTO"):
-        with st.form("nuevo_p"):
+        with c2:
+            st.subheader("🗑️ Eliminar")
+            with st.expander("Zona de Peligro"):
+                prod_del = st.selectbox("Producto a eliminar:", options=["---"] + df_inv['nombre'].tolist())
+                password = st.text_input("Clave Administrativa", type="password")
+                if st.button("Eliminar Permanentemente", type="primary"):
+                    if password == CLAVE_ADMIN and prod_del != "---":
+                        db.table("inventario").delete().eq("nombre", prod_del).execute()
+                        st.rerun()
+
+    # Registro de nuevos productos (Mantenido funcionalmente)
+    with st.expander("➕ REGISTRAR NUEVO PRODUCTO EN EL SISTEMA"):
+        with st.form("nuevo_registro", clear_on_submit=True):
             f1, f2, f_m = st.columns([2, 1, 1])
-            n_nombre = f1.text_input("Nombre").upper().strip()
+            n_nombre = f1.text_input("Nombre del Producto").upper().strip()
             n_stock = f2.number_input("Stock Inicial", min_value=0, step=1)
-            n_min_m = f_m.number_input("Mín. Mayor", min_value=1, value=1)
+            n_min_m = f_m.number_input("Mín. para Mayor", min_value=1, value=1)
             f3, f4, f5 = st.columns(3)
             n_costo = f3.number_input("Costo ($)", min_value=0.0, format="%.2f")
-            n_detal = f4.number_input("Detal ($)", min_value=0.0, format="%.2f")
-            n_mayor = f5.number_input("Mayor ($)", min_value=0.0, format="%.2f")
-            if st.form_submit_button("🚀 Registrar"):
+            n_detal = f4.number_input("Precio Detal ($)", min_value=0.0, format="%.2f")
+            n_mayor = f5.number_input("Precio Mayor ($)", min_value=0.0, format="%.2f")
+            if st.form_submit_button("🚀 Registrar en Base de Datos"):
                 if n_nombre:
-                    db.table("inventario").insert({"nombre": n_nombre, "stock": n_stock, "costo": n_costo, "precio_detal": n_detal, "precio_mayor": n_mayor, "min_mayor": n_min_m}).execute()
-                    st.success("Registrado"); time.sleep(1); st.rerun()
+                    try:
+                        db.table("inventario").insert({"nombre": n_nombre, "stock": n_stock, "costo": n_costo, "precio_detal": n_detal, "precio_mayor": n_mayor, "min_mayor": n_min_m}).execute()
+                        st.success(f"¡{n_nombre} registrado!"); time.sleep(1); st.rerun()
+                    except Exception as e: st.error(f"Error: {e}")
 
-# --- 6. MÓDULO DE CAJA (REPARADO Y MEJORADO) ---
+# --- 4. MÓDULO GESTIÓN DE CAJA ---
 elif opcion == "📊 Cierre de Caja":
     st.header("📊 Gestión de Turnos y Arqueo")
     st.markdown("---")
 
-    # 1. IDENTIFICAR ESTADO DEL TURNO
+    # 1. Identificar estado del turno (Tabla 'cierres')
     try:
-        res_ultimo = db.table("cierres").select("*").eq("estado", "abierto").order("fecha_apertura", desc=True).limit(1).execute()
-        turno_activo = res_ultimo.data[0] if res_ultimo.data else None
-    except Exception as e:
-        st.error(f"Error de conexión con tabla cierres: {e}")
+        res_u = db.table("cierres").select("*").eq("estado", "abierto").order("fecha_apertura", desc=True).limit(1).execute()
+        turno_activo = res_u.data[0] if res_u.data else None
+    except:
         turno_activo = None
     
-    caja_abierta_actual = turno_activo is not None
-
-    if not caja_abierta_actual:
-        st.subheader("🔓 Apertura de Nuevo Turno")
-        st.info("No hay turnos activos. Defina el fondo de caja inicial.")
-        
-        with st.form("form_apertura_mejorado"):
+    if not turno_activo:
+        st.subheader("🔓 Apertura de Turno")
+        with st.form("form_apertura"):
             c1, c2 = st.columns(2)
-            f_usd = c1.number_input("Fondo Inicial en Divisas ($)", min_value=0.0, step=1.0, format="%.2f")
-            f_bs = c2.number_input("Fondo Inicial en Bolívares (Bs)", min_value=0.0, step=10.0, format="%.2f")
-            tasa_ref = st.number_input("Tasa de Cambio (Referencia)", value=60.0, format="%.2f")
+            f_usd = c1.number_input("Fondo Inicial ($)", min_value=0.0, format="%.2f")
+            f_bs = c2.number_input("Fondo Inicial (Bs)", min_value=0.0, format="%.2f")
+            t_ref = st.number_input("Tasa de Cambio Apertura", value=60.0)
             
-            # Calculamos el monto_apertura total en USD para la columna estándar
-            total_apertura_usd = f_usd + (f_bs / tasa_ref) if tasa_ref > 0 else f_usd
-
-            if st.form_submit_button("✅ INICIAR TURNO DE TRABAJO", use_container_width=True):
+            total_ap_usd = f_usd + (f_bs / t_ref) if t_ref > 0 else f_usd
+            if st.form_submit_button("✅ INICIAR JORNADA", use_container_width=True):
                 data_ap = {
                     "fecha_apertura": datetime.now().isoformat(),
-                    "monto_apertura": total_apertura_usd,
+                    "monto_apertura": total_ap_usd,
                     "estado": "abierto",
-                    "total_ventas": 0,
-                    "total_costos": 0,
-                    "total_ganancias": 0 # Asegurando nombre exacto según misión
+                    "total_ventas": 0, "total_costos": 0, "total_ganancias": 0
                 }
-                try:
-                    db.table("cierres").insert(data_ap).execute()
-                    st.success(f"🚀 Turno abierto. Fondo total: ${total_apertura_usd:,.2f}")
-                    time.sleep(1); st.rerun()
-                except Exception as e:
-                    st.error(f"Error SQL: Verifique si la columna 'total_ganancias' existe. Detalle: {e}")
+                db.table("cierres").insert(data_ap).execute()
+                st.success("Turno iniciado correctamente."); time.sleep(1); st.rerun()
     else:
-        # LÓGICA DE TURNO ACTIVO
+        # Lógica de Arqueo en Tiempo Real
         id_cierre = turno_activo['id']
-        fecha_ap_iso = turno_activo['fecha_apertura']
-        st.warning(f"🔔 TURNO ABIERTO | Desde: {pd.to_datetime(fecha_ap_iso).strftime('%d/%m/%Y %H:%M:%S')}")
+        f_ap = turno_activo['fecha_apertura']
+        st.warning(f"🔔 TURNO ACTIVO | Inicio: {pd.to_datetime(f_ap).strftime('%d/%m/%Y %H:%M')}")
 
-        # 2. CONSULTA DE VENTAS DEL TURNO
+        # Diagrama de flujo del proceso de ventas a caja
+        
+
+        # Consulta consolidada de ventas desde la apertura
         try:
-            res_v = db.table("ventas").select("*").gte("fecha", fecha_ap_iso).execute()
+            res_v = db.table("ventas").select("*").gte("fecha", f_ap).execute()
             df_v = pd.DataFrame(res_v.data) if res_v.data else pd.DataFrame()
-        except:
-            df_v = pd.DataFrame()
+        except: df_v = pd.DataFrame()
 
         if not df_v.empty:
-            cols_n = ['total_usd', 'costo_venta', 'pago_efectivo', 'pago_punto', 'pago_movil', 'pago_zelle', 'pago_divisas', 'pago_otros']
-            for c in cols_n:
-                if c in df_v.columns: df_v[c] = pd.to_numeric(df_v[c], errors='coerce').fillna(0)
+            for col in ['total_usd', 'costo_venta', 'pago_efectivo', 'pago_punto', 'pago_movil', 'pago_zelle', 'pago_divisas']:
+                df_v[col] = pd.to_numeric(df_v[col], errors='coerce').fillna(0)
 
             t_ventas = df_v['total_usd'].sum()
             t_costos = df_v['costo_venta'].sum()
             t_ganancia = t_ventas - t_costos
-            
-            # Métricas
-            st.markdown("### 📈 Balance del Turno")
+
             m1, m2, m3 = st.columns(3)
             m1.metric("💰 Ventas Totales", f"$ {t_ventas:,.2f}")
-            m2.metric("📦 Costo Mercancía", f"$ {t_costos:,.2f}")
-            m3.metric("💹 Ganancia Bruta", f"$ {t_ganancia:,.2f}")
+            m2.metric("📦 Costo de Ventas", f"$ {t_costos:,.2f}")
+            m3.metric("💹 Ganancia Neta", f"$ {t_ganancia:,.2f}")
 
-            st.write("#### 💳 Desglose de Cobros")
-            p1, p2, p3, p4 = st.columns(4)
-            p1.info(f"**Efectivo $**\n\n$ {df_v['pago_divisas'].sum():,.2f}")
-            p2.info(f"**Efectivo Bs**\n\n$ {df_v['pago_efectivo'].sum():,.2f}")
-            p3.info(f"**Digital Bs**\n\n$ {(df_v['pago_punto'].sum() + df_v['pago_movil'].sum()):,.2f}")
-            p4.info(f"**Zelle/Otros**\n\n$ {(df_v['pago_zelle'].sum() + df_v['pago_otros'].sum()):,.2f}")
+            st.write("#### 💳 Desglose de Cobros en Turno")
+            p1, p2, p3 = st.columns(3)
+            p1.info(f"**Divisas:** ${df_v['pago_divisas'].sum():,.2f}")
+            p2.info(f"**Digital (Bs):** ${ (df_v['pago_punto'].sum() + df_v['pago_movil'].sum()):,.2f}")
+            p3.info(f"**Zelle:** ${df_v['pago_zelle'].sum():,.2f}")
         else:
-            st.info("Sin ventas en este turno."); t_ventas = t_costos = t_ganancia = 0
+            st.info("Sin transacciones registradas en este turno."); t_ventas = t_costos = t_ganancia = 0
 
-        st.markdown("---")
-        with st.expander("🏮 FINALIZAR TURNO"):
-            notas = st.text_area("Observaciones del arqueo")
-            if st.button("🔴 CERRAR CAJA DEFINITIVAMENTE", type="primary", use_container_width=True):
-                # 3. CIERRE CON ROBUSTEZ PGRST204
-                data_cl = {
-                    "fecha_cierre": datetime.now().isoformat(),
-                    "total_ventas": float(t_ventas),
-                    "total_costos": float(t_costos),
-                    "total_ganancias": float(t_ganancia),
-                    "estado": "cerrado"
-                }
-                try:
-                    db.table("cierres").update(data_cl).eq("id", id_cierre).execute()
-                    st.balloons(); st.success("Turno cerrado con éxito"); time.sleep(1.5); st.rerun()
-                except Exception as e:
-                    # Intento de rescate si el usuario tiene la columna en singular
-                    if "total_ganancias" in str(e):
-                        st.error("Error: La columna 'total_ganancias' (plural) no existe. Intente renombrarla en Supabase a plural.")
-                    else:
-                        st.error(f"Error al cerrar: {e}")
-
-
+        st.divider()
+        if st.button("🔴 CERRAR CAJA Y FINALIZAR TURNO", type="primary", use_container_width=True):
+            data_cl = {
+                "fecha_cierre": datetime.now().isoformat(),
+                "total_ventas": float(t_ventas),
+                "total_costos": float(t_costos),
+                "total_ganancias": float(t_ganancia),
+                "estado": "cerrado"
+            }
+            try:
+                db.table("cierres").update(data_cl).eq("id", id_cierre).execute()
+                st.balloons(); st.success("Turno finalizado y guardado."); time.sleep(1.5); st.rerun()
+            except Exception as e: st.error(f"Error al cerrar: {e}")
