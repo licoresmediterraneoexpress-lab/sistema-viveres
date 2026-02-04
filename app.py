@@ -56,7 +56,7 @@ if opcion == "📦 Inventario":
 
     if not df_inv.empty:
         # Estandarización de tipos de datos
-        numeric_cols = ['stock', 'costo', 'precio_detal', 'precio_mayor']
+        numeric_cols = ['stock', 'costo', 'precio_detal', 'precio_mayor', 'min_mayor']
         for col in numeric_cols:
             df_inv[col] = pd.to_numeric(df_inv[col], errors='coerce').fillna(0)
 
@@ -93,12 +93,13 @@ if opcion == "📦 Inventario":
             'stock': 'STOCK',
             'costo': 'PRECIO COSTO',
             'precio_detal': 'PRECIO VENTA',
-            'precio_mayor': 'PRECIO VENTA AL MAYOR'
+            'precio_mayor': 'PRECIO VENTA AL MAYOR',
+            'min_mayor': 'MIN. MAYOR'
         })
 
         # Mostrar tabla principal
         st.dataframe(
-            vista_tabla[['PRODUCTO', 'STOCK', 'PRECIO COSTO', 'PRECIO VENTA', 'PRECIO VENTA AL MAYOR']], 
+            vista_tabla[['PRODUCTO', 'STOCK', 'PRECIO COSTO', 'PRECIO VENTA', 'PRECIO VENTA AL MAYOR', 'MIN. MAYOR']], 
             use_container_width=True, 
             hide_index=True,
             height=400
@@ -114,10 +115,10 @@ if opcion == "📦 Inventario":
             st.divider()
             
             with st.form("form_edicion"):
-                col_a, col_b = st.columns(2)
-                # Forzamos los valores a tipos nativos de Python para evitar conflictos con Supabase
+                col_a, col_b, col_min = st.columns([1.5, 1.5, 1])
                 new_stock = col_a.number_input("Cantidad en Stock", value=int(item_data['stock']), step=1)
                 new_costo = col_b.number_input("Precio de Costo ($)", value=float(item_data['costo']), format="%.2f")
+                new_min_mayor = col_min.number_input("Mín. Mayor", value=int(item_data['min_mayor']), step=1)
                 
                 col_c, col_d = st.columns(2)
                 new_detal = col_c.number_input("Precio Venta Detal ($)", value=float(item_data['precio_detal']), format="%.2f")
@@ -132,7 +133,8 @@ if opcion == "📦 Inventario":
                         "stock": int(new_stock),
                         "costo": float(new_costo),
                         "precio_detal": float(new_detal),
-                        "precio_mayor": float(new_mayor)
+                        "precio_mayor": float(new_mayor),
+                        "min_mayor": int(new_min_mayor)
                     }
                     
                     try:
@@ -196,9 +198,10 @@ if opcion == "📦 Inventario":
     st.markdown("<br>", unsafe_allow_html=True)
     with st.expander("➕ REGISTRAR NUEVO PRODUCTO EN INVENTARIO"):
         with st.form("nuevo_registro", clear_on_submit=True):
-            f1, f2 = st.columns([2, 1])
+            f1, f2, f_min = st.columns([2, 1, 1])
             n_nombre = f1.text_input("Nombre del Producto").upper().strip()
             n_stock = f2.number_input("Stock Inicial", min_value=0, step=1)
+            n_min_mayor = f_min.number_input("Mín. para Mayor", min_value=1, value=1, step=1)
             
             f3, f4, f5 = st.columns(3)
             n_costo = f3.number_input("Costo Unitario ($)", min_value=0.0, format="%.2f")
@@ -209,8 +212,12 @@ if opcion == "📦 Inventario":
                 if n_nombre:
                     try:
                         nuevo_p = {
-                            "nombre": n_nombre, "stock": n_stock, "costo": n_costo,
-                            "precio_detal": n_detal, "precio_mayor": n_mayor, "min_mayor": 12
+                            "nombre": n_nombre, 
+                            "stock": n_stock, 
+                            "costo": n_costo,
+                            "precio_detal": n_detal, 
+                            "precio_mayor": n_mayor, 
+                            "min_mayor": n_min_mayor
                         }
                         db.table("inventario").insert(nuevo_p).execute()
                         st.success(f"¡{n_nombre} agregado al sistema!")
@@ -222,7 +229,6 @@ if opcion == "📦 Inventario":
                         st.error(f"Error al registrar: {e}")
                 else:
                     st.warning("El nombre del producto es obligatorio.")
-
 elif opcion == "🛒 Venta Rápida":
     # 1. Inicialización de Estados Críticos
     if 'tasa_dia' not in st.session_state:
@@ -565,6 +571,7 @@ elif opcion == "📊 Cierre de Caja":
             db.table("gastos").update({"estado": "cerrado"}).eq("descripcion", ultimo_registro['descripcion']).execute()
             st.success("Turno cerrado.")
             st.rerun()
+
 
 
 
