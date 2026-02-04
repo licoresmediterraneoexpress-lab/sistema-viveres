@@ -43,143 +43,164 @@ with st.sidebar:
 # --- 3. MÓDULO INVENTARIO REFACTORIZADO ---
 if opcion == "📦 Inventario":
     st.header("📦 Centro de Control de Inventario")
+    st.markdown("---")
 
-    # 1. CARGA DE DATOS
-    res = db.table("inventario").select("*").execute()
-    df_inv = pd.DataFrame(res.data) if res.data else pd.DataFrame()
+    # 1. CARGA Y PREPARACIÓN DE DATOS
+    try:
+        res = db.table("inventario").select("*").execute()
+        df_inv = pd.DataFrame(res.data) if res.data else pd.DataFrame()
+    except Exception as e:
+        st.error(f"Error de conexión con la base de datos: {e}")
+        df_inv = pd.DataFrame()
 
     if not df_inv.empty:
-        # Limpieza y Formateo de tipos
-        for col in ['stock', 'costo', 'precio_detal', 'precio_mayor']:
+        # Estandarización de tipos de datos
+        numeric_cols = ['stock', 'costo', 'precio_detal', 'precio_mayor']
+        for col in numeric_cols:
             df_inv[col] = pd.to_numeric(df_inv[col], errors='coerce').fillna(0)
 
-        # Cálculos de métricas
+        # --- SECCIÓN DE MÉTRICAS RÁPIDAS ---
         df_inv['valor_costo'] = df_inv['stock'] * df_inv['costo']
         df_inv['valor_venta'] = df_inv['stock'] * df_inv['precio_detal']
         
-        # --- FILA DE MÉTRICAS ---
         m1, m2, m3 = st.columns(3)
         m1.metric("🛒 Inversión Total", f"${df_inv['valor_costo'].sum():,.2f}")
         m2.metric("💰 Valor de Venta", f"${df_inv['valor_venta'].sum():,.2f}")
         m3.metric("📈 Ganancia Est.", f"${(df_inv['valor_venta'].sum() - df_inv['valor_costo'].sum()):,.2f}")
 
-        st.divider()
+        st.markdown("### 📋 Listado de Existencias")
 
-        # --- BUSCADOR INTELIGENTE ---
-        busqueda = st.text_input("🔍 Filtro de búsqueda rápida", placeholder="Escriba el nombre del producto...")
+        # --- BUSCADOR INTELIGENTE (FILTRO EN TIEMPO REAL) ---
+        busqueda = st.text_input("🔍 Buscar producto por nombre...", placeholder="Ej: Harina Pan, Refresco 2L...")
 
-        # Filtrado en tiempo real
-        df_filtrado = df_inv[df_inv['nombre'].str.contains(busqueda, case=False)] if busqueda else df_inv
+        # Filtrado dinámico
+        if busqueda:
+            df_filtrado = df_inv[df_inv['nombre'].str.contains(busqueda, case=False, na=False)]
+        else:
+            df_filtrado = df_inv
 
-        # --- TABLA PROFESIONAL (Treeview Style) ---
-        # Renombramos columnas para la vista del usuario
+        # --- PREPARACIÓN DE TABLA VISUAL (TREEVIEW STYLE) ---
+        # Creamos una copia para visualización formateada
         vista_tabla = df_filtrado.copy()
+        
+        # Formateo de divisas
+        for col in ['costo', 'precio_detal', 'precio_mayor']:
+            vista_tabla[col] = vista_tabla[col].apply(lambda x: f"$ {x:,.2f}")
+
+        # Renombrado de columnas según requerimiento
         vista_tabla = vista_tabla.rename(columns={
             'nombre': 'PRODUCTO',
             'stock': 'STOCK',
             'costo': 'PRECIO COSTO',
             'precio_detal': 'PRECIO VENTA',
-            'precio_mayor': 'PRECIO MAYOR'
+            'precio_mayor': 'PRECIO VENTA AL MAYOR'
         })
 
-        # Aplicar formato de divisa para la visualización
-        cols_moneda = ['PRECIO COSTO', 'PRECIO VENTA', 'PRECIO MAYOR']
-        for col in cols_moneda:
-            vista_tabla[col] = vista_tabla[col].apply(lambda x: f"${x:,.2f}")
-
         # Mostrar tabla principal
-        st.subheader("📋 Existencias en Almacén")
         st.dataframe(
-            vista_tabla[['PRODUCTO', 'STOCK', 'PRECIO COSTO', 'PRECIO VENTA', 'PRECIO MAYOR']], 
+            vista_tabla[['PRODUCTO', 'STOCK', 'PRECIO COSTO', 'PRECIO VENTA', 'PRECIO VENTA AL MAYOR']], 
             use_container_width=True, 
-            hide_index=True
+            hide_index=True,
+            height=400
         )
 
-        # --- LÓGICA DE MODIFICACIÓN (POP-UP) ---
-        
-        @st.dialog("✏️ Editar Producto")
-        def editar_producto_dialog(producto_data):
-            st.write(f"Modificando: **{producto_data['nombre']}**")
+        # --- LÓGICA DE MODIFICACIÓN (POP-UP / DIALOG) ---
+        @st.dialog("✏️ Editar Información del Producto")
+        def editar_producto_dialog(item):
+            st.write(f"Editando: **{item['nombre']}**")
+            st.divider()
             
-            with st.form("edit_form"):
-                new_stock = st.number_input("Cantidad (Stock)", value=int(producto_data['stock']), step=1)
-                new_costo = st.number_input("Precio de Costo ($)", value=float(producto_data['costo']), format="%.2f")
+            with st.form("form_edicion"):
+                col_a, col_b = st.columns(2)
+                new_stock = col_a.number_input("Cantidad en Stock", value=int(item['stock']), step=1)
+                new_costo = col_b.number_input("Precio de Costo ($)", value=float(item['costo']), format="%.2f")
                 
-                c1, c2 = st.columns(2)
-                new_detal = c1.number_input("Venta Detal ($)", value=float(producto_data['precio_detal']), format="%.2f")
-                new_mayor = c2.number_input("Venta Mayor ($)", value=float(producto_data['precio_mayor']), format="%.2f")
+                col_c, col_d = st.columns(2)
+                new_detal = col_c.number_input("Precio Venta Detal ($)", value=float(item['precio_detal']), format="%.2f")
+                new_mayor = col_d.number_input("Precio Venta Mayor ($)", value=float(item['precio_mayor']), format="%.2f")
                 
-                submitted = st.form_submit_button("💾 Guardar Cambios")
-                
-                if submitted:
-                    update_data = {
+                st.markdown("<br>", unsafe_allow_html=True)
+                btn_save = st.form_submit_button("💾 GUARDAR CAMBIOS", use_container_width=True)
+
+                if btn_save:
+                    actualizacion = {
                         "stock": int(new_stock),
                         "costo": float(new_costo),
                         "precio_detal": float(new_detal),
                         "precio_mayor": float(new_mayor)
                     }
                     try:
-                        db.table("inventario").update(update_data).eq("id", producto_data['id']).execute()
-                        st.success("¡Actualizado con éxito!")
+                        db.table("inventario").update(actualizacion).eq("id", item['id']).execute()
+                        st.success("✅ Producto actualizado correctamente")
+                        time.sleep(1.2)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error al guardar: {e}")
+
+        # Panel de Acciones (Bajo la tabla)
+        st.markdown("---")
+        c1, c2 = st.columns([2, 1])
+        
+        with c1:
+            st.subheader("🛠️ Acciones de Fila")
+            # Selector para elegir qué editar basado en la búsqueda actual
+            seleccion = st.selectbox(
+                "Selecciona un producto de la lista para modificar:",
+                options=df_filtrado['nombre'].tolist(),
+                index=None,
+                placeholder="Selecciona un producto..."
+            )
+            
+            if seleccion:
+                fila_datos = df_filtrado[df_filtrado['nombre'] == seleccion].iloc[0]
+                if st.button(f"Modificar {seleccion}", icon="✏️"):
+                    editar_producto_dialog(fila_datos)
+
+        with c2:
+            st.subheader("🗑️ Zona de Peligro")
+            with st.expander("Eliminar Producto"):
+                prod_del = st.selectbox("Eliminar:", options=["---"] + df_inv['nombre'].tolist(), key="del_box")
+                password = st.text_input("Clave de Seguridad", type="password")
+                if st.button("Confirmar Eliminación", type="primary"):
+                    if password == CLAVE_ADMIN and prod_del != "---":
+                        db.table("inventario").delete().eq("nombre", prod_del).execute()
+                        st.warning(f"Producto {prod_del} eliminado.")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error("Clave incorrecta o producto no seleccionado")
+
+    else:
+        st.info("💡 No hay productos registrados. Comienza agregando uno abajo.")
+
+    # --- REGISTRO DE NUEVOS PRODUCTOS ---
+    st.markdown("<br>", unsafe_allow_html=True)
+    with st.expander("➕ REGISTRAR NUEVO PRODUCTO EN INVENTARIO"):
+        with st.form("nuevo_registro", clear_on_submit=True):
+            f1, f2 = st.columns([2, 1])
+            n_nombre = f1.text_input("Nombre del Producto").upper().strip()
+            n_stock = f2.number_input("Stock Inicial", min_value=0, step=1)
+            
+            f3, f4, f5 = st.columns(3)
+            n_costo = f3.number_input("Costo Unitario ($)", min_value=0.0, format="%.2f")
+            n_detal = f4.number_input("Precio Detal ($)", min_value=0.0, format="%.2f")
+            n_mayor = f5.number_input("Precio Mayor ($)", min_value=0.0, format="%.2f")
+            
+            if st.form_submit_button("🚀 Registrar Producto"):
+                if n_nombre:
+                    try:
+                        nuevo_p = {
+                            "nombre": n_nombre, "stock": n_stock, "costo": n_costo,
+                            "precio_detal": n_detal, "precio_mayor": n_mayor, "min_mayor": 12
+                        }
+                        db.table("inventario").insert(nuevo_p).execute()
+                        st.success(f"¡{n_nombre} agregado al sistema!")
                         time.sleep(1)
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Error al actualizar: {e}")
-
-        # Botón de acción para abrir el pop-up
-        st.write("### Acciones")
-        col_sel, col_del = st.columns([2, 1])
-        
-        with col_sel:
-            prod_seleccionado = st.selectbox("Seleccione un producto para editar:", 
-                                            options=df_filtrado['nombre'].tolist(),
-                                            index=None,
-                                            placeholder="Busque y elija un producto...")
-            
-            if prod_seleccionado:
-                # Extraer datos de la fila seleccionada
-                datos_fila = df_inv[df_inv['nombre'] == prod_seleccionado].iloc[0]
-                if st.button(f"🛠️ Editar {prod_seleccionado}"):
-                    editar_producto_dialog(datos_fila)
-
-        with col_del:
-            # Sección de eliminación simplificada
-            with st.expander("🗑️ Eliminar"):
-                prod_borrar = st.selectbox("Eliminar:", options=["---"] + df_inv['nombre'].tolist())
-                clave = st.text_input("Seguridad", type="password")
-                if st.button("Confirmar Borrado"):
-                    if clave == CLAVE_ADMIN and prod_borrar != "---":
-                        db.table("inventario").delete().eq("nombre", prod_borrar).execute()
-                        st.success("Eliminado.")
-                        time.sleep(1)
-                        st.rerun()
-    else:
-        st.info("Aún no hay productos en el inventario.")
-
-    # --- REGISTRO DE NUEVOS PRODUCTOS (FUERA DE LA TABLA) ---
-    st.divider()
-    with st.expander("➕ REGISTRAR NUEVO PRODUCTO"):
-        with st.form("registro_nuevo"):
-            nombre_n = st.text_input("Nombre").upper().strip()
-            c1, c2, c3 = st.columns(3)
-            stock_n = c1.number_input("Stock Inicial", min_value=0)
-            costo_n = c2.number_input("Costo ($)", format="%.2f")
-            min_m_n = c3.number_input("Mín. Mayorista", value=12)
-            
-            c4, c5 = st.columns(2)
-            detal_n = c4.number_input("P. Detal ($)", format="%.2f")
-            mayor_n = c5.number_input("P. Mayor ($)", format="%.2f")
-            
-            if st.form_submit_button("Registrar en Sistema"):
-                if nombre_n:
-                    nuevo_p = {
-                        "nombre": nombre_n, "stock": stock_n, "costo": costo_n,
-                        "precio_detal": detal_n, "precio_mayor": mayor_n, "min_mayor": min_m_n
-                    }
-                    db.table("inventario").insert(nuevo_p).execute()
-                    st.success("Registrado correctamente.")
-                    time.sleep(1)
-                    st.rerun()
+                        st.error(f"Error al registrar: {e}")
+                else:
+                    st.warning("El nombre del producto es obligatorio.")
 
 elif opcion == "🛒 Venta Rápida":
     # 1. Inicialización de Estados Críticos
@@ -523,6 +544,7 @@ elif opcion == "📊 Cierre de Caja":
             db.table("gastos").update({"estado": "cerrado"}).eq("descripcion", ultimo_registro['descripcion']).execute()
             st.success("Turno cerrado.")
             st.rerun()
+
 
 
 
