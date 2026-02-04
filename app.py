@@ -626,107 +626,128 @@ if opcion == "📦 Inventario":
     else:
         st.info("💡 No hay productos.")
 
-# --- 6. MÓDULO DE CAJA (GESTIÓN DE TURNOS ESTRATÉGICA) ---
+# --- 6. MÓDULO DE CAJA (RECONSTRUCCIÓN PROFESIONAL) ---
 elif opcion == "📊 Cierre de Caja":
     st.header("📊 Gestión de Turnos y Arqueo")
     st.markdown("---")
 
-    # 1. IDENTIFICAR ESTADO DEL TURNO
+    # 1. IDENTIFICAR ESTADO DEL TURNO (Tabla: cierres)
     try:
-        res_ultimo = db.table("gastos").select("*").ilike("descripcion", "APERTURA_%").order("fecha", desc=True).limit(1).execute()
-        ultimo_registro = res_ultimo.data[0] if res_ultimo.data else None
+        # Buscamos el registro activo en la tabla 'cierres'
+        res_ultimo = db.table("cierres").select("*").eq("estado", "abierto").order("fecha_apertura", desc=True).limit(1).execute()
+        turno_activo = res_ultimo.data[0] if res_ultimo.data else None
     except Exception as e:
-        st.error(f"Error al conectar con turnos: {e}")
-        ultimo_registro = None
+        st.error(f"Error al conectar con la tabla cierres: {e}")
+        turno_activo = None
     
-    caja_abierta_actual = ultimo_registro is not None and ultimo_registro.get('estado') == 'abierto'
+    caja_abierta_actual = turno_activo is not None
 
     if not caja_abierta_actual:
         # --- INTERFAZ DE APERTURA ---
         st.subheader("🔓 Apertura de Nuevo Turno")
-        st.info("No se detecta ningún turno activo. Ingrese los valores iniciales para comenzar.")
+        st.info("No hay turnos abiertos. Inicie un nuevo turno para registrar ventas.")
         
         with st.form("form_apertura"):
-            col1, col2, col3 = st.columns(3)
-            tasa_ap = col1.number_input("Tasa del Día (BCV)", value=60.0, format="%.2f")
-            f_bs = col2.number_input("Fondo Inicial Bs", 0.0, step=10.0)
-            f_usd = col3.number_input("Fondo Inicial $", 0.0, step=1.0)
+            col1, col2 = st.columns(2)
+            monto_ap = col1.number_input("Monto de Apertura en Caja ($)", min_value=0.0, step=1.0, format="%.2f")
+            tasa_dia = col2.number_input("Tasa de Cambio Referencial", value=60.0, format="%.2f")
             
-            if st.form_submit_button("✅ INICIAR TURNO DE TRABAJO", use_container_width=True):
-                id_turno = datetime.now().strftime("%Y%m%d_%H%M%S")
+            if st.form_submit_button("✅ ABRIR CAJA Y EMPEZAR TURNO", use_container_width=True):
                 data_apertura = {
-                    "descripcion": f"APERTURA_{id_turno}",
-                    "monto_usd": f_usd,
-                    "monto_bs_extra": f_bs,
-                    "fecha": datetime.now().isoformat(),
+                    "fecha_apertura": datetime.now().isoformat(),
+                    "monto_apertura": monto_ap,
                     "estado": "abierto",
-                    "tasa_referencia": tasa_ap
+                    "total_ventas": 0,
+                    "total_costos": 0,
+                    "total_ganancias": 0
                 }
-                db.table("gastos").insert(data_apertura).execute()
-                st.success(f"🚀 Turno {id_turno} iniciado.")
-                time.sleep(1)
-                st.rerun()
+                try:
+                    db.table("cierres").insert(data_apertura).execute()
+                    st.success("🚀 Turno abierto exitosamente.")
+                    time.sleep(1)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error al crear apertura: {e}")
     else:
-        # --- LÓGICA DE TURNO ABIERTO ---
-        fecha_apertura = ultimo_registro['fecha']
-        st.warning(f"🔔 TURNO ACTIVO DESDE: {pd.to_datetime(fecha_apertura).strftime('%d/%m/%Y %H:%M:%S')}")
+        # --- LÓGICA DE TURNO ABIERTO (DATA ANALYTICS) ---
+        id_cierre = turno_activo['id']
+        fecha_apertura_iso = turno_activo['fecha_apertura']
+        
+        st.warning(f"🔔 TURNO ACTIVO | Inicio: {pd.to_datetime(fecha_apertura_iso).strftime('%d/%m/%Y %H:%M:%S')}")
 
-        # 2. CÁLCULO DE VENTAS DESDE LA APERTURA
-        res_ventas = db.table("ventas").select("*").gte("created_at", fecha_apertura).execute()
-        df_ventas = pd.DataFrame(res_ventas.data) if res_ventas.data else pd.DataFrame()
+        # 2. CONSULTA DE VENTAS (Usando nombres exactos de columnas)
+        try:
+            res_ventas = db.table("ventas").select("*").gte("fecha", fecha_apertura_iso).execute()
+            df_ventas = pd.DataFrame(res_ventas.data) if res_ventas.data else pd.DataFrame()
+        except Exception as e:
+            st.error(f"Error al cargar ventas: {e}")
+            df_ventas = pd.DataFrame()
 
         if not df_ventas.empty:
-            df_ventas['total_usd'] = pd.to_numeric(df_ventas['total_usd'])
-            df_ventas['costo_total'] = pd.to_numeric(df_ventas.get('costo_total', 0))
+            # Asegurar tipos numéricos para cálculos
+            cols_num = ['total_usd', 'costo_venta', 'pago_efectivo', 'pago_punto', 
+                        'pago_movil', 'pago_zelle', 'pago_divisas', 'pago_otros']
+            for col in cols_num:
+                if col in df_ventas.columns:
+                    df_ventas[col] = pd.to_numeric(df_ventas[col], errors='coerce').fillna(0)
 
-            metodos = df_ventas.groupby('metodo_pago')['total_usd'].sum()
-            total_bruto = df_ventas['total_usd'].sum()
-            total_costo = df_ventas['costo_total'].sum()
-            ganancia = total_bruto - total_costo
+            # --- CÁLCULOS FINANCIEROS SOLICITADOS ---
+            total_ventas = df_ventas['total_usd'].sum()
+            total_costos = df_ventas['costo_venta'].sum()
+            total_ganancia_bruta = total_ventas - total_costos
+            
+            # Sumas por métodos de pago
+            s_efectivo = df_ventas['pago_efectivo'].sum()
+            s_punto = df_ventas['pago_punto'].sum()
+            s_movil = df_ventas['pago_movil'].sum()
+            s_zelle = df_ventas['pago_zelle'].sum()
+            s_divisas = df_ventas['pago_divisas'].sum()
+            s_otros = df_ventas['pago_otros'].sum()
 
-            # Panel Resumen
-            st.markdown("### 📈 Resumen Acumulado")
+            # Panel Resumen Visual
+            st.markdown("### 📈 Resumen del Turno Actual")
             m1, m2, m3 = st.columns(3)
-            m1.metric("💰 Ventas Totales", f"$ {total_bruto:,.2f}")
-            m2.metric("📦 Costo Inv.", f"$ {total_costo:,.2f}")
-            m3.metric("💹 Ganancia Est.", f"$ {ganancia:,.2f}")
+            m1.metric("💰 Ventas Totales", f"$ {total_ventas:,.2f}")
+            m2.metric("📦 Costo Inventario", f"$ {total_costos:,.2f}")
+            m3.metric("💹 Ganancia Bruta", f"$ {total_ganancia_bruta:,.2f}")
 
-            st.write("#### Desglose por Pago")
-            cols_metodos = st.columns(len(metodos))
-            for i, (metodo, monto) in enumerate(metodos.items()):
-                cols_metodos[i].info(f"**{metodo}**\n\n$ {monto:,.2f}")
+            st.write("#### 💳 Desglose por Métodos de Pago")
+            p1, p2, p3, p4, p5 = st.columns(5)
+            p1.info(f"**Efectivo**\n\n$ {s_efectivo:,.2f}")
+            p2.info(f"**Divisas**\n\n$ {s_divisas:,.2f}")
+            p3.info(f"**Punto/Tarjeta**\n\n$ {s_punto:,.2f}")
+            p4.info(f"**Pago Móvil**\n\n$ {s_movil:,.2f}")
+            p5.info(f"**Zelle/Otros**\n\n$ {(s_zelle + s_otros):,.2f}")
+
         else:
-            st.info("Sin ventas registradas en este turno.")
-            total_bruto = total_costo = ganancia = 0
+            st.info("Aún no se han registrado ventas en este turno.")
+            total_ventas = total_costos = total_ganancia_bruta = 0
 
         st.markdown("---")
         
         # --- INTERFAZ DE CIERRE ---
-        st.subheader("🏮 Cierre de Arqueo")
-        col_c1, col_c2 = st.columns(2)
-        efectivo_real = col_c1.number_input("Total Efectivo Físico ($)", min_value=0.0)
-        observaciones = col_c2.text_area("Notas", placeholder="Ej: Sin novedades...")
-
-        if st.button("🔴 FINALIZAR TURNO", type="primary", use_container_width=True):
-            id_cierre = ultimo_registro['descripcion'].replace("APERTURA", "CIERRE")
-            resumen_cierre = {
-                "descripcion": id_cierre,
-                "monto_usd": total_bruto,
-                "costo_inv": total_costo,
-                "ganancia_neta": ganancia,
-                "fecha": datetime.now().isoformat(),
-                "estado": "cerrado",
-                "metodos_pago": metodos.to_json() if not df_ventas.empty else "{}",
-                "efectivo_fisico": efectivo_real,
-                "notas": observaciones
-            }
+        st.subheader("🏮 Proceso de Cierre de Caja")
+        
+        with st.expander("Confirmar Datos de Arqueo"):
+            obs = st.text_area("Observaciones del Cierre", placeholder="Ej: Diferencia de $1 por cambio...")
             
-            try:
-                db.table("gastos").update({"estado": "cerrado"}).eq("descripcion", ultimo_registro['descripcion']).execute()
-                db.table("gastos").insert(resumen_cierre).execute()
-                st.balloons()
-                st.success("✅ Turno Cerrado Correctamente")
-                time.sleep(2)
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error: {e}")
+            if st.button("🔴 CERRAR TURNO Y GUARDAR TOTALES", type="primary", use_container_width=True):
+                # 3. ACTUALIZACIÓN DEL REGISTRO DE CIERRES
+                data_cierre = {
+                    "fecha_cierre": datetime.now().isoformat(),
+                    "total_ventas": float(total_ventas),
+                    "total_costos": float(total_costos),
+                    "total_ganancias": float(total_ganancia_bruta),
+                    "estado": "cerrado"
+                }
+                
+                try:
+                    # Ejecutar actualización en Supabase
+                    db.table("cierres").update(data_cierre).eq("id", id_cierre).execute()
+                    
+                    st.balloons()
+                    st.success("✅ Caja cerrada y totales guardados correctamente.")
+                    time.sleep(1.5)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error crítico al cerrar: {e}")
