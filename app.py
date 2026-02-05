@@ -159,6 +159,11 @@ elif opcion == "🛒 Venta Rápida":
     if 'venta_finalizada' not in st.session_state: st.session_state.venta_finalizada = False
     if 'ultimo_ticket' not in st.session_state: st.session_state.ultimo_ticket = ""
     
+    # Inicialización de Tasa Dinámica (Persistente en sesión)
+    if 'tasa_pos' not in st.session_state:
+        # Intenta tomar la tasa del día global, sino usa una base de 1.0
+        st.session_state.tasa_pos = float(st.session_state.get('tasa_dia', 1.0))
+
     # Obtener Turno Activo (id_cierre) con validación estricta
     try:
         res_caja = db.table("cierres").select("*").eq("estado", "abierto").order("fecha_apertura", desc=True).limit(1).execute()
@@ -168,11 +173,21 @@ elif opcion == "🛒 Venta Rápida":
             st.stop()
         turno_actual = res_caja.data[0]
         id_turno = turno_actual['id']
-        tasa_v = float(st.session_state.tasa_dia)
     except Exception as e:
         st.error(f"Error de Conexión DB: {e}"); st.stop()
 
-    st.markdown(f"## 🛒 Terminal de Ventas <span style='font-size:16px; color:gray;'>| Turno #{id_turno} | Tasa: {tasa_v} Bs</span>", unsafe_allow_html=True)
+    # --- CONTROLADOR DINÁMICO DE TASA ---
+    t_col1, t_col2 = st.columns([2, 1])
+    with t_col1:
+        st.markdown(f"## 🛒 Terminal de Ventas <span style='font-size:16px; color:gray;'>| Turno #{id_turno}</span>", unsafe_allow_html=True)
+    with t_col2:
+        # Este campo actualiza instantáneamente todos los cálculos que usen tasa_v
+        st.session_state.tasa_pos = st.number_input("💱 Tasa del Día (Bs/$)", 
+                                                   value=float(st.session_state.tasa_pos), 
+                                                   step=0.01, 
+                                                   help="Modifique para recalcular montos en Bs automáticamente.")
+    
+    tasa_v = float(st.session_state.tasa_pos)
 
     # B. Pantalla de Éxito (Post-Venta)
     if st.session_state.venta_finalizada:
@@ -226,102 +241,6 @@ elif opcion == "🛒 Venta Rápida":
             st.info("Agregue productos para comenzar.")
         else:
             total_usd = 0.0
-            idx_remove = -1
-            
-            for i, item in enumerate(st.session_state.car):
-                # Aplicar precio mayorista si aplica
-                item['u'] = float(item['p_mayor'] if item['cant'] >= item['min_m'] else item['p_detal'])
-                subtotal_item = float(item['u'] * item['cant'])
-                total_usd += subtotal_item
-                
-                with st.container(border=True):
-                    r1, r2 = st.columns([4, 1])
-                    r1.markdown(f"**{item['nombre']}** (${item['u']:.2f} c/u)")
-                    if r2.button("🗑️", key=f"del_{i}"): idx_remove = i
-                    
-                    # ENTRADA NUMÉRICA DIRECTA
-                    item['cant'] = st.number_input("Cant:", min_value=1.0, value=float(item['cant']), step=1.0, key=f"qty_{i}")
-
-            if idx_remove > -1:
-                st.session_state.car.pop(idx_remove)
-                st.rerun()
-
-            st.divider()
-            
-            # --- D. LÓGICA DE COBRO Y REDONDEO ---
-            sugerido_bs = float(total_usd * tasa_v)
-            st.markdown(f"### Total Sugerido: `{sugerido_bs:,.2f} Bs` / `{total_usd:,.2f} $`")
-            
-            monto_ajustado_bs = st.number_input("💵 Total a Cobrar en Bs (Ajustado)", value=float(sugerido_bs), step=0.1)
-            
-            with st.expander("💳 REGISTRO DE PAGOS MIXTOS", expanded=True):
-                pc1, pc2 = st.columns(2)
-                p_ef_bs = pc1.number_input("Efectivo Bs", 0.0, step=0.01)
-                p_pm_bs = pc1.number_input("Pago Móvil Bs", 0.0, step=0.01)
-                p_pu_bs = pc1.number_input("Punto Venta Bs", 0.0, step=0.01)
-                
-                p_di_usd = pc2.number_input("Divisas $", 0.0, step=0.01)
-                p_ze_usd = pc2.number_input("Zelle $", 0.0, step=0.01)
-                p_ot_usd = pc2.number_input("Otros $", 0.0, step=0.01)
-
-            # Cálculo de Vuelto (Protección contra NameError al estar dentro del if car)
-            total_pagado_bs = float(p_ef_bs + p_pm_bs + p_pu_bs + ((p_di_usd + p_ze_usd + p_ot_usd) * tasa_v))
-            vuelto_bs = float(total_pagado_bs - monto_ajustado_bs)
-            
-            if vuelto_bs >= 0:
-                st.metric("Vuelto a entregar (Bs)", f"{vuelto_bs:,.2f} Bs")
-            else:
-                st.metric("Faltante (Bs)", f"{abs(vuelto_bs):,.2f} Bs", delta_color="inverse")
-
-            # --- E. PROCESAMIENTO CORREGIDO (DENTRO DEL CONDICIONAL DEL CARRITO) ---
-            if st.button("🚀 FINALIZAR VENTA", type="primary", use_container_width=True):
-                if vuelto_bs < -0.05: # Margen pequeño por redondeo float
-                    st.error("El pago está incompleto.")
-                else:
-                    try:
-                        ahora = datetime.now()
-                        id_tx = f"TX-{ahora.strftime('%y%m%d%H%M%S')}"
-                        
-                        for x in st.session_state.car:
-                            # 1. Insertar en ventas forzando tipos para Supabase
-                            db.table("ventas").insert({
-                                "id_transaccion": str(id_tx), 
-                                "id_cierre": int(id_turno),
-                                "producto": str(x['nombre']), 
-                                "cantidad": int(x['cant']),  
-                                "total_usd": float(x['u'] * x['cant']), 
-                                "tasa_cambio": float(tasa_v),
-                                "pago_efectivo": float(p_ef_bs), 
-                                "pago_punto": float(p_pu_bs),
-                                "pago_movil": float(p_pm_bs), 
-                                "pago_zelle": float(p_ze_usd),
-                                "pago_otros": float(p_ot_usd), 
-                                "pago_divisas": float(p_di_usd),
-                                "costo_venta": float(x['costo'] * x['cant']), 
-                                "monto_real_vef": float(monto_ajustado_bs),
-                                "fecha": ahora.isoformat()
-                            }).execute()
-                            
-                            # 2. Restar stock
-                            inv_res = db.table("inventario").select("stock").eq("id", x['id']).execute()
-                            if inv_res.data:
-                                current_stock = int(inv_res.data[0]['stock'])
-                                db.table("inventario").update({"stock": current_stock - int(x['cant'])}).eq("id", x['id']).execute()
-
-                        # Generar ticket
-                        st.session_state.ultimo_ticket = f"""
-                        <div style='background:white; color:black; padding:15px; border:1px solid #ddd; font-family:monospace;'>
-                            <h4 style='text-align:center;'>MEDITERRANEO EXPRESS</h4>
-                            <p>ID: {id_tx}<br>Fecha: {ahora.strftime('%d/%m/%Y %H:%M')}</p><hr>
-                            <p><b>Total Bs: {float(monto_ajustado_bs):,.2f}</b><br>Tasa: {tasa_v}</p>
-                            <p>Pagado: {total_pagado_bs:,.2f} Bs<br>Vuelto: {max(0, vuelto_bs):,.2f} Bs</p>
-                        </div>
-                        """
-                        st.session_state.venta_finalizada = True
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error procesando venta: {e}")
-
     # --- F. HISTORIAL DE VENTAS (TIPO EXCEL) ---
     st.divider()
     st.subheader("📊 Historial del Turno Actual")
@@ -505,6 +424,7 @@ elif opcion == "📊 Cierre de Caja":
             if st.button("Cerrar Turno (Sin Ventas)"):
                 db.table("cierres").update({"estado": "cerrado", "fecha_cierre": datetime.now().isoformat()}).eq("id", id_cierre).execute()
                 st.rerun()
+
 
 
 
