@@ -323,25 +323,66 @@ if st.button("🚀 FINALIZAR VENTA", type="primary", use_container_width=True):
             st.rerun()
         except Exception as e:
             st.error(f"Error procesando venta: {e}")
-
-   # --- F. HISTORIAL CORREGIDO ---
-# ... dentro del loop de anulación ...
-if c6.button("🚫 Anular", key=f"anular_{v['id']}"):
+# --- F. HISTORIAL DE VENTAS (TIPO EXCEL) ---
+    st.divider()
+    st.subheader("📊 Historial del Turno Actual")
+    
     try:
-        # 1. Obtener producto por NOMBRE (o ID si lo tienes) y sumar stock
-        item_inv = db.table("inventario").select("stock", "id").eq("nombre", v['producto']).execute()
-        if item_inv.data:
-            # Aseguramos que ambos sean enteros para evitar el error 22P02
-            nuevo_stock = int(item_inv.data[0]['stock']) + int(v['cantidad'])
-            db.table("inventario").update({"stock": nuevo_stock}).eq("id", item_inv.data[0]['id']).execute()
+        # Consultamos las ventas del turno activo
+        res_h = db.table("ventas").select("*").eq("id_cierre", id_turno).order("fecha", desc=True).execute()
         
-        # 2. Eliminar registro de venta
-        db.table("ventas").delete().eq("id", v['id']).execute()
-        st.toast(f"Venta anulada. Stock recuperado (+{v['cantidad']})")
-        time.sleep(1)
-        st.rerun()
+        if res_h.data:
+            # Convertimos a DataFrame para manejo tipo Excel
+            df_h = pd.DataFrame(res_h.data)
+            
+            # Formatear la hora para que sea legible
+            df_h['Hora'] = pd.to_datetime(df_h['fecha']).dt.strftime('%H:%M:%S')
+            
+            # Seleccionamos y renombramos columnas para el usuario
+            df_mostrar = df_h[['fecha', 'Hora', 'producto', 'cantidad', 'total_usd', 'monto_real_vef']].copy()
+            df_mostrar.columns = ['Fecha', 'Hora', 'Producto', 'Cant', 'Monto $', 'Cobrado Bs']
+            
+            # 1. Mostrar la tabla estilo Excel
+            st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
+
+            # 2. SECCIÓN DE ANULACIÓN (Dentro de un expander para limpieza visual)
+            with st.expander("⚠️ Panel de Anulación de Ventas"):
+                st.write("Seleccione el producto de la lista para devolver al stock y eliminar el registro.")
+                
+                # Creamos una lista de opciones clara para el selectbox
+                opciones_anular = {f"{v['id']} - {v['producto']} ({v['cantidad']} und)": v for v in res_h.data}
+                seleccion = st.selectbox("Venta a anular:", options=opciones_anular.keys())
+                
+                if st.button("Confirmar Anulación y Devolver Stock", type="secondary"):
+                    v_sel = opciones_anular[seleccion] # Aquí recuperamos los datos de la venta
+                    
+                    try:
+                        # REVERSA DE STOCK
+                        res_inv = db.table("inventario").select("stock").eq("nombre", v_sel['producto']).execute()
+                        
+                        if res_inv.data:
+                            stock_actual = int(res_inv.data[0]['stock'])
+                            nuevo_stock = stock_actual + int(v_sel['cantidad'])
+                            
+                            # Actualizar inventario
+                            db.table("inventario").update({"stock": nuevo_stock}).eq("nombre", v_sel['producto']).execute()
+                            
+                            # Eliminar registro de venta
+                            db.table("ventas").delete().eq("id", v_sel['id']).execute()
+                            
+                            st.success(f"✅ Anulado: {v_sel['producto']}. Se devolvieron {v_sel['cantidad']} unidades al stock.")
+                            time.sleep(1.5)
+                            st.rerun()
+                        else:
+                            st.error("No se encontró el producto en el inventario para devolver el stock.")
+                            
+                    except Exception as e:
+                        st.error(f"Error en la reversa: {e}")
+        else:
+            st.info("Aún no hay ventas registradas en este turno.")
+            
     except Exception as e:
-        st.error(f"Error al anular: {e}")
+        st.error(f"Error al cargar el historial: {e}")
 
 # --- 5. MÓDULO GASTOS ---
 elif opcion == "💸 Gastos":
@@ -465,6 +506,7 @@ elif opcion == "📊 Cierre de Caja":
             if st.button("Cerrar Turno (Sin Ventas)"):
                 db.table("cierres").update({"estado": "cerrado", "fecha_cierre": datetime.now().isoformat()}).eq("id", id_cierre).execute()
                 st.rerun()
+
 
 
 
