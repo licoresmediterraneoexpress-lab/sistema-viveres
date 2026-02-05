@@ -275,91 +275,74 @@ elif opcion == "🛒 Venta Rápida":
             else:
                 st.metric("Faltante (Bs)", f"{abs(vuelto_bs):,.2f} Bs", delta_color="inverse")
 
-         if st.button("🚀 FINALIZAR VENTA", type="primary", use_container_width=True):
-            if total_pagado_bs < (monto_ajustado_bs - 0.1):
-                st.error("❌ El monto pagado es insuficiente.")
-            else:
-                try:
-                    ahora = datetime.now()
-                    id_tx = f"TX-{ahora.strftime('%y%m%d%H%M%S')}"
-                    
-                    for x in st.session_state.car:
-                        # 1. REGISTRAR VENTA (Convertimos a int y float según corresponda)
-                        venta_data = {
-                            "id_transaccion": id_tx,
-                            "producto": x['p'],
-                            "cantidad": int(x['c']),  # <-- CORRECCIÓN: Asegura que sea entero
-                            "total_usd": float(x['u'] * x['c']),
-                            "tasa_cambio": float(tasa),
-                            "pago_efectivo": float(e_bs),
-                            "pago_punto": float(pt_bs),
-                            "pago_movil": float(pm_bs),
-                            "pago_zelle": float(z_usd),
-                            "pago_divisas": float(d_usd),
-                            "costo_venta": float(x['costo_u'] * x['c']),
-                            "monto_real_vef": float(monto_ajustado_bs), # El monto redondeado
-                            "fecha": ahora.isoformat()
-                        }
-                        db.table("ventas").insert(venta_data).execute()
-
-                        # 2. DESCUENTO DE STOCK (Asegurando valor entero)
-                        res_inv = db.table("inventario").select("stock").eq("id", x['id']).execute()
-                        if res_inv.data:
-                            nuevo_stock = int(res_inv.data[0]['stock']) - int(x['c'])
-                            db.table("inventario").update({"stock": nuevo_stock}).eq("id", x['id']).execute()
-                    
-                    st.success(f"✅ Venta {id_tx} procesada con éxito")
-                    st.session_state.car = []
-                    time.sleep(1)
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error procesando venta: {e}")
-
-    # --- HISTORIAL DE VENTAS DEL TURNO ---
-    st.divider()
-    st.subheader("📑 Historial de Ventas del Turno")
-
-    try:
-        # Traemos las ventas de hoy (o del turno activo)
-        res_h = db.table("ventas").select("*").order("fecha", desc=True).limit(20).execute()
-        if res_h.data:
-            df_h = pd.DataFrame(res_h.data)
-            # Formatear columnas para la vista
-            df_h['hora'] = pd.to_datetime(df_h['fecha']).dt.strftime('%H:%M:%S')
-            df_h['fecha_corta'] = pd.to_datetime(df_h['fecha']).dt.strftime('%d/%m/%Y')
+        # --- E. PROCESAMIENTO CORREGIDO ---
+if st.button("🚀 FINALIZAR VENTA", type="primary", use_container_width=True):
+    if vuelto_bs < -0.01:
+        st.error("El pago está incompleto.")
+    else:
+        try:
+            ahora = datetime.now()
+            id_tx = f"TX-{ahora.strftime('%y%m%d%H%M%S')}"
             
-            # Mostrar Tabla tipo Excel
-            vista_historial = df_h[['fecha_corta', 'hora', 'producto', 'cantidad', 'total_usd', 'monto_real_vef']]
-            st.dataframe(vista_historial, use_container_width=True, hide_index=True)
-
-            # Lógica de ANULACIÓN
-            with st.expander("⚠️ Anular una Venta (Devolver al Stock)"):
-                venta_a_anular = st.selectbox("Seleccione venta para ANULAR:", 
-                                            options=df_h['id_transaccion'].unique())
-                clave = st.text_input("Clave Admin para anular", type="password")
+            for x in st.session_state.car:
+                # 1. Insertar en ventas con tipos de datos explícitos
+                db.table("ventas").insert({
+                    "id_transaccion": id_tx, 
+                    "id_cierre": id_turno,
+                    "producto": str(x['nombre']), 
+                    "cantidad": int(x['cant']),  # <-- CORRECCIÓN: Forzar entero
+                    "total_usd": float(x['u'] * x['cant']), 
+                    "tasa_cambio": float(tasa_v),
+                    "pago_efectivo": float(p_ef_bs), 
+                    "pago_punto": float(p_pu_bs),
+                    "pago_movil": float(p_pm_bs), 
+                    "pago_zelle": float(p_ze_usd),
+                    "pago_otros": float(p_ot_usd), 
+                    "pago_divisas": float(p_di_usd),
+                    "costo_venta": float(x['costo'] * x['cant']), 
+                    "monto_real_vef": float(monto_ajustado_bs),
+                    "fecha": ahora.isoformat()
+                }).execute()
                 
-                if st.button("Confirmar Anulación"):
-                    if clave == CLAVE_ADMIN:
-                        # 1. Buscar productos de esa venta para devolverlos
-                        items_anular = df_h[df_h['id_transaccion'] == venta_a_anular]
-                        for _, row in items_anular.iterrows():
-                            # Devolver al stock
-                            res_inv = db.table("inventario").select("stock").eq("nombre", row['producto']).execute()
-                            if res_inv.data:
-                                stock_actual = int(res_inv.data[0]['stock'])
-                                db.table("inventario").update({"stock": stock_actual + int(row['cantidad'])}).eq("nombre", row['producto']).execute()
-                        
-                        # 2. Eliminar de la tabla ventas
-                        db.table("ventas").delete().eq("id_transaccion", venta_a_anular).execute()
-                        st.warning(f"Venta {venta_a_anular} anulada. Stock restaurado.")
-                        time.sleep(1)
-                        st.rerun()
-                    else:
-                        st.error("Clave incorrecta")
-        else:
-            st.info("No hay ventas registradas en este turno.")
+                # 2. Restar stock asegurando enteros
+                inv = db.table("inventario").select("stock").eq("id", x['id']).execute()
+                if inv.data:
+                    nuevo_stock = int(inv.data[0]['stock']) - int(x['cant']) # <-- CORRECCIÓN
+                    db.table("inventario").update({"stock": nuevo_stock}).eq("id", x['id']).execute()
+
+            # Guardar ticket en sesión
+            st.session_state.ultimo_ticket = f"""
+            <div style='background:white; color:black; padding:15px; border:1px solid #ddd; font-family:monospace;'>
+                <h4 style='text-align:center;'>MEDITERRANEO EXPRESS</h4>
+                <p>ID: {id_tx}<br>Fecha: {ahora.strftime('%d/%m/%Y %H:%M')}</p><hr>
+                <p><b>Total Bs: {float(monto_ajustado_bs):,.2f}</b><br>Tasa: {tasa_v}</p>
+                <p>Pagado: {float(total_pagado_bs):,.2f} Bs<br>Vuelto: {max(0, float(vuelto_bs)):,.2f} Bs</p>
+            </div>
+            """
+            st.session_state.venta_finalizada = True
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error procesando venta: {e}")
+
+   # --- F. HISTORIAL CORREGIDO ---
+# ... dentro del loop de anulación ...
+if c6.button("🚫 Anular", key=f"anular_{v['id']}"):
+    try:
+        # 1. Obtener producto por NOMBRE (o ID si lo tienes) y sumar stock
+        item_inv = db.table("inventario").select("stock", "id").eq("nombre", v['producto']).execute()
+        if item_inv.data:
+            # Aseguramos que ambos sean enteros para evitar el error 22P02
+            nuevo_stock = int(item_inv.data[0]['stock']) + int(v['cantidad'])
+            db.table("inventario").update({"stock": nuevo_stock}).eq("id", item_inv.data[0]['id']).execute()
+        
+        # 2. Eliminar registro de venta
+        db.table("ventas").delete().eq("id", v['id']).execute()
+        st.toast(f"Venta anulada. Stock recuperado (+{v['cantidad']})")
+        time.sleep(1)
+        st.rerun()
     except Exception as e:
-        st.error(f"Error cargando historial: {e}")
+        st.error(f"Error al anular: {e}")
+
 # --- 5. MÓDULO GASTOS ---
 elif opcion == "💸 Gastos":
     st.header("💸 Gastos Operativos")
@@ -482,6 +465,7 @@ elif opcion == "📊 Cierre de Caja":
             if st.button("Cerrar Turno (Sin Ventas)"):
                 db.table("cierres").update({"estado": "cerrado", "fecha_cierre": datetime.now().isoformat()}).eq("id", id_cierre).execute()
                 st.rerun()
+
 
 
 
