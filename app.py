@@ -455,38 +455,138 @@ elif opcion == "💸 Gastos":
             db.table("gastos").insert({"id_cierre": id_turno, "descripcion": d, "monto_usd": m}).execute()
             st.success("Gasto guardado")
 
-# --- 8. CIERRE DE CAJA ---
+# --- 8. CIERRE DE CAJA (BLINDADO Y AUDITABLE) ---
 elif opcion == "📊 Cierre de Caja":
-    st.markdown("<h1 class='main-header'>📊 Gestión de Caja</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 class='main-header'>📊 Gestión de Caja y Turnos</h1>", unsafe_allow_html=True)
     
-    if not turno_activo:
-        with st.form("apertura"):
-            st.subheader("Apertura de Turno")
-            t_a = st.number_input("Tasa de Apertura", value=60.0)
-            f_a = st.number_input("Fondo Inicial $", value=0.0)
-            if st.form_submit_button("ABRIR CAJA"):
-                db.table("cierres").insert({"tasa_apertura": t_a, "monto_apertura": f_a, "estado": "abierto"}).execute()
-                st.rerun()
+    # Inyección de CSS para alertas de cuadre
+    st.markdown("""
+        <style>
+        .cuadre-positivo { padding:20px; background-color:#d4edda; color:#155724; border-radius:10px; border:2px solid #c3e6cb; }
+        .cuadre-negativo { padding:20px; background-color:#f8d7da; color:#721c24; border-radius:10px; border:2px solid #f5c6cb; }
+        .metric-card { background-color: #262730; padding: 15px; border-radius: 8px; border: 1px solid #444; }
+        </style>
+    """, unsafe_allow_html=True)
+
+    if not st.session_state.get('id_turno'):
+        # --- LÓGICA DE APERTURA ---
+        with st.form("apertura_jornada"):
+            st.subheader("🔓 Apertura de Nueva Jornada")
+            c1, c2 = st.columns(2)
+            t_a = c1.number_input("Tasa de Cambio (BCV/Mkt)", value=60.0, format="%.2f")
+            f_usd = c2.number_input("Fondo Inicial Divisas ($)", value=0.0, format="%.2f")
+            f_bs = c1.number_input("Fondo Inicial Bolívares (Bs)", value=0.0, format="%.2f")
+            
+            st.info("Al abrir caja, se habilitará el módulo de ventas y se registrará la hora de inicio.")
+            
+            if st.form_submit_button("🚀 INICIAR TURNO", use_container_width=True):
+                try:
+                    nueva_apertura = {
+                        "tasa_apertura": float(t_a),
+                        "monto_apertura": float(f_usd),
+                        "fondo_bs": float(f_bs),
+                        "fondo_usd": float(f_usd),
+                        "estado": "abierto",
+                        "fecha_apertura": datetime.now().isoformat()
+                    }
+                    db.table("cierres").insert(nueva_apertura).execute()
+                    st.success("Caja abierta correctamente."); time.sleep(1); st.rerun()
+                except Exception as e:
+                    st.error(f"Error al abrir turno: {e}")
     else:
-        # Cálculos de Cierre
-        v_res = db.table("ventas").select("total_usd, costo_venta").eq("id_cierre", id_turno).neq("estado", "Anulado").execute()
-        g_res = db.table("gastos").select("monto_usd").eq("id_cierre", id_turno).execute()
+        # --- LÓGICA DE CIERRE ---
+        id_turno = st.session_state.id_turno
         
-        total_v = sum([x['total_usd'] for x in v_res.data])
-        total_c = sum([x['costo_venta'] for x in v_res.data])
-        total_g = sum([x['monto_usd'] for x in g_res.data])
+        # 1. Recuperar Datos del Turno Actual
+        datos_turno = db.table("cierres").select("*").eq("id", id_turno).single().execute().data
         
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Ventas Totales", f"${total_v:.2f}")
-        c2.metric("Gastos", f"${total_g:.2f}")
-        c3.metric("Ganancia Neta", f"${total_v - total_c - total_g:.2f}")
+        # 2. Cálculos del Sistema (Auditoría de Ventas)
+        v_res = db.table("ventas").select("*").eq("id_cierre", id_turno).neq("estado", "Anulado").execute()
+        df_v = pd.DataFrame(v_res.data) if v_res.data else pd.DataFrame()
+
+        if not df_v.empty:
+            # Asegurar tipos float para evitar StreamlitMixedNumericTypesError
+            metodos = ['pago_punto', 'pago_efectivo', 'pago_movil', 'pago_zelle', 'pago_otros', 'pago_divisas', 'costo_venta', 'total_usd']
+            for col in metodos: df_v[col] = df_v[col].astype(float)
+
+            # Sumatorias por método
+            s_punto = df_v['pago_punto'].sum()
+            s_movil = df_v['pago_movil'].sum()
+            s_zelle = df_v['pago_zelle'].sum()
+            s_efec_bs = df_v['pago_efectivo'].sum()
+            s_divisas = df_v['pago_divisas'].sum()
+            s_otros = df_v['pago_otros'].sum()
+            
+            total_facturado = df_v['total_usd'].sum()
+            costo_total = df_v['costo_venta'].sum()
+            banco_sistema = s_punto + s_movil + s_zelle
+        else:
+            s_punto = s_movil = s_zelle = s_efec_bs = s_divisas = s_otros = total_facturado = costo_total = banco_sistema = 0.0
+
+        # 3. Interfaz de Auditoría
+        st.subheader("🕵️ Panel de Auditoría del Sistema")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Efectivo Bs (Sistema)", f"{s_efec_bs:,.2f} Bs")
+        c2.metric("Divisas (Sistema)", f"${s_divisas:,.2f}")
+        c3.metric("Banco (Sistema)", f"${banco_sistema:,.2f}")
+        c4.metric("Total Facturado", f"${total_facturado:,.2f}")
+
+        st.divider()
+
+        # 4. Formulario de Declaración Física
+        st.subheader("📝 Declaración de Conteo Físico")
+        with st.container(border=True):
+            col_f1, col_f2, col_f3 = st.columns(3)
+            f_efec_usd = col_f1.number_input("Efectivo Divisas en Físico ($)", min_value=0.0, step=1.0)
+            f_efec_bs = col_f2.number_input("Efectivo Bolívares en Físico (Bs)", min_value=0.0, step=1.0)
+            f_banco = col_f3.number_input("Total Banco (Punto/Móvil/Zelle)", min_value=0.0, step=1.0)
+
+        # 5. Cálculo de Diferencia
+        # Lo que debería haber: (Ventas por método + Fondos Iniciales)
+        debe_haber_usd = s_divisas + datos_turno['fondo_usd']
+        debe_haber_bs = s_efec_bs + datos_turno['fondo_bs']
+        debe_haber_banco = banco_sistema
         
-        if st.button("🔴 CERRAR TURNO ACTUAL", type="primary"):
-            db.table("cierres").update({"estado": "cerrado", "fecha_cierre": datetime.now().isoformat()}).eq("id", id_turno).execute()
-            st.rerun()
+        # Diferencia total convertida a USD para el registro
+        # (Físico - Sistema)
+        diff_usd = (f_efec_usd - debe_haber_usd) + ((f_efec_bs - debe_haber_bs) / datos_turno['tasa_apertura']) + (f_banco - debe_haber_banco)
 
+        # Visualización de Resultado
+        if diff_usd >= 0:
+            st.markdown(f"<div class='cuadre-positivo'>✅ <b>SOBRANTE:</b> ${diff_usd:.2f} USD. La caja está cuadrada o tiene excedente.</div>", unsafe_allow_html=True)
+        else:
+            st.markdown(f"<div class='cuadre-negativo'>⚠️ <b>FALTANTE:</b> ${abs(diff_usd):.2f} USD. El conteo físico es menor al sistema.</div>", unsafe_allow_html=True)
 
+        st.divider()
 
+        # 6. Botón de Acción Final
+        if st.button("🔴 FINALIZAR JORNADA Y CERRAR CAJA", type="primary", use_container_width=True):
+            try:
+                # Cálculo de ganancia neta (Ventas - Costo)
+                ganancia_neta = total_facturado - costo_total
+                
+                update_data = {
+                    "fecha_cierre": datetime.now().isoformat(),
+                    "total_ventas": float(total_facturado),
+                    "total_costos": float(costo_total),
+                    "total_ganancias": float(ganancia_neta),
+                    "diferencia": float(diff_usd),
+                    "estado": "cerrado"
+                }
+                
+                db.table("cierres").update(update_data).eq("id", id_turno).execute()
+                
+                # Limpiar sesión
+                st.session_state.id_turno = None
+                st.success("✅ Turno cerrado y auditoría registrada con éxito.")
+                time.sleep(2)
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error al cerrar turno: {e}")
 
-
-
+        # 7. Información de Inventario (Solo lectura)
+        with st.expander("📦 Valorización de Inventario (Costo)"):
+            inv_res = db.table("inventario").select("stock, costo").execute()
+            if inv_res.data:
+                total_inv = sum([float(x['stock']) * float(x['costo']) for x in inv_res.data])
+                st.metric("Capital en Inventario (Costo USD)", f"${total_inv:,.2f}")
