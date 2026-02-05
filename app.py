@@ -251,38 +251,42 @@ elif opcion == "🛒 Venta Rápida":
 
             st.divider()
             
-           # --- SECCIÓN DE PAGOS ---
+    # --- SECCIÓN DE PAGOS ---
             total_vef = total_usd * tasa_v
             st.markdown(f"### Total: `${total_usd:.2f}` / `{total_vef:,.2f} Bs`")
             
             # REQUERIMIENTO: Monto a cobrar modificable en BOLÍVARES
-            monto_cobrar_bs = st.number_input("Monto a Cobrar (Bs)", value=float(total_vef), step=1.0, help="Ajuste el monto final en Bolívares")
-            monto_cobrar_usd = monto_cobrar_bs / tasa_v
+            monto_cobrar_bs_input = st.number_input("Monto a Cobrar (Bs)", value=float(total_vef), step=1.0)
+            monto_cobrar_usd = monto_cobrar_bs_input / tasa_v
             
             with st.expander("💳 Registrar Pagos Mixtos", expanded=True):
                 px1, px2 = st.columns(2)
-                # Inputs de usuario mapeados a las variables correctas
-                p_divisas = px1.number_input("Efectivo $ (Divisas)", min_value=0.0, step=1.0)
-                p_efectivo = px2.number_input("Efectivo Bs", min_value=0.0, step=1.0)
-                p_zelle = px1.number_input("Zelle $", min_value=0.0, step=1.0)
-                p_movil = px2.number_input("Pago Móvil Bs", min_value=0.0, step=1.0)
-                p_punto = px1.number_input("Punto Bs", min_value=0.0, step=1.0)
-                p_otros = px2.number_input("Otros $", min_value=0.0, step=1.0)
+                p_divisas = px1.number_input("Efectivo $ (Divisas)", min_value=0.0)
+                p_efectivo = px2.number_input("Efectivo Bs", min_value=0.0)
+                p_zelle = px1.number_input("Zelle $", min_value=0.0)
+                p_movil = px2.number_input("Pago Móvil Bs", min_value=0.0)
+                p_punto = px1.number_input("Punto Bs", min_value=0.0)
+                p_otros = px2.number_input("Otros/Transferencia $", min_value=0.0)
 
-            # Cálculo de Balance en USD para validación (convertimos los Bs a tasa del día)
-            total_pagado_usd = p_divisas + p_zelle + p_otros + ((p_efectivo + p_movil + p_punto) / tasa_v)
-            balance_usd = total_pagado_usd - monto_cobrar_usd
+            # Cálculo de Totales para la Base de Datos
+            # Total pagado real en USD (sumando todo a tasa actual)
+            p_total_real_usd = p_divisas + p_zelle + p_otros + ((p_efectivo + p_movil + p_punto) / tasa_v)
+            # Total real en VEF
+            p_total_real_vef = p_total_real_usd * tasa_v
+            
+            balance_usd = p_total_real_usd - monto_cobrar_usd
             
             if balance_usd < -0.01:
-                st.error(f"Faltante: ${abs(balance_usd):.2f} / {abs(balance_usd*tasa_v):,.2f} Bs")
+                st.error(f"Faltante: ${abs(balance_usd):.2f}")
             else:
-                st.success(f"Vuelto: ${balance_usd:.2f} / {balance_usd*tasa_v:,.2f} Bs")
+                st.success(f"Vuelto: ${balance_usd:.2f}")
 
             # --- FINALIZAR VENTA (BOTÓN) ---
-            if st.button("🚀 FINALIZAR Y GENERAR TICKET", type="primary", use_container_width=True, disabled=(total_pagado_usd < (monto_cobrar_usd - 0.01))):
+            if st.button("🚀 FINALIZAR Y GENERAR TICKET", type="primary", use_container_width=True, disabled=(p_total_real_usd < (monto_cobrar_usd - 0.01))):
                 try:
                     # 1. Empaquetar Carrito para JSONB
                     items_json = []
+                    costo_total_venta = 0.0
                     for i in st.session_state.car:
                         items_json.append({
                             "id": i['id'],
@@ -291,55 +295,28 @@ elif opcion == "🛒 Venta Rápida":
                             "precio_u": i['precio'],
                             "subtotal": round(i['cant'] * i['precio'], 2)
                         })
+                        # Si tienes el costo en el session_state, lo sumamos
+                        costo_total_venta += (i.get('costo', 0) * i['cant'])
 
-                    # 2. Registrar en DB 'ventas' con nombres de columna exactos
+                    # 2. Registrar en DB 'ventas' (REGLA ESTRICTA DE COLUMNAS)
                     venta_data = {
                         "id_cierre": id_turno,
                         "producto": f"Venta de {len(st.session_state.car)} productos",
                         "total_usd": round(total_usd, 2),
-                        "tasa_usada": tasa_v,
-                        "pago_divisas": p_divisas,   # Efectivo en $
-                        "pago_efectivo": p_efectivo, # Efectivo en Bs
-                        "pago_zelle": p_zelle,
-                        "pago_movil": p_movil,       # Corregido: pago_movil
+                        "tasa_cambio": tasa_v,                # REGLA ESTRICTA
                         "pago_punto": p_punto,
+                        "pago_efectivo": p_efectivo,
+                        "pago_movil": p_movil,
+                        "pago_zelle": p_zelle,
+                        "pago_otros": p_otros,
+                        "pago_divisas": p_divisas,
                         "items": items_json,
-                        "fecha": datetime.now().isoformat()
-                    }
-                    db.table("ventas").insert(venta_data).execute()
-
-                    # 3. Actualización de Stock (Resta automática en inventario)
-                    for item in st.session_state.car:
-                        # Obtenemos stock actual desde la sesión para asegurar precisión
-                        nuevo_stock = float(item['stock']) - float(item['cant'])
-                        db.table("inventario").update({"stock": nuevo_stock}).eq("id", item['id']).execute()
-
-                    # 4. Crear Ticket Detallado
-                    filas_ticket = ""
-                    for it in items_json:
-                        filas_ticket += f"""
-                        <div style='display:flex; justify-content:space-between; font-size:12px;'>
-                            <span>{it['cantidad']}x {it['nombre'][:18]}</span>
-                            <span>${it['subtotal']:.2f}</span>
-                        </div>"""
-
-                    st.session_state.ultimo_ticket = f"""
-                    <div style="border:1px solid #ddd; padding:15px; border-radius:10px; font-family:monospace; background-color: #fff; color: black;">
-                        <h3 style="text-align:center; margin:0;">TICKET DE VENTA</h3>
-                        <p style="text-align:center; font-size:11px;">{datetime.now().strftime('%d/%m/%Y %H:%M:%S')}</p>
-                        <hr>
-                        {filas_ticket}
-                        <hr>
-                        <div style="display:flex; justify-content:space-between; font-weight:bold;"><span>TOTAL USD:</span><span>${total_usd:.2f}</span></div>
-                        <div style="display:flex; justify-content:space-between;"><span>TOTAL Bs:</span><span>{total_vef:,.2f}</span></div>
-                        <p style="font-size:10px; text-align:center; margin-top:10px;">ID Turno: {id_turno}</p>
-                    </div>
-                    """
-                    st.session_state.venta_finalizada = True
-                    st.rerun()
-                    
-                except Exception as e:
-                    st.error(f"Error crítico en transacción: {e}")
+                        "monto_cobrado_bs": monto_cobrar_bs_input,
+                        "total_pagado_real": round(p_total_real_usd, 2),
+                        "monto_real_vef": round(p_total_real_vef, 2),
+                        "costo_venta": round(costo_total_venta, 2),
+                        "fecha": datetime.now().isoformat(),
+                        "cantidad": len(st.
    
     # --- F. HISTORIAL DE VENTAS (TIPO EXCEL) ---
     st.divider()
@@ -524,6 +501,7 @@ elif opcion == "📊 Cierre de Caja":
             if st.button("Cerrar Turno (Sin Ventas)"):
                 db.table("cierres").update({"estado": "cerrado", "fecha_cierre": datetime.now().isoformat()}).eq("id", id_cierre).execute()
                 st.rerun()
+
 
 
 
