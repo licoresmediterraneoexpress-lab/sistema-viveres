@@ -301,103 +301,141 @@ elif opcion == "📜 Historial":
     
     id_turno = st.session_state.id_turno
 
-    st.markdown("<h1 class='main-header'>📜 Historial de Ventas</h1>", unsafe_allow_html=True)
-    st.markdown(f"**Turno Activo ID:** `{id_turno}`")
+    # Inyección de CSS para Estilo Excel y Contenedores
+    st.markdown("""
+        <style>
+        .report-container {
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 10px;
+            background-color: #1e1e1e;
+        }
+        .table-header {
+            background-color: #333;
+            padding: 10px;
+            border-bottom: 2px solid #555;
+            font-weight: bold;
+            color: #00ffcc;
+        }
+        .total-row {
+            background-color: #262730;
+            padding: 15px;
+            border-top: 2px solid #00ffcc;
+            font-size: 1.2rem;
+            font-weight: bold;
+            margin-top: 10px;
+        }
+        </style>
+    """, unsafe_allow_html=True)
 
-    # 1. CARGA DE DATOS (Filtrado por Turno Activo - Soporta Cruce de Medianoche)
+    st.markdown("<h1 class='main-header'>📜 Historial de Ventas</h1>", unsafe_allow_html=True)
+    st.info(f"🔎 Auditando **Turno ID: {id_turno}** | Visualizando registros del ciclo de caja activo.")
+
+    # 1. CARGA DE DATOS
     try:
-        # Traemos todas las ventas del turno, ordenadas por fecha/hora
         res_h = db.table("ventas").select("*").eq("id_cierre", id_turno).order("fecha", desc=True).execute()
         data_ventas = res_h.data if res_h.data else []
     except Exception as e:
-        st.error(f"Error al conectar con la base de datos: {e}")
-        data_ventas = []
+        st.error(f"Error de conexión con Supabase: {e}"); data_ventas = []
 
     if data_ventas:
-        # Convertir a DataFrame para búsqueda instantánea en memoria
         df_h = pd.DataFrame(data_ventas)
         
-        # Formateo de tipos para evitar StreamlitMixedNumericTypesError
+        # Blindaje de tipos para cálculos (StreamlitMixedNumericTypesError prevention)
         df_h['total_usd'] = df_h['total_usd'].astype(float)
         df_h['monto_cobrado_bs'] = df_h['monto_cobrado_bs'].astype(float)
-        
-        # Extraer Hora para la visualización
-        df_h['hora'] = pd.to_datetime(df_h['fecha']).dt.strftime('%I:%M %p')
+        df_h['fecha_dt'] = pd.to_datetime(df_h['fecha'])
+        df_h['hora'] = df_h['fecha_dt'].dt.strftime('%I:%M %p')
+        df_h['fecha_corta'] = df_h['fecha_dt'].dt.strftime('%d/%m/%Y')
 
-        # 2. BUSCADOR INTELIGENTE (Filtros dinámicos)
-        c_busc1, c_busc2 = st.columns([2, 1])
-        busqueda = c_busc1.text_input("🔍 Buscar por producto o cliente...", placeholder="Ej: Harina / Juan Perez").lower()
-        estado_filtro = c_busc2.selectbox("Filtrar por Estado", ["Todos", "Finalizado", "Anulado"])
+        # 2. BUSCADOR INTELIGENTE MULTICRITERIO
+        with st.container(border=True):
+            c_busc1, c_busc2, c_busc3 = st.columns([2, 1, 1])
+            busqueda = c_busc1.text_input("🔍 Filtro rápido", placeholder="Producto, cliente o ID...")
+            f_fecha = c_busc2.text_input("📅 Fecha (DD/MM/YYYY)", placeholder="Ej: 05/02/2026")
+            estado_filtro = c_busc3.selectbox("Estado", ["Todos", "Finalizado", "Anulado"])
 
-        # Aplicar filtros al DataFrame
+        # Aplicar filtros dinámicos en memoria
         if busqueda:
-            mask = df_h['producto'].str.lower().str.contains(busqueda) | df_h['cliente'].astype(str).str.lower().str.contains(busqueda)
-            df_h = df_h[mask]
-        
+            df_h = df_h[df_h['producto'].str.lower().str.contains(busqueda.lower()) | 
+                        df_h['cliente'].astype(str).str.lower().str.contains(busqueda.lower()) |
+                        df_h['id'].astype(str).contains(busqueda)]
+        if f_fecha:
+            df_h = df_h[df_h['fecha_corta'].contains(f_fecha)]
         if estado_filtro != "Todos":
             df_h = df_h[df_h['estado'] == estado_filtro]
 
-        # 3. INTERFAZ DE TABLA ESTILO EXCEL
-        st.divider()
-        cols_header = st.columns([0.8, 1, 3, 1.2, 1.2, 1.3])
-        headers = ["ID", "HORA", "DESCRIPCIÓN PRODUCTOS", "TOTAL $", "TOTAL BS", "ACCIONES"]
-        for col, h in zip(cols_header, headers):
-            col.markdown(f"**{h}**")
-        st.divider()
+        # 3. ENCABEZADOS ESTILO EXCEL
+        st.markdown("<div class='table-header'>", unsafe_allow_html=True)
+        h1, h2, h3, h4, h5, h6 = st.columns([0.8, 1, 3, 1.2, 1.2, 1.3])
+        headers = ["ID VENTA", "HORA", "LISTA DE PRODUCTOS", "TOTAL USD", "COBRADO BS", "ACCIÓN"]
+        for col, h in zip([h1, h2, h3, h4, h5, h6], headers):
+            col.write(f"**{h}**")
+        st.markdown("</div>", unsafe_allow_html=True)
 
-        # 4. RENDERIZADO DE FILAS CON LÓGICA DE ANULACIÓN
+        # 4. CUERPO DE LA TABLA
         for _, fila in df_h.iterrows():
-            # Estilo visual para ventas anuladas
             es_anulado = fila['estado'] == 'Anulado'
-            st_style = "color: #9e9e9e; text-decoration: line-through;" if es_anulado else "color: white;"
+            st_style = "color: #888; text-decoration: line-through;" if es_anulado else "color: white;"
             
-            c1, c2, c3, c4, c5, c6 = st.columns([0.8, 1, 3, 1.2, 1.2, 1.3])
-            
-            c1.markdown(f"<span style='{st_style}'>{fila['id']}</span>", unsafe_allow_html=True)
-            c2.markdown(f"<span style='{st_style}'>{fila['hora']}</span>", unsafe_allow_html=True)
-            
-            # Resumen de productos (tooltip si es muy largo)
-            prod_txt = fila['producto'][:45] + "..." if len(fila['producto']) > 45 else fila['producto']
-            c3.markdown(f"<span style='{st_style}' title='{fila['producto']}'>{prod_txt}</span>", unsafe_allow_html=True)
-            
-            c4.markdown(f"<span style='{st_style}'>${fila['total_usd']:,.2f}</span>", unsafe_allow_html=True)
-            c5.markdown(f"<span style='{st_style}'>{fila['monto_cobrado_bs']:,.2f} Bs</span>", unsafe_allow_html=True)
+            with st.container():
+                c1, c2, c3, c4, c5, c6 = st.columns([0.8, 1, 3, 1.2, 1.2, 1.3])
+                
+                c1.markdown(f"<span style='{st_style}'>{fila['id']}</span>", unsafe_allow_html=True)
+                c2.markdown(f"<span style='{st_style}'>{fila['hora']}</span>", unsafe_allow_html=True)
+                
+                # OPTIMIZACIÓN DE DESCRIPCIÓN: Limpiar nombres del JSONB
+                try:
+                    nombres_items = ", ".join([str(i['nombre']) for i in fila['items']])
+                    prod_display = (nombres_items[:50] + '...') if len(nombres_items) > 50 else nombres_items
+                except:
+                    prod_display = fila['producto'] # Fallback
+                
+                c3.markdown(f"<span style='{st_style}' title='{nombres_items}'>{prod_display}</span>", unsafe_allow_html=True)
+                c4.markdown(f"<span style='{st_style}'>${fila['total_usd']:,.2f}</span>", unsafe_allow_html=True)
+                c5.markdown(f"<span style='{st_style}'>{fila['monto_cobrado_bs']:,.2f} Bs</span>", unsafe_allow_html=True)
 
-            # Botón de Anulación
-            if not es_anulado:
-                if c6.button("🚫 Anular", key=f"btn_anul_{fila['id']}", use_container_width=True):
-                    try:
-                        with st.spinner("Revirtiendo stock..."):
-                            # REVERSIÓN DE STOCK (Iterar sobre el JSONB 'items')
-                            for item in fila['items']:
-                                # 1. Obtener stock actual
-                                res_inv = db.table("inventario").select("stock").eq("id", item['id']).execute()
-                                if res_inv.data:
-                                    stock_actual = float(res_inv.data[0]['stock'])
-                                    cantidad_vendida = float(item['cant'])
-                                    nuevo_stock = stock_actual + cantidad_vendida
-                                    
-                                    # 2. Actualizar stock
-                                    db.table("inventario").update({"stock": nuevo_stock}).eq("id", item['id']).execute()
-                            
-                            # 3. Marcar venta como Anulada
-                            db.table("ventas").update({"estado": "Anulado"}).eq("id", fila['id']).execute()
-                            
-                            st.toast(f"Venta #{fila['id']} anulada y stock devuelto", icon="✅")
-                            time.sleep(1)
-                            st.rerun()
-                    except Exception as e:
-                        st.error(f"Error en el proceso de anulación: {e}")
-            else:
-                c6.markdown("<span style='color: #ff4b4b; font-weight: bold;'>ANULADA</span>", unsafe_allow_html=True)
+                if not es_anulado:
+                    if c6.button("🚫 Anular", key=f"btn_anul_{fila['id']}", use_container_width=True):
+                        try:
+                            with st.spinner("Procesando anulación..."):
+                                # Reversión Atómica de Stock
+                                for item in fila['items']:
+                                    res_inv = db.table("inventario").select("stock").eq("id", item['id']).execute()
+                                    if res_inv.data:
+                                        nuevo_stock = float(res_inv.data[0]['stock']) + float(item['cant'])
+                                        db.table("inventario").update({"stock": nuevo_stock}).eq("id", item['id']).execute()
+                                
+                                # Cambio de estado
+                                db.table("ventas").update({"estado": "Anulado"}).eq("id", fila['id']).execute()
+                                st.toast(f"Venta #{fila['id']} anulada correctamente", icon="✅")
+                                time.sleep(1); st.rerun()
+                        except Exception as e:
+                            st.error(f"Error en reversión: {e}")
+                else:
+                    c6.markdown("<center>❌</center>", unsafe_allow_html=True)
+            st.markdown("<hr style='margin:2px; border-color:#444'>", unsafe_allow_html=True)
 
-        # 5. RESUMEN RÁPIDO DEL FILTRO
-        st.divider()
-        total_filtro_usd = df_h[df_h['estado'] != 'Anulado']['total_usd'].sum()
-        st.subheader(f"Total Visible en Turno: ${total_filtro_usd:,.2f}")
+        # 5. FILA DE TOTALES AUTOMÁTICA (Pie de Tabla)
+        # Solo sumamos lo que NO está anulado y que está visible en el filtro actual
+        df_activos = df_h[df_h['estado'] != 'Anulado']
+        total_usd_f = df_activos['total_usd'].sum()
+        total_bs_f = df_activos['monto_cobrado_bs'].sum()
+
+        st.markdown(f"""
+            <div class='total-row'>
+                <div style='display: flex; justify-content: space-between;'>
+                    <span>TOTALES FILTRADOS (Auditables):</span>
+                    <span>
+                        <span style='color: #00ffcc;'>$ {total_usd_f:,.2f}</span> | 
+                        <span style='color: #ffcc00;'>Bs. {total_bs_f:,.2f}</span>
+                    </span>
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
 
     else:
-        st.info("No se registraron ventas en este turno todavía.")
+        st.info("No hay registros que coincidan con los criterios de búsqueda o el turno está vacío.")
 
 # --- 7. MÓDULO GASTOS ---
 elif opcion == "💸 Gastos":
@@ -438,6 +476,7 @@ elif opcion == "📊 Cierre de Caja":
         if st.button("🔴 CERRAR TURNO ACTUAL", type="primary"):
             db.table("cierres").update({"estado": "cerrado", "fecha_cierre": datetime.now().isoformat()}).eq("id", id_turno).execute()
             st.rerun()
+
 
 
 
