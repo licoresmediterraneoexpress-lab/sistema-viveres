@@ -277,3 +277,4 @@ elif opcion == "📊 Cierre de Caja":
         if st.button("🔴 CERRAR TURNO ACTUAL", type="primary"):
             db.table("cierres").update({"estado": "cerrado", "fecha_cierre": datetime.now().isoformat()}).eq("id", id_turno).execute()
             st.rerun()
+
