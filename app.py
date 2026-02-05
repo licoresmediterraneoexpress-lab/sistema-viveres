@@ -455,138 +455,173 @@ elif opcion == "💸 Gastos":
             db.table("gastos").insert({"id_cierre": id_turno, "descripcion": d, "monto_usd": m}).execute()
             st.success("Gasto guardado")
 
-# --- 8. CIERRE DE CAJA (BLINDADO Y AUDITABLE) ---
+# --- 8. CIERRE DE CAJA (PROFESIONAL, BLINDADO Y SEGREGADO) ---
 elif opcion == "📊 Cierre de Caja":
-    st.markdown("<h1 class='main-header'>📊 Gestión de Caja y Turnos</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 class='main-header'>📊 Gestión de Caja y Auditoría</h1>", unsafe_allow_html=True)
     
-    # Inyección de CSS para alertas de cuadre
+    # Inyección de CSS para resaltar métricas de auditoría
     st.markdown("""
         <style>
-        .cuadre-positivo { padding:20px; background-color:#d4edda; color:#155724; border-radius:10px; border:2px solid #c3e6cb; }
-        .cuadre-negativo { padding:20px; background-color:#f8d7da; color:#721c24; border-radius:10px; border:2px solid #f5c6cb; }
-        .metric-card { background-color: #262730; padding: 15px; border-radius: 8px; border: 1px solid #444; }
+        .cuadre-positivo { padding:20px; background-color:#d4edda; color:#155724; border-radius:10px; border:2px solid #c3e6cb; font-weight: bold; }
+        .cuadre-negativo { padding:20px; background-color:#f8d7da; color:#721c24; border-radius:10px; border:2px solid #f5c6cb; font-weight: bold; }
+        .resumen-auditoria { background-color: #1e1e1e; padding: 20px; border-radius: 10px; border: 1px solid #444; margin-bottom: 20px; }
         </style>
     """, unsafe_allow_html=True)
 
+    # REPARACIÓN CRÍTICA: Lógica de Apertura
     if not st.session_state.get('id_turno'):
-        # --- LÓGICA DE APERTURA ---
-        with st.form("apertura_jornada"):
-            st.subheader("🔓 Apertura de Nueva Jornada")
-            c1, c2 = st.columns(2)
-            t_a = c1.number_input("Tasa de Cambio (BCV/Mkt)", value=60.0, format="%.2f")
-            f_usd = c2.number_input("Fondo Inicial Divisas ($)", value=0.0, format="%.2f")
-            f_bs = c1.number_input("Fondo Inicial Bolívares (Bs)", value=0.0, format="%.2f")
+        st.warning("⚠️ No hay un turno activo. Por favor, abra la caja para comenzar a facturar.")
+        
+        with st.form("apertura_jornada_blindada"):
+            st.subheader("🔓 Apertura de Turno")
+            col_ap1, col_ap2 = st.columns(2)
             
-            st.info("Al abrir caja, se habilitará el módulo de ventas y se registrará la hora de inicio.")
+            tasa_v = col_ap1.number_input("Tasa de Cambio del Día (Bs/$)", min_value=1.0, value=60.0, format="%.2f")
+            f_bs_v = col_ap1.number_input("Fondo Inicial en Bolívares (Efectivo)", min_value=0.0, value=0.0, step=10.0)
+            f_usd_v = col_ap2.number_input("Fondo Inicial en Divisas (Efectivo $)", min_value=0.0, value=0.0, step=1.0)
             
-            if st.form_submit_button("🚀 INICIAR TURNO", use_container_width=True):
+            if st.form_submit_button("🚀 ABRIR CAJA E INICIAR JORNADA", use_container_width=True):
                 try:
-                    nueva_apertura = {
-                        "tasa_apertura": float(t_a),
-                        "monto_apertura": float(f_usd),
-                        "fondo_bs": float(f_bs),
-                        "fondo_usd": float(f_usd),
+                    # Registro en base de datos
+                    data_ins = {
+                        "tasa_apertura": float(tasa_v),
+                        "fondo_bs": float(f_bs_v),
+                        "fondo_usd": float(f_usd_v),
+                        "monto_apertura": float(f_usd_v), # Compatibilidad con esquemas previos
                         "estado": "abierto",
                         "fecha_apertura": datetime.now().isoformat()
                     }
-                    db.table("cierres").insert(nueva_apertura).execute()
-                    st.success("Caja abierta correctamente."); time.sleep(1); st.rerun()
+                    res_ins = db.table("cierres").insert(data_ins).execute()
+                    
+                    if res_ins.data:
+                        # Actualización inmediata del state para evitar NoneType
+                        nuevo_id = res_ins.data[0]['id']
+                        st.session_state.id_turno = nuevo_id
+                        st.success(f"✅ Turno #{nuevo_id} abierto exitosamente.")
+                        time.sleep(1)
+                        st.rerun()
                 except Exception as e:
-                    st.error(f"Error al abrir turno: {e}")
+                    st.error(f"Error crítico de apertura: {e}")
+    
     else:
-        # --- LÓGICA DE CIERRE ---
+        # --- LÓGICA DE CIERRE Y AUDITORÍA ---
         id_turno = st.session_state.id_turno
         
-        # 1. Recuperar Datos del Turno Actual
-        datos_turno = db.table("cierres").select("*").eq("id", id_turno).single().execute().data
-        
-        # 2. Cálculos del Sistema (Auditoría de Ventas)
+        # 1. Recuperar Datos del Registro de Cierre Actual
+        res_turno = db.table("cierres").select("*").eq("id", id_turno).single().execute()
+        d_turno = res_turno.data
+        tasa_dia = float(d_turno['tasa_apertura'])
+
+        # 2. Cálculos del Sistema (Segregación de Pagos)
+        # Filtramos estrictamente por id_cierre para soportar turnos nocturnos
         v_res = db.table("ventas").select("*").eq("id_cierre", id_turno).neq("estado", "Anulado").execute()
         df_v = pd.DataFrame(v_res.data) if v_res.data else pd.DataFrame()
 
         if not df_v.empty:
-            # Asegurar tipos float para evitar StreamlitMixedNumericTypesError
-            metodos = ['pago_punto', 'pago_efectivo', 'pago_movil', 'pago_zelle', 'pago_otros', 'pago_divisas', 'costo_venta', 'total_usd']
-            for col in metodos: df_v[col] = df_v[col].astype(float)
+            # Forzar conversión a float para cálculos matemáticos
+            cols_money = [
+                'pago_efectivo', 'pago_divisas', 'pago_movil', 'pago_punto', 
+                'pago_zelle', 'pago_otros', 'total_usd', 'costo_venta'
+            ]
+            for c in cols_money:
+                df_v[c] = df_v[c].fillna(0).astype(float)
 
-            # Sumatorias por método
-            s_punto = df_v['pago_punto'].sum()
-            s_movil = df_v['pago_movil'].sum()
-            s_zelle = df_v['pago_zelle'].sum()
-            s_efec_bs = df_v['pago_efectivo'].sum()
-            s_divisas = df_v['pago_divisas'].sum()
-            s_otros = df_v['pago_otros'].sum()
+            # Segregación exacta
+            sys_efec_bs = df_v['pago_efectivo'].sum()
+            sys_divisas = df_v['pago_divisas'].sum()
+            sys_pago_movil = df_v['pago_movil'].sum()
+            sys_punto = df_v['pago_punto'].sum()
+            sys_zelle = df_v['pago_zelle'].sum()
+            sys_otros = df_v['pago_otros'].sum() # Se asume USD por defecto en la sumatoria total
             
-            total_facturado = df_v['total_usd'].sum()
-            costo_total = df_v['costo_venta'].sum()
-            banco_sistema = s_punto + s_movil + s_zelle
+            sys_total_usd = df_v['total_usd'].sum()
+            sys_total_costo = df_v['costo_venta'].sum()
         else:
-            s_punto = s_movil = s_zelle = s_efec_bs = s_divisas = s_otros = total_facturado = costo_total = banco_sistema = 0.0
+            sys_efec_bs = sys_divisas = sys_pago_movil = sys_punto = sys_zelle = sys_otros = sys_total_usd = sys_total_costo = 0.0
 
-        # 3. Interfaz de Auditoría
-        st.subheader("🕵️ Panel de Auditoría del Sistema")
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Efectivo Bs (Sistema)", f"{s_efec_bs:,.2f} Bs")
-        c2.metric("Divisas (Sistema)", f"${s_divisas:,.2f}")
-        c3.metric("Banco (Sistema)", f"${banco_sistema:,.2f}")
-        c4.metric("Total Facturado", f"${total_facturado:,.2f}")
-
-        st.divider()
-
-        # 4. Formulario de Declaración Física
-        st.subheader("📝 Declaración de Conteo Físico")
-        with st.container(border=True):
-            col_f1, col_f2, col_f3 = st.columns(3)
-            f_efec_usd = col_f1.number_input("Efectivo Divisas en Físico ($)", min_value=0.0, step=1.0)
-            f_efec_bs = col_f2.number_input("Efectivo Bolívares en Físico (Bs)", min_value=0.0, step=1.0)
-            f_banco = col_f3.number_input("Total Banco (Punto/Móvil/Zelle)", min_value=0.0, step=1.0)
-
-        # 5. Cálculo de Diferencia
-        # Lo que debería haber: (Ventas por método + Fondos Iniciales)
-        debe_haber_usd = s_divisas + datos_turno['fondo_usd']
-        debe_haber_bs = s_efec_bs + datos_turno['fondo_bs']
-        debe_haber_banco = banco_sistema
+        # 3. Formulario de Declaración Ciega (Seguridad)
+        st.subheader("🕵️ Declaración de Conteo Físico")
+        st.info("Ingrese los montos físicos presentes en caja y bancos. El sistema calculará la diferencia al finalizar.")
         
-        # Diferencia total convertida a USD para el registro
-        # (Físico - Sistema)
-        diff_usd = (f_efec_usd - debe_haber_usd) + ((f_efec_bs - debe_haber_bs) / datos_turno['tasa_apertura']) + (f_banco - debe_haber_banco)
+        with st.container(border=True):
+            c1, c2, c3 = st.columns(3)
+            f_bs = c1.number_input("Efectivo Bolívares (Físico)", min_value=0.0, step=1.0, key="f_bs")
+            f_usd = c2.number_input("Efectivo Divisas $ (Físico)", min_value=0.0, step=1.0, key="f_usd")
+            f_pmovil = c3.number_input("Monto Pago Móvil (Banco)", min_value=0.0, step=1.0, key="f_pm")
+            
+            f_punto = c1.number_input("Monto Punto de Venta (Banco)", min_value=0.0, step=1.0, key="f_pv")
+            f_zelle = c2.number_input("Monto Zelle / Otros $ (Banco)", min_value=0.0, step=1.0, key="f_zl")
 
-        # Visualización de Resultado
-        if diff_usd >= 0:
-            st.markdown(f"<div class='cuadre-positivo'>✅ <b>SOBRANTE:</b> ${diff_usd:.2f} USD. La caja está cuadrada o tiene excedente.</div>", unsafe_allow_html=True)
-        else:
-            st.markdown(f"<div class='cuadre-negativo'>⚠️ <b>FALTANTE:</b> ${abs(diff_usd):.2f} USD. El conteo físico es menor al sistema.</div>", unsafe_allow_html=True)
+        # 4. Cálculos de Auditoría y Salida
+        if st.button("📊 GENERAR PRE-CIERRE Y AUDITAR", use_container_width=True):
+            st.divider()
+            
+            # Cálculo de Diferencias (Ventas + Fondos Iniciales)
+            # Lo que debería haber en Bs:
+            debe_bs = sys_efec_bs + float(d_turno['fondo_bs'])
+            # Lo que debería haber en USD:
+            debe_usd = sys_divisas + float(d_turno['fondo_usd'])
+            # Bancos:
+            debe_bancos_bs = sys_pago_movil + sys_punto
+            debe_bancos_usd = sys_zelle + sys_otros
 
-        st.divider()
+            # Totales Declarados
+            total_declarado_bs = f_bs + f_pmovil + f_punto
+            total_declarado_usd = f_usd + f_zelle
+            
+            # Diferencia Final (Normalizada a USD para registro)
+            diff_bs = (f_bs - debe_bs) + (f_pmovil - sys_pago_movil) + (f_punto - sys_punto)
+            diff_usd = (f_usd - debe_usd) + (f_zelle - debe_bancos_usd)
+            
+            diferencia_final_usd = diff_usd + (diff_bs / tasa_dia)
 
-        # 6. Botón de Acción Final
-        if st.button("🔴 FINALIZAR JORNADA Y CERRAR CAJA", type="primary", use_container_width=True):
-            try:
-                # Cálculo de ganancia neta (Ventas - Costo)
-                ganancia_neta = total_facturado - costo_total
-                
-                update_data = {
-                    "fecha_cierre": datetime.now().isoformat(),
-                    "total_ventas": float(total_facturado),
-                    "total_costos": float(costo_total),
-                    "total_ganancias": float(ganancia_neta),
-                    "diferencia": float(diff_usd),
-                    "estado": "cerrado"
-                }
-                
-                db.table("cierres").update(update_data).eq("id", id_turno).execute()
-                
-                # Limpiar sesión
-                st.session_state.id_turno = None
-                st.success("✅ Turno cerrado y auditoría registrada con éxito.")
-                time.sleep(2)
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error al cerrar turno: {e}")
-
-        # 7. Información de Inventario (Solo lectura)
-        with st.expander("📦 Valorización de Inventario (Costo)"):
+            # Panel de Resultados
+            st.markdown("<div class='resumen-auditoria'>", unsafe_allow_html=True)
+            st.subheader("📈 Resultado de la Jornada")
+            
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Total Facturado (USD)", f"${sys_total_usd:,.2f}")
+            m1.metric("Total Facturado (Bs)", f"{sys_total_usd * tasa_dia:,.2f} Bs")
+            
+            # Cálculo de Ganancia Neta
+            ganancia_neta = sys_total_usd - sys_total_costo
+            m2.metric("Ganancia Neta", f"${ganancia_neta:,.2f}", delta="Utilidad Bruta")
+            
+            # Valorización de Inventario
             inv_res = db.table("inventario").select("stock, costo").execute()
-            if inv_res.data:
-                total_inv = sum([float(x['stock']) * float(x['costo']) for x in inv_res.data])
-                st.metric("Capital en Inventario (Costo USD)", f"${total_inv:,.2f}")
+            valor_inv = sum([float(x['stock']) * float(x['costo']) for x in inv_res.data]) if inv_res.data else 0.0
+            m3.metric("Valor Inventario", f"${valor_inv:,.2f}")
+            
+            st.markdown("</div>", unsafe_allow_html=True)
+
+            # Visualización de Cuadre
+            if abs(diferencia_final_usd) < 0.01:
+                st.markdown(f"<div class='cuadre-positivo'>✅ CAJA CUADRADA: La diferencia es de $0.00.</div>", unsafe_allow_html=True)
+            elif diferencia_final_usd > 0:
+                st.markdown(f"<div class='cuadre-positivo'>🟢 SOBRANTE DETECTADO: +${diferencia_final_usd:,.2f} USD</div>", unsafe_allow_html=True)
+            else:
+                st.markdown(f"<div class='cuadre-negativo'>🔴 FALTANTE DETECTADO: -${abs(diferencia_final_usd):,.2f} USD</div>", unsafe_allow_html=True)
+
+            # Botón Final de Persistencia
+            st.warning("⚠️ Una vez cerrado, no podrá modificar ventas de este turno.")
+            if st.button("🔒 CERRAR TURNO DEFINITIVAMENTE", type="primary"):
+                try:
+                    update_data = {
+                        "fecha_cierre": datetime.now().isoformat(),
+                        "total_ventas": float(sys_total_usd),
+                        "total_ganancias": float(ganancia_neta),
+                        "diferencia": float(diferencia_final_usd),
+                        "estado": "cerrado"
+                    }
+                    db.table("cierres").update(update_data).eq("id", id_turno).execute()
+                    
+                    # Reset de sesión
+                    st.session_state.id_turno = None
+                    st.success("Jornada finalizada exitosamente.")
+                    time.sleep(2)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error al persistir el cierre: {e}")
+
+    # Pie de página informativo
+    st.caption(f"ID Turno Actual: {st.session_state.get('id_turno', 'Ninguno')}")
