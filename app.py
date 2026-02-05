@@ -267,83 +267,155 @@ elif opcion == "💸 Gastos":
             db.table("gastos").insert({"descripcion": desc, "monto_usd": monto, "fecha": datetime.now().isoformat()}).execute()
             st.success("Gasto registrado.")
 
-# --- 4. MÓDULO GESTIÓN DE CAJA ---
+# --- 4. MÓDULO GESTIÓN DE CAJA (AUDITORÍA PROFESIONAL) ---
 elif opcion == "📊 Cierre de Caja":
-    st.header("📊 Gestión de Turnos y Arqueo")
+    st.header("📊 Gestión de Turnos y Auditoría de Caja")
     st.markdown("---")
 
     # 1. Identificar estado del turno (Tabla 'cierres')
     try:
         res_u = db.table("cierres").select("*").eq("estado", "abierto").order("fecha_apertura", desc=True).limit(1).execute()
         turno_activo = res_u.data[0] if res_u.data else None
-    except:
+    except Exception as e:
+        st.error(f"Error al consultar base de datos: {e}")
         turno_activo = None
     
+    # --- CASO A: NO HAY TURNO ACTIVO (FORMULARIO DE APERTURA) ---
     if not turno_activo:
-        st.subheader("🔓 Apertura de Turno")
+        st.subheader("🔓 Apertura de Nuevo Turno")
+        st.info("Inicie el turno registrando el fondo base disponible en caja física.")
+        
         with st.form("form_apertura"):
-            c1, c2 = st.columns(2)
-            f_usd = c1.number_input("Fondo Inicial ($)", min_value=0.0, format="%.2f")
-            f_bs = c2.number_input("Fondo Inicial (Bs)", min_value=0.0, format="%.2f")
-            t_ref = st.number_input("Tasa de Cambio Apertura", value=60.0)
+            c1, c2, c3 = st.columns(3)
+            t_ref = c1.number_input("Tasa del Día (Ref)", min_value=1.0, value=60.0, step=0.1, help="Tasa oficial para cálculos de conversión")
+            f_bs = c2.number_input("Fondo Inicial Bs (Efectivo)", min_value=0.0, format="%.2f")
+            f_usd = c3.number_input("Fondo Inicial Divisas (Efectivo)", min_value=0.0, format="%.2f")
             
+            # Cálculo del fondo total en USD para la base de datos
             total_ap_usd = f_usd + (f_bs / t_ref) if t_ref > 0 else f_usd
+            
             if st.form_submit_button("✅ INICIAR JORNADA", use_container_width=True):
                 data_ap = {
                     "fecha_apertura": datetime.now().isoformat(),
-                    "monto_apertura": total_ap_usd,
+                    "monto_apertura": float(total_ap_usd),
+                    "tasa_apertura": float(t_ref),
                     "estado": "abierto",
-                    "total_ventas": 0, "total_costos": 0, "total_ganancias": 0
+                    "total_ventas": 0, 
+                    "total_costos": 0, 
+                    "total_ganancias": 0
                 }
-                db.table("cierres").insert(data_ap).execute()
-                st.success("Turno iniciado correctamente."); time.sleep(1); st.rerun()
+                try:
+                    db.table("cierres").insert(data_ap).execute()
+                    st.success("¡Turno abierto con éxito!")
+                    time.sleep(1)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error al abrir turno: {e}")
+    
+    # --- CASO B: TURNO ACTIVO (PROCESO DE AUDITORÍA Y CIERRE) ---
     else:
-        # Lógica de Arqueo en Tiempo Real
         id_cierre = turno_activo['id']
         f_ap = turno_activo['fecha_apertura']
-        st.warning(f"🔔 TURNO ACTIVO | Inicio: {pd.to_datetime(f_ap).strftime('%d/%m/%Y %H:%M')}")
+        fondo_inicial_usd = float(turno_activo['monto_apertura'])
+        tasa_actual = float(turno_activo.get('tasa_apertura', 60.0))
 
-        # Diagrama de flujo del proceso de ventas a caja
-        
+        st.warning(f"🔔 TURNO ACTIVO | Iniciado el: {pd.to_datetime(f_ap).strftime('%d/%m/%Y %H:%M')}")
 
-        # Consulta consolidada de ventas desde la apertura
+        # 1. Obtener Ventas Registradas en el Sistema
         try:
+            # Filtramos ventas cuya fecha sea mayor o igual a la apertura del turno
             res_v = db.table("ventas").select("*").gte("fecha", f_ap).execute()
             df_v = pd.DataFrame(res_v.data) if res_v.data else pd.DataFrame()
-        except: df_v = pd.DataFrame()
+        except:
+            df_v = pd.DataFrame()
 
         if not df_v.empty:
-            for col in ['total_usd', 'costo_venta', 'pago_efectivo', 'pago_punto', 'pago_movil', 'pago_zelle', 'pago_divisas']:
-                df_v[col] = pd.to_numeric(df_v[col], errors='coerce').fillna(0)
+            # Asegurar tipos numéricos para cálculos
+            cols_fin = ['total_usd', 'costo_ventas', 'pago_efectivo', 'pago_punto', 'pago_movil', 'pago_zelle', 'pago_divisas', 'pago_otros']
+            for col in cols_fin:
+                if col in df_v.columns:
+                    df_v[col] = pd.to_numeric(df_v[col], errors='coerce').fillna(0)
+                else:
+                    df_v[col] = 0.0
 
-            t_ventas = df_v['total_usd'].sum()
-            t_costos = df_v['costo_venta'].sum()
-            t_ganancia = t_ventas - t_costos
+            # Totales del Sistema (Libros)
+            t_ventas_sistema = df_v['total_usd'].sum()
+            t_costos_sistema = df_v['costo_ventas'].sum()
+            t_ganancia_neta = t_ventas_sistema - t_costos_sistema
+            
+            # --- 2. REPORTE DE RENTABILIDAD ---
+            st.subheader("📈 Rentabilidad del Turno (En Divisas)")
+            r1, r2, r3 = st.columns(3)
+            r1.metric("Monto Total Facturado", f"$ {t_ventas_sistema:,.2f}")
+            r2.metric("Costo de Mercancía", f"$ {t_costos_sistema:,.2f}", delta_color="inverse")
+            r3.metric("Ganancia Neta", f"$ {t_ganancia_neta:,.2f}", delta=f"{(t_ganancia_neta/t_ventas_sistema*100) if t_ventas_sistema>0 else 0:.1f}%")
+            
+            st.divider()
 
-            m1, m2, m3 = st.columns(3)
-            m1.metric("💰 Ventas Totales", f"$ {t_ventas:,.2f}")
-            m2.metric("📦 Costo de Ventas", f"$ {t_costos:,.2f}")
-            m3.metric("💹 Ganancia Neta", f"$ {t_ganancia:,.2f}")
+            # --- 3. AUDITORÍA FÍSICA (ARQUEO) ---
+            st.subheader("🔎 Auditoría de Caja Física")
+            st.info("Declare los montos exactos presentes en caja y cuentas para el cuadre.")
+            
+            with st.container(border=True):
+                c_aud1, c_aud2, c_aud3 = st.columns(3)
+                
+                # Entradas de declaración física
+                d_divisas = c_aud1.number_input("Efectivo Divisas ($)", min_value=0.0, format="%.2f")
+                d_bs_efec = c_aud2.number_input("Efectivo Bs (Monto)", min_value=0.0, format="%.2f")
+                d_punto = c_aud3.number_input("Punto de Venta ($)", min_value=0.0, format="%.2f")
+                
+                d_pmovil = c_aud1.number_input("Pago Móvil ($)", min_value=0.0, format="%.2f")
+                d_zelle = c_aud2.number_input("Zelle ($)", min_value=0.0, format="%.2f")
+                d_otros = c_aud3.number_input("Otros / Transferencias ($)", min_value=0.0, format="%.2f")
 
-            st.write("#### 💳 Desglose de Cobros en Turno")
-            p1, p2, p3 = st.columns(3)
-            p1.info(f"**Divisas:** ${df_v['pago_divisas'].sum():,.2f}")
-            p2.info(f"**Digital (Bs):** ${ (df_v['pago_punto'].sum() + df_v['pago_movil'].sum()):,.2f}")
-            p3.info(f"**Zelle:** ${df_v['pago_zelle'].sum():,.2f}")
+                # Conversión de BS declarados a USD
+                d_bs_en_usd = d_bs_efec / tasa_actual if tasa_actual > 0 else 0
+                
+                # Total Declarado por el usuario
+                total_declarado = d_divisas + d_bs_en_usd + d_punto + d_pmovil + d_zelle + d_otros
+                
+                # Lógica de Auditoría: (Declarado) - (Ventas Sistema + Fondo Inicial)
+                # Nota: El fondo inicial se suma a las ventas porque debe estar presente físicamente
+                esperado_en_caja = t_ventas_sistema + fondo_inicial_usd
+                diferencia = total_declarado - esperado_en_caja
+
+                # Mostrar Resultados del Cuadre
+                st.markdown("### Resultado del Arqueo")
+                res1, res2 = st.columns(2)
+                
+                res1.write(f"**Total Declarado + Fondos:** ${total_declarado:,.2f}")
+                res1.write(f"**Esperado en Sistema:** ${esperado_en_caja:,.2f}")
+                
+                if diferencia < -0.01:
+                    res2.markdown(f"<h2 style='color: #ff4b4b; text-align: center;'>Faltante: ${abs(diferencia):,.2f}</h2>", unsafe_allow_html=True)
+                elif diferencia > 0.01:
+                    res2.markdown(f"<h2 style='color: #28a745; text-align: center;'>Sobrante: ${diferencia:,.2f}</h2>", unsafe_allow_html=True)
+                else:
+                    res2.markdown(f"<h2 style='color: #28a745; text-align: center;'>Caja Cuadrada</h2>", unsafe_allow_html=True)
+
+            # --- 4. CIERRE DEFINITIVO ---
+            st.divider()
+            if st.button("🔴 CERRAR CAJA Y FINALIZAR TURNO", type="primary", use_container_width=True):
+                data_cl = {
+                    "fecha_cierre": datetime.now().isoformat(),
+                    "total_ventas": float(t_ventas_sistema),
+                    "total_costos": float(t_costos_sistema),
+                    "total_ganancias": float(t_ganancia_neta),
+                    "diferencia_arqueo": float(diferencia),
+                    "monto_declarado": float(total_declarado),
+                    "estado": "cerrado"
+                }
+                try:
+                    db.table("cierres").update(data_cl).eq("id", id_cierre).execute()
+                    st.balloons()
+                    st.success("✅ Turno finalizado y auditoría guardada correctamente.")
+                    time.sleep(2)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error crítico al cerrar: {e}")
+        
         else:
-            st.info("Sin transacciones registradas en este turno."); t_ventas = t_costos = t_ganancia = 0
-
-        st.divider()
-        if st.button("🔴 CERRAR CAJA Y FINALIZAR TURNO", type="primary", use_container_width=True):
-            data_cl = {
-                "fecha_cierre": datetime.now().isoformat(),
-                "total_ventas": float(t_ventas),
-                "total_costos": float(t_costos),
-                "total_ganancias": float(t_ganancia),
-                "estado": "cerrado"
-            }
-            try:
-                db.table("cierres").update(data_cl).eq("id", id_cierre).execute()
-                st.balloons(); st.success("Turno finalizado y guardado."); time.sleep(1.5); st.rerun()
-            except Exception as e: st.error(f"Error al cerrar: {e}")
-
+            st.info("No se han registrado ventas desde la apertura de este turno.")
+            if st.button("Cerrar Turno (Sin Movimientos)", use_container_width=True):
+                db.table("cierres").update({"estado": "cerrado", "fecha_cierre": datetime.now().isoformat()}).eq("id", id_cierre).execute()
+                st.rerun()
