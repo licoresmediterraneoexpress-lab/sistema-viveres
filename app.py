@@ -354,71 +354,92 @@ elif opcion == "🛒 Venta Rápida":
                 except Exception as e:
                     st.error(f"Error de Integridad de Datos: {str(e)}")
 
-# --- MÓDULO: HISTORIAL DE VENTAS PRO ---
-st.divider()
-st.subheader("📊 Historial de Ventas Pro")
-
-# 1. Carga de Datos con Blindaje y Filtro de Turno
-try:
-    # Consultamos las ventas. Filtramos por el id_turno activo por defecto.
-    res_h = db.table("ventas").select("*").eq("id_cierre", int(float(id_turno))).order("fecha", desc=True).execute()
+# 2. MÓDULO DE HISTORIAL DE VENTAS (CORREGIDO Y CERRADO)
+elif opcion == "📜 Historial de Ventas":
+    st.header("📊 Historial de Ventas Pro")
     
-    if res_h.data:
-        df_h = pd.DataFrame(res_h.data)
+    try:
+        # Consultamos las ventas. Filtramos por el id_turno activo.
+        # Asegúrate de que id_turno esté definido antes de este bloque
+        res_h = db.table("ventas").select("*").eq("id_cierre", int(float(id_turno))).order("fecha", desc=True).execute()
         
-        # 2. Buscador Inteligente
-        busqueda = st.text_input("🔍 Buscador Inteligente", placeholder="Filtrar por producto, cliente o ID...")
-        
-        # Filtro de búsqueda (aplica a nombre de producto, cliente o ID)
-        if busqueda:
-            mask = df_h.astype(str).apply(lambda x: x.str.contains(busqueda, case=False)).any(axis=1)
-            df_h = df_h[mask]
-
-        # 3. Formateo de Datos Estilo Excel
-        # Extraer hora, asegurar tipos y formatear strings
-        df_h['Hora'] = pd.to_datetime(df_h['fecha']).dt.strftime('%I:%M %p')
-        df_h['Fecha_F'] = pd.to_datetime(df_h['fecha']).dt.strftime('%d/%m/%Y')
-
-        # --- ENCABEZADOS DE TABLA PERSONALIZADA ---
-        h_col1, h_col2, h_col3, h_col4, h_col5, h_col6, h_col7 = st.columns([1, 1.2, 2.5, 0.8, 1.5, 1.2, 1.5])
-        h_col1.write("**ID**")
-        h_col2.write("**Hora**")
-        h_col3.write("**Producto / Resumen**")
-        h_col4.write("**Cant**")
-        h_col5.write("**Monto Bs**")
-        h_col6.write("**Monto $**")
-        h_col7.write("**Acciones**")
-        st.divider()
-
-        # 4. Renderizado de Filas
-        for index, fila in df_h.iterrows():
-            # Estilo para ventas anuladas
-            es_anulada = fila['estado'] == 'Anulado'
-            st_style = "color: #9e9e9e; text-decoration: line-through;" if es_anulada else "color: white;"
+        if res_h.data:
+            df_h = pd.DataFrame(res_h.data)
             
-            c1, c2, c3, c4, c5, c6, c7 = st.columns([1, 1.2, 2.5, 0.8, 1.5, 1.2, 1.5])
+            # Buscador Inteligente
+            busqueda = st.text_input("🔍 Buscador Inteligente", placeholder="Filtrar por producto, cliente o ID...")
             
-            # Formateo profesional de moneda
-            monto_bs_f = f"{fila['monto_cobrado_bs']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-            monto_usd_f = f"${fila['total_usd']:,.2f}"
+            if busqueda:
+                mask = df_h.astype(str).apply(lambda x: x.str.contains(busqueda, case=False)).any(axis=1)
+                df_h = df_h[mask]
 
-            c1.markdown(f"<span style='{st_style}'>{int(fila['id'])}</span>", unsafe_allow_html=True)
-            c2.markdown(f"<span style='{st_style}'>{fila['Hora']}</span>", unsafe_allow_html=True)
-            c3.markdown(f"<span style='{st_style}'>{fila['producto']}</span>", unsafe_allow_html=True)
-            c4.markdown(f"<span style='{st_style}'>{int(fila['cantidad'])}</span>", unsafe_allow_html=True)
-            c5.markdown(f"<span style='{st_style}'>{monto_bs_f}</span>", unsafe_allow_html=True)
-            c6.markdown(f"<span style='{st_style}'>{monto_usd_f}</span>", unsafe_allow_html=True)
-
-            # --- BOTONES DE ACCIÓN ---
-            col_btn1, col_btn2 = c7.columns(2)
+            # Formateo de Datos
+            df_h['Hora'] = pd.to_datetime(df_h['fecha']).dt.strftime('%I:%M %p')
             
-            # Botón Reimprimir
-            if col_btn1.button("📋", key=f"reimp_{fila['id']}", help="Reimprimir Ticket"):
-                # Aquí lógica para cargar el ticket en st.session_state
-                st.session_state.ultimo_ticket = f"Reimpresión Venta #{fila['id']}" # Solo ejemplo
-                st.toast(f"Ticket #{fila['id']} listo para impresión")
+            # --- TABLA DE VISUALIZACIÓN ---
+            h_col1, h_col2, h_col3, h_col4, h_col5, h_col6, h_col7 = st.columns([1, 1.2, 2.5, 0.8, 1.5, 1.2, 1.5])
+            h_col1.write("**ID**")
+            h_col2.write("**Hora**")
+            h_col3.write("**Producto**")
+            h_col4.write("**Cant**")
+            h_col5.write("**Bs**")
+            h_col6.write("**$**")
+            h_col7.write("**Acción**")
+            st.divider()
 
-            # Botón Anular (Solo si no está anulada)
+            for index, fila in df_h.iterrows():
+                es_anulada = fila['estado'] == 'Anulado'
+                st_style = "color: #9e9e9e; text-decoration: line-through;" if es_anulada else "color: white;"
+                
+                c1, c2, c3, c4, c5, c6, c7 = st.columns([1, 1.2, 2.5, 0.8, 1.5, 1.2, 1.5])
+                
+                monto_bs_f = f"{fila['monto_cobrado_bs']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                monto_usd_f = f"${fila['total_usd']:,.2f}"
+
+                c1.markdown(f"<span style='{st_style}'>{int(fila['id'])}</span>", unsafe_allow_html=True)
+                c2.markdown(f"<span style='{st_style}'>{fila['Hora']}</span>", unsafe_allow_html=True)
+                c3.markdown(f"<span style='{st_style}'>{fila['producto']}</span>", unsafe_allow_html=True)
+                c4.markdown(f"<span style='{st_style}'>{int(fila['cantidad'])}</span>", unsafe_allow_html=True)
+                c5.markdown(f"<span style='{st_style}'>{monto_bs_f}</span>", unsafe_allow_html=True)
+                c6.markdown(f"<span style='{st_style}'>{monto_usd_f}</span>", unsafe_allow_html=True)
+
+                # Acciones
+                col_btn1, col_btn2 = c7.columns(2)
+                if col_btn1.button("📋", key=f"reimp_{fila['id']}"):
+                    st.toast(f"Ticket #{fila['id']} cargado")
+
+                if not es_anulada:
+                    if col_btn2.button("🚫", key=f"btn_anul_{fila['id']}"):
+                        try:
+                            # Reversión de Stock
+                            items_vendidos = fila['items']
+                            for item in items_vendidos:
+                                res_inv = db.table("inventario").select("stock").eq("id", item['id']).execute()
+                                if res_inv.data:
+                                    stock_actual = float(res_inv.data[0]['stock'])
+                                    db.table("inventario").update({"stock": stock_actual + float(item['cantidad'])}).eq("id", item['id']).execute()
+
+                            db.table("ventas").update({"estado": "Anulado"}).eq("id", int(fila['id'])).execute()
+                            st.success("Anulada")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error: {e}")
+                else:
+                    col_btn2.write("✅")
+
+            # Resumen final
+            st.divider()
+            df_activos = df_h[df_h['estado'] != 'Anulado']
+            t1, t2, t3 = st.columns(3)
+            t1.metric("Total $", f"${df_activos['total_usd'].sum():,.2f}")
+            t2.metric("Total Bs", f"{df_activos['monto_cobrado_bs'].sum():,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+            t3.metric("Unidades", int(df_activos['cantidad'].sum()))
+
+        else:
+            st.info("Sin ventas en este turno.")
+
+    except Exception as e:
+        st.error(f"Error en historial: {e}")
 
 # --- 5. MÓDULO GASTOS ---
 elif opcion == "💸 Gastos":
@@ -542,6 +563,7 @@ elif opcion == "📊 Cierre de Caja":
             if st.button("Cerrar Turno (Sin Ventas)"):
                 db.table("cierres").update({"estado": "cerrado", "fecha_cierre": datetime.now().isoformat()}).eq("id", id_cierre).execute()
                 st.rerun()
+
 
 
 
