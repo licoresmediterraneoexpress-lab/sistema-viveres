@@ -251,7 +251,7 @@ elif opcion == "🛒 Venta Rápida":
 
             st.divider()
             
-            # --- SECCIÓN DE PAGOS ---
+           # --- SECCIÓN DE PAGOS ---
             total_vef = total_usd * tasa_v
             st.markdown(f"### Total: `${total_usd:.2f}` / `{total_vef:,.2f} Bs`")
             
@@ -261,15 +261,16 @@ elif opcion == "🛒 Venta Rápida":
             
             with st.expander("💳 Registrar Pagos Mixtos", expanded=True):
                 px1, px2 = st.columns(2)
-                p_efectivo_usd = px1.number_input("Efectivo $", min_value=0.0)
-                p_efectivo_bs = px2.number_input("Efectivo Bs", min_value=0.0)
-                p_zelle = px1.number_input("Zelle $", min_value=0.0)
-                p_pmovil = px2.number_input("Pago Móvil Bs", min_value=0.0)
-                p_punto = px1.number_input("Punto Bs", min_value=0.0)
-                p_otros = px2.number_input("Otros $", min_value=0.0)
+                # Inputs de usuario mapeados a las variables correctas
+                p_divisas = px1.number_input("Efectivo $ (Divisas)", min_value=0.0, step=1.0)
+                p_efectivo = px2.number_input("Efectivo Bs", min_value=0.0, step=1.0)
+                p_zelle = px1.number_input("Zelle $", min_value=0.0, step=1.0)
+                p_movil = px2.number_input("Pago Móvil Bs", min_value=0.0, step=1.0)
+                p_punto = px1.number_input("Punto Bs", min_value=0.0, step=1.0)
+                p_otros = px2.number_input("Otros $", min_value=0.0, step=1.0)
 
-            # Cálculo de Balance en USD para lógica interna
-            total_pagado_usd = p_efectivo_usd + p_zelle + p_otros + ((p_efectivo_bs + p_pmovil + p_punto) / tasa_v)
+            # Cálculo de Balance en USD para validación (convertimos los Bs a tasa del día)
+            total_pagado_usd = p_divisas + p_zelle + p_otros + ((p_efectivo + p_movil + p_punto) / tasa_v)
             balance_usd = total_pagado_usd - monto_cobrar_usd
             
             if balance_usd < -0.01:
@@ -288,30 +289,32 @@ elif opcion == "🛒 Venta Rápida":
                             "nombre": i['nombre'],
                             "cantidad": i['cant'],
                             "precio_u": i['precio'],
-                            "subtotal": i['cant'] * i['precio']
+                            "subtotal": round(i['cant'] * i['precio'], 2)
                         })
 
-                    # 2. Registrar en DB 'ventas'
+                    # 2. Registrar en DB 'ventas' con nombres de columna exactos
                     venta_data = {
                         "id_cierre": id_turno,
-                        "producto": f"Venta de {len(st.session_state.car)} productos", # Cabecera resumen
-                        "total_usd": total_usd,
+                        "producto": f"Venta de {len(st.session_state.car)} productos",
+                        "total_usd": round(total_usd, 2),
                         "tasa_usada": tasa_v,
-                        "pago_efectivo": p_efectivo_usd,
+                        "pago_divisas": p_divisas,   # Efectivo en $
+                        "pago_efectivo": p_efectivo, # Efectivo en Bs
                         "pago_zelle": p_zelle,
-                        "pago_pmovil": p_pmovil,
+                        "pago_movil": p_movil,       # Corregido: pago_movil
                         "pago_punto": p_punto,
-                        "items": items_json, # Columna JSONB
+                        "items": items_json,
                         "fecha": datetime.now().isoformat()
                     }
                     db.table("ventas").insert(venta_data).execute()
 
-                    # 3. Actualización de Stock (Resta automática)
+                    # 3. Actualización de Stock (Resta automática en inventario)
                     for item in st.session_state.car:
+                        # Obtenemos stock actual desde la sesión para asegurar precisión
                         nuevo_stock = float(item['stock']) - float(item['cant'])
                         db.table("inventario").update({"stock": nuevo_stock}).eq("id", item['id']).execute()
 
-                    # 4. Crear Ticket Detallado desde el JSON
+                    # 4. Crear Ticket Detallado
                     filas_ticket = ""
                     for it in items_json:
                         filas_ticket += f"""
@@ -521,6 +524,7 @@ elif opcion == "📊 Cierre de Caja":
             if st.button("Cerrar Turno (Sin Ventas)"):
                 db.table("cierres").update({"estado": "cerrado", "fecha_cierre": datetime.now().isoformat()}).eq("id", id_cierre).execute()
                 st.rerun()
+
 
 
 
