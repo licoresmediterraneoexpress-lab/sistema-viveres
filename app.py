@@ -294,42 +294,110 @@ elif opcion == "🛒 Punto de Venta":
             except Exception as e:
                 st.error(f"Error crítico al guardar: {e}")
 
-# --- 6. MÓDULO HISTORIAL (PROFESIONAL) ---
+# --- 6. MÓDULO HISTORIAL (PROFESIONAL Y AUDITABLE) ---
 elif opcion == "📜 Historial":
-    st.markdown("<h1 class='main-header'>📜 Historial de Ventas</h1>", unsafe_allow_html=True)
-    res_h = db.table("ventas").select("*").eq("id_cierre", id_turno).order("created_at", desc=True).execute()
+    if not st.session_state.get('id_turno'):
+        st.error("⚠️ DEBE ABRIR CAJA PARA VER EL HISTORIAL DEL TURNO"); st.stop()
     
-    if res_h.data:
-        df_h = pd.DataFrame(res_h.data)
-        df_h['hora'] = pd.to_datetime(df_h['created_at']).dt.strftime('%H:%M')
+    id_turno = st.session_state.id_turno
+
+    st.markdown("<h1 class='main-header'>📜 Historial de Ventas</h1>", unsafe_allow_html=True)
+    st.markdown(f"**Turno Activo ID:** `{id_turno}`")
+
+    # 1. CARGA DE DATOS (Filtrado por Turno Activo - Soporta Cruce de Medianoche)
+    try:
+        # Traemos todas las ventas del turno, ordenadas por fecha/hora
+        res_h = db.table("ventas").select("*").eq("id_cierre", id_turno).order("fecha", desc=True).execute()
+        data_ventas = res_h.data if res_h.data else []
+    except Exception as e:
+        st.error(f"Error al conectar con la base de datos: {e}")
+        data_ventas = []
+
+    if data_ventas:
+        # Convertir a DataFrame para búsqueda instantánea en memoria
+        df_h = pd.DataFrame(data_ventas)
         
-        # Estructura de Tabla Manual para control total
-        cols = st.columns([1, 1, 3, 1.5, 1.5, 1.5])
-        headers = ["ID", "HORA", "PRODUCTOS", "MONTO $", "COBRADO BS", "ACCIÓN"]
-        for col, h in zip(cols, headers): col.write(f"**{h}**")
+        # Formateo de tipos para evitar StreamlitMixedNumericTypesError
+        df_h['total_usd'] = df_h['total_usd'].astype(float)
+        df_h['monto_cobrado_bs'] = df_h['monto_cobrado_bs'].astype(float)
+        
+        # Extraer Hora para la visualización
+        df_h['hora'] = pd.to_datetime(df_h['fecha']).dt.strftime('%I:%M %p')
+
+        # 2. BUSCADOR INTELIGENTE (Filtros dinámicos)
+        c_busc1, c_busc2 = st.columns([2, 1])
+        busqueda = c_busc1.text_input("🔍 Buscar por producto o cliente...", placeholder="Ej: Harina / Juan Perez").lower()
+        estado_filtro = c_busc2.selectbox("Filtrar por Estado", ["Todos", "Finalizado", "Anulado"])
+
+        # Aplicar filtros al DataFrame
+        if busqueda:
+            mask = df_h['producto'].str.lower().str.contains(busqueda) | df_h['cliente'].astype(str).str.lower().str.contains(busqueda)
+            df_h = df_h[mask]
+        
+        if estado_filtro != "Todos":
+            df_h = df_h[df_h['estado'] == estado_filtro]
+
+        # 3. INTERFAZ DE TABLA ESTILO EXCEL
+        st.divider()
+        cols_header = st.columns([0.8, 1, 3, 1.2, 1.2, 1.3])
+        headers = ["ID", "HORA", "DESCRIPCIÓN PRODUCTOS", "TOTAL $", "TOTAL BS", "ACCIONES"]
+        for col, h in zip(cols_header, headers):
+            col.markdown(f"**{h}**")
         st.divider()
 
+        # 4. RENDERIZADO DE FILAS CON LÓGICA DE ANULACIÓN
         for _, fila in df_h.iterrows():
-            st_style = "color: gray; text-decoration: line-through;" if fila['estado'] == 'Anulado' else ""
-            c1, c2, c3, c4, c5, c6 = st.columns([1, 1, 3, 1.5, 1.5, 1.5])
+            # Estilo visual para ventas anuladas
+            es_anulado = fila['estado'] == 'Anulado'
+            st_style = "color: #9e9e9e; text-decoration: line-through;" if es_anulado else "color: white;"
+            
+            c1, c2, c3, c4, c5, c6 = st.columns([0.8, 1, 3, 1.2, 1.2, 1.3])
+            
             c1.markdown(f"<span style='{st_style}'>{fila['id']}</span>", unsafe_allow_html=True)
             c2.markdown(f"<span style='{st_style}'>{fila['hora']}</span>", unsafe_allow_html=True)
-            c3.markdown(f"<span style='{st_style}'>{fila['producto'][:40]}...</span>", unsafe_allow_html=True)
-            c4.markdown(f"<span style='{st_style}'>${fila['total_usd']:.2f}</span>", unsafe_allow_html=True)
-            c5.markdown(f"<span style='{st_style}'>{fila['monto_cobrado_bs']:,.2f}</span>", unsafe_allow_html=True)
             
-            if fila['estado'] != 'Anulado':
-                if c6.button("🚫 Anular", key=f"anul_{fila['id']}"):
-                    # Revertir Stock
-                    for item in fila['items']:
-                        inv = db.table("inventario").select("stock").eq("id", item['id']).execute()
-                        db.table("inventario").update({"stock": inv.data[0]['stock'] + item['cant']}).eq("id", item['id']).execute()
-                    db.table("ventas").update({"estado": "Anulado"}).eq("id", fila['id']).execute()
-                    st.rerun()
+            # Resumen de productos (tooltip si es muy largo)
+            prod_txt = fila['producto'][:45] + "..." if len(fila['producto']) > 45 else fila['producto']
+            c3.markdown(f"<span style='{st_style}' title='{fila['producto']}'>{prod_txt}</span>", unsafe_allow_html=True)
+            
+            c4.markdown(f"<span style='{st_style}'>${fila['total_usd']:,.2f}</span>", unsafe_allow_html=True)
+            c5.markdown(f"<span style='{st_style}'>{fila['monto_cobrado_bs']:,.2f} Bs</span>", unsafe_allow_html=True)
+
+            # Botón de Anulación
+            if not es_anulado:
+                if c6.button("🚫 Anular", key=f"btn_anul_{fila['id']}", use_container_width=True):
+                    try:
+                        with st.spinner("Revirtiendo stock..."):
+                            # REVERSIÓN DE STOCK (Iterar sobre el JSONB 'items')
+                            for item in fila['items']:
+                                # 1. Obtener stock actual
+                                res_inv = db.table("inventario").select("stock").eq("id", item['id']).execute()
+                                if res_inv.data:
+                                    stock_actual = float(res_inv.data[0]['stock'])
+                                    cantidad_vendida = float(item['cant'])
+                                    nuevo_stock = stock_actual + cantidad_vendida
+                                    
+                                    # 2. Actualizar stock
+                                    db.table("inventario").update({"stock": nuevo_stock}).eq("id", item['id']).execute()
+                            
+                            # 3. Marcar venta como Anulada
+                            db.table("ventas").update({"estado": "Anulado"}).eq("id", fila['id']).execute()
+                            
+                            st.toast(f"Venta #{fila['id']} anulada y stock devuelto", icon="✅")
+                            time.sleep(1)
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"Error en el proceso de anulación: {e}")
             else:
-                c6.write("Anulada")
+                c6.markdown("<span style='color: #ff4b4b; font-weight: bold;'>ANULADA</span>", unsafe_allow_html=True)
+
+        # 5. RESUMEN RÁPIDO DEL FILTRO
+        st.divider()
+        total_filtro_usd = df_h[df_h['estado'] != 'Anulado']['total_usd'].sum()
+        st.subheader(f"Total Visible en Turno: ${total_filtro_usd:,.2f}")
+
     else:
-        st.info("No hay ventas en este turno.")
+        st.info("No se registraron ventas en este turno todavía.")
 
 # --- 7. MÓDULO GASTOS ---
 elif opcion == "💸 Gastos":
@@ -370,5 +438,6 @@ elif opcion == "📊 Cierre de Caja":
         if st.button("🔴 CERRAR TURNO ACTUAL", type="primary"):
             db.table("cierres").update({"estado": "cerrado", "fecha_cierre": datetime.now().isoformat()}).eq("id", id_turno).execute()
             st.rerun()
+
 
 
