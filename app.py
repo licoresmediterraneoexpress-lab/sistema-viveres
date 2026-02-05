@@ -254,7 +254,102 @@ elif opcion == "🛒 Venta Rápida":
             st.markdown(f"### Total Sugerido: `{sugerido_bs:,.2f} Bs` / `{total_usd:,.2f} $`")
             
             # Campo para ajuste de redondeo manual
-            monto_ajustado_bs = st.number_input("💵 Total a Cobrar en Bs (Ajustado)", value=float(sugerido_bs), step=0
+            monto_ajustado_bs = st.number_input("💵 Total a Cobrar en Bs (Ajustado)", value=float(sugerido_bs), step=0.1)
+            
+            with st.expander("💳 REGISTRO DE PAGOS MIXTOS", expanded=True):
+                pc1, pc2 = st.columns(2)
+                p_ef_bs = pc1.number_input("Efectivo Bs", 0.0)
+                p_pm_bs = pc1.number_input("Pago Móvil Bs", 0.0)
+                p_pu_bs = pc1.number_input("Punto Venta Bs", 0.0)
+                
+                p_di_usd = pc2.number_input("Divisas $", 0.0)
+                p_ze_usd = pc2.number_input("Zelle $", 0.0)
+                p_ot_usd = pc2.number_input("Otros $", 0.0)
+
+            # Cálculo de Vuelto basado en el Monto Ajustado
+            total_pagado_bs = p_ef_bs + p_pm_bs + p_pu_bs + ((p_di_usd + p_ze_usd + p_ot_usd) * tasa_v)
+            vuelto_bs = total_pagado_bs - monto_ajustado_bs
+            
+            if vuelto_bs >= 0:
+                st.metric("Vuelto a entregar (Bs)", f"{vuelto_bs:,.2f} Bs", delta_color="normal")
+            else:
+                st.metric("Faltante (Bs)", f"{abs(vuelto_bs):,.2f} Bs", delta_color="inverse")
+
+            # --- E. PROCESAMIENTO ---
+            if st.button("🚀 FINALIZAR VENTA", type="primary", use_container_width=True):
+                if vuelto_bs < -0.01:
+                    st.error("El pago está incompleto.")
+                else:
+                    try:
+                        ahora = datetime.now()
+                        id_tx = f"TX-{ahora.strftime('%y%m%d%H%M%S')}"
+                        
+                        for x in st.session_state.car:
+                            # 1. Insertar en ventas
+                            db.table("ventas").insert({
+                                "id_transaccion": id_tx, "id_cierre": id_turno,
+                                "producto": x['nombre'], "cantidad": x['cant'],
+                                "total_usd": x['u'] * x['cant'], "tasa_cambio": tasa_v,
+                                "pago_efectivo": p_ef_bs, "pago_punto": p_pu_bs,
+                                "pago_movil": p_pm_bs, "pago_zelle": p_ze_usd,
+                                "pago_otros": p_ot_usd, "pago_divisas": p_di_usd,
+                                "costo_venta": x['costo'] * x['cant'], 
+                                "monto_real_vef": monto_ajustado_bs,
+                                "fecha": ahora.isoformat()
+                            }).execute()
+                            
+                            # 2. Restar stock
+                            inv = db.table("inventario").select("stock").eq("id", x['id']).execute()
+                            if inv.data:
+                                db.table("inventario").update({"stock": inv.data[0]['stock'] - x['cant']}).eq("id", x['id']).execute()
+
+                        st.session_state.ultimo_ticket = f"""
+                        <div style='background:white; color:black; padding:15px; border:1px solid #ddd; font-family:monospace;'>
+                            <h4 style='text-align:center;'>MEDITERRANEO EXPRESS</h4>
+                            <p>ID: {id_tx}<br>Fecha: {ahora.strftime('%d/%m/%Y %H:%M')}</p><hr>
+                            <p><b>Total Bs: {monto_ajustado_bs:,.2f}</b><br>Tasa: {tasa_v}</p>
+                            <p>Pagado: {total_pagado_bs:,.2f} Bs<br>Vuelto: {max(0, vuelto_bs):,.2f} Bs</p>
+                        </div>
+                        """
+                        st.session_state.venta_finalizada = True
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error procesando venta: {e}")
+
+    # --- F. HISTORIAL CON REVERSA DE STOCK ---
+    st.divider()
+    st.subheader("📊 Historial del Turno Actual")
+    
+    try:
+        hist_data = db.table("ventas").select("*").eq("id_cierre", id_turno).order("fecha", desc=True).execute()
+        if hist_data.data:
+            for v in hist_data.data:
+                fecha_v = datetime.fromisoformat(v['fecha'])
+                with st.container(border=True):
+                    c1, c2, c3, c4, c5, c6 = st.columns([1, 2.5, 1, 1, 1.2, 1])
+                    c1.write(fecha_v.strftime("%H:%M"))
+                    c2.write(f"**{v['producto']}**")
+                    c3.write(f"x{v['cantidad']}")
+                    c4.write(f"${v['total_usd']:.2f}")
+                    c5.write(f"{v['monto_real_vef']:.2f} Bs")
+                    
+                    if c6.button("🚫 Anular", key=f"anular_{v['id']}"):
+                        # LOGICA DE REVERSA
+                        # 1. Obtener producto y sumar stock
+                        item_inv = db.table("inventario").select("stock").eq("nombre", v['producto']).execute()
+                        if item_inv.data:
+                            nuevo_stock = item_inv.data[0]['stock'] + v['cantidad']
+                            db.table("inventario").update({"stock": nuevo_stock}).eq("nombre", v['producto']).execute()
+                        
+                        # 2. Eliminar venta
+                        db.table("ventas").delete().eq("id", v['id']).execute()
+                        st.toast(f"Venta {v['id']} anulada. Stock recuperado.")
+                        time.sleep(1)
+                        st.rerun()
+        else:
+            st.info("No hay ventas en este turno.")
+    except Exception as e:
+        st.error(f"Error cargando historial: {e}")
 
     # --- SECCIÓN: HISTORIAL DEL TURNO ACTUAL ---
     st.divider()
@@ -415,6 +510,7 @@ elif opcion == "📊 Cierre de Caja":
             if st.button("Cerrar Turno (Sin Ventas)"):
                 db.table("cierres").update({"estado": "cerrado", "fecha_cierre": datetime.now().isoformat()}).eq("id", id_cierre).execute()
                 st.rerun()
+
 
 
 
