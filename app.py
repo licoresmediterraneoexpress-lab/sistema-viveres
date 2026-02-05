@@ -168,7 +168,7 @@ elif opcion == "🛒 Venta Rápida":
             st.stop()
         turno_actual = res_caja.data[0]
         id_turno = turno_actual['id']
-        tasa_v = st.session_state.tasa_dia
+        tasa_v = float(st.session_state.tasa_dia)
     except Exception as e:
         st.error(f"Error de Conexión DB: {e}"); st.stop()
 
@@ -193,7 +193,6 @@ elif opcion == "🛒 Venta Rápida":
 
     with col_izq:
         st.subheader("🔍 Selección de Productos")
-        # El widget de búsqueda no dispara recarga total si se maneja correctamente
         busc_term = st.text_input("Filtrar inventario...", placeholder="Nombre del producto...", key="pos_search").strip()
         
         if busc_term:
@@ -205,11 +204,10 @@ elif opcion == "🛒 Venta Rápida":
                         c1.markdown(f"**{p['nombre']}**\n\nStock: `{p['stock']}`")
                         c2.markdown(f"<p style='color:green; font-weight:bold; margin-top:10px;'>${p['precio_detal']:.2f}</p>", unsafe_allow_html=True)
                         if c3.button("➕ Agregar", key=f"add_{p['id']}", use_container_width=True):
-                            # Lógica para no duplicar filas en el carrito, sino sumar cantidad
                             exists = False
                             for item in st.session_state.car:
                                 if item['id'] == p['id']:
-                                    item['cant'] += 1
+                                    item['cant'] += 1.0
                                     exists = True
                                     break
                             if not exists:
@@ -232,8 +230,8 @@ elif opcion == "🛒 Venta Rápida":
             
             for i, item in enumerate(st.session_state.car):
                 # Aplicar precio mayorista si aplica
-                item['u'] = item['p_mayor'] if item['cant'] >= item['min_m'] else item['p_detal']
-                subtotal_item = item['u'] * item['cant']
+                item['u'] = float(item['p_mayor'] if item['cant'] >= item['min_m'] else item['p_detal'])
+                subtotal_item = float(item['u'] * item['cant'])
                 total_usd += subtotal_item
                 
                 with st.container(border=True):
@@ -242,88 +240,89 @@ elif opcion == "🛒 Venta Rápida":
                     if r2.button("🗑️", key=f"del_{i}"): idx_remove = i
                     
                     # ENTRADA NUMÉRICA DIRECTA
-                    item['cant'] = st.number_input("Cant:", min_value=0.1, value=float(item['cant']), step=1.0, key=f"qty_{i}")
+                    item['cant'] = st.number_input("Cant:", min_value=1.0, value=float(item['cant']), step=1.0, key=f"qty_{i}")
 
             if idx_remove > -1:
-                st.session_state.car.pop(idx_remove); st.rerun()
+                st.session_state.car.pop(idx_remove)
+                st.rerun()
 
             st.divider()
             
             # --- D. LÓGICA DE COBRO Y REDONDEO ---
-            sugerido_bs = total_usd * tasa_v
+            sugerido_bs = float(total_usd * tasa_v)
             st.markdown(f"### Total Sugerido: `{sugerido_bs:,.2f} Bs` / `{total_usd:,.2f} $`")
             
-            # Campo para ajuste de redondeo manual
             monto_ajustado_bs = st.number_input("💵 Total a Cobrar en Bs (Ajustado)", value=float(sugerido_bs), step=0.1)
             
             with st.expander("💳 REGISTRO DE PAGOS MIXTOS", expanded=True):
                 pc1, pc2 = st.columns(2)
-                p_ef_bs = pc1.number_input("Efectivo Bs", 0.0)
-                p_pm_bs = pc1.number_input("Pago Móvil Bs", 0.0)
-                p_pu_bs = pc1.number_input("Punto Venta Bs", 0.0)
+                p_ef_bs = pc1.number_input("Efectivo Bs", 0.0, step=0.01)
+                p_pm_bs = pc1.number_input("Pago Móvil Bs", 0.0, step=0.01)
+                p_pu_bs = pc1.number_input("Punto Venta Bs", 0.0, step=0.01)
                 
-                p_di_usd = pc2.number_input("Divisas $", 0.0)
-                p_ze_usd = pc2.number_input("Zelle $", 0.0)
-                p_ot_usd = pc2.number_input("Otros $", 0.0)
+                p_di_usd = pc2.number_input("Divisas $", 0.0, step=0.01)
+                p_ze_usd = pc2.number_input("Zelle $", 0.0, step=0.01)
+                p_ot_usd = pc2.number_input("Otros $", 0.0, step=0.01)
 
-            # Cálculo de Vuelto basado en el Monto Ajustado
-            total_pagado_bs = p_ef_bs + p_pm_bs + p_pu_bs + ((p_di_usd + p_ze_usd + p_ot_usd) * tasa_v)
-            vuelto_bs = total_pagado_bs - monto_ajustado_bs
+            # Cálculo de Vuelto (Protección contra NameError al estar dentro del if car)
+            total_pagado_bs = float(p_ef_bs + p_pm_bs + p_pu_bs + ((p_di_usd + p_ze_usd + p_ot_usd) * tasa_v))
+            vuelto_bs = float(total_pagado_bs - monto_ajustado_bs)
             
             if vuelto_bs >= 0:
-                st.metric("Vuelto a entregar (Bs)", f"{vuelto_bs:,.2f} Bs", delta_color="normal")
+                st.metric("Vuelto a entregar (Bs)", f"{vuelto_bs:,.2f} Bs")
             else:
                 st.metric("Faltante (Bs)", f"{abs(vuelto_bs):,.2f} Bs", delta_color="inverse")
 
-        # --- E. PROCESAMIENTO CORREGIDO ---
-if st.button("🚀 FINALIZAR VENTA", type="primary", use_container_width=True):
-    if vuelto_bs < -0.01:
-        st.error("El pago está incompleto.")
-    else:
-        try:
-            ahora = datetime.now()
-            id_tx = f"TX-{ahora.strftime('%y%m%d%H%M%S')}"
-            
-            for x in st.session_state.car:
-                # 1. Insertar en ventas con tipos de datos explícitos
-                db.table("ventas").insert({
-                    "id_transaccion": id_tx, 
-                    "id_cierre": id_turno,
-                    "producto": str(x['nombre']), 
-                    "cantidad": int(x['cant']),  # <-- CORRECCIÓN: Forzar entero
-                    "total_usd": float(x['u'] * x['cant']), 
-                    "tasa_cambio": float(tasa_v),
-                    "pago_efectivo": float(p_ef_bs), 
-                    "pago_punto": float(p_pu_bs),
-                    "pago_movil": float(p_pm_bs), 
-                    "pago_zelle": float(p_ze_usd),
-                    "pago_otros": float(p_ot_usd), 
-                    "pago_divisas": float(p_di_usd),
-                    "costo_venta": float(x['costo'] * x['cant']), 
-                    "monto_real_vef": float(monto_ajustado_bs),
-                    "fecha": ahora.isoformat()
-                }).execute()
-                
-                # 2. Restar stock asegurando enteros
-                inv = db.table("inventario").select("stock").eq("id", x['id']).execute()
-                if inv.data:
-                    nuevo_stock = int(inv.data[0]['stock']) - int(x['cant']) # <-- CORRECCIÓN
-                    db.table("inventario").update({"stock": nuevo_stock}).eq("id", x['id']).execute()
+            # --- E. PROCESAMIENTO CORREGIDO (DENTRO DEL CONDICIONAL DEL CARRITO) ---
+            if st.button("🚀 FINALIZAR VENTA", type="primary", use_container_width=True):
+                if vuelto_bs < -0.05: # Margen pequeño por redondeo float
+                    st.error("El pago está incompleto.")
+                else:
+                    try:
+                        ahora = datetime.now()
+                        id_tx = f"TX-{ahora.strftime('%y%m%d%H%M%S')}"
+                        
+                        for x in st.session_state.car:
+                            # 1. Insertar en ventas forzando tipos para Supabase
+                            db.table("ventas").insert({
+                                "id_transaccion": str(id_tx), 
+                                "id_cierre": int(id_turno),
+                                "producto": str(x['nombre']), 
+                                "cantidad": int(x['cant']),  
+                                "total_usd": float(x['u'] * x['cant']), 
+                                "tasa_cambio": float(tasa_v),
+                                "pago_efectivo": float(p_ef_bs), 
+                                "pago_punto": float(p_pu_bs),
+                                "pago_movil": float(p_pm_bs), 
+                                "pago_zelle": float(p_ze_usd),
+                                "pago_otros": float(p_ot_usd), 
+                                "pago_divisas": float(p_di_usd),
+                                "costo_venta": float(x['costo'] * x['cant']), 
+                                "monto_real_vef": float(monto_ajustado_bs),
+                                "fecha": ahora.isoformat()
+                            }).execute()
+                            
+                            # 2. Restar stock
+                            inv_res = db.table("inventario").select("stock").eq("id", x['id']).execute()
+                            if inv_res.data:
+                                current_stock = int(inv_res.data[0]['stock'])
+                                db.table("inventario").update({"stock": current_stock - int(x['cant'])}).eq("id", x['id']).execute()
 
-            # Guardar ticket en sesión
-            st.session_state.ultimo_ticket = f"""
-            <div style='background:white; color:black; padding:15px; border:1px solid #ddd; font-family:monospace;'>
-                <h4 style='text-align:center;'>MEDITERRANEO EXPRESS</h4>
-                <p>ID: {id_tx}<br>Fecha: {ahora.strftime('%d/%m/%Y %H:%M')}</p><hr>
-                <p><b>Total Bs: {float(monto_ajustado_bs):,.2f}</b><br>Tasa: {tasa_v}</p>
-                <p>Pagado: {float(total_pagado_bs):,.2f} Bs<br>Vuelto: {max(0, float(vuelto_bs)):,.2f} Bs</p>
-            </div>
-            """
-            st.session_state.venta_finalizada = True
-            st.rerun()
-        except Exception as e:
-            st.error(f"Error procesando venta: {e}")
-# --- F. HISTORIAL DE VENTAS (TIPO EXCEL) ---
+                        # Generar ticket
+                        st.session_state.ultimo_ticket = f"""
+                        <div style='background:white; color:black; padding:15px; border:1px solid #ddd; font-family:monospace;'>
+                            <h4 style='text-align:center;'>MEDITERRANEO EXPRESS</h4>
+                            <p>ID: {id_tx}<br>Fecha: {ahora.strftime('%d/%m/%Y %H:%M')}</p><hr>
+                            <p><b>Total Bs: {float(monto_ajustado_bs):,.2f}</b><br>Tasa: {tasa_v}</p>
+                            <p>Pagado: {total_pagado_bs:,.2f} Bs<br>Vuelto: {max(0, vuelto_bs):,.2f} Bs</p>
+                        </div>
+                        """
+                        st.session_state.venta_finalizada = True
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error procesando venta: {e}")
+
+    # --- F. HISTORIAL DE VENTAS (TIPO EXCEL) ---
     st.divider()
     st.subheader("📊 Historial del Turno Actual")
     
@@ -506,6 +505,7 @@ elif opcion == "📊 Cierre de Caja":
             if st.button("Cerrar Turno (Sin Ventas)"):
                 db.table("cierres").update({"estado": "cerrado", "fecha_cierre": datetime.now().isoformat()}).eq("id", id_cierre).execute()
                 st.rerun()
+
 
 
 
