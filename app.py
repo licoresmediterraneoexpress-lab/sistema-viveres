@@ -163,7 +163,7 @@ elif opcion == "🛒 Venta Rápida":
     if 'tasa_pos' not in st.session_state:
         st.session_state.tasa_pos = float(st.session_state.get('tasa_dia', 1.0))
 
-    # Obtener Turno Activo (id_cierre)
+    # Obtener Turno Activo
     try:
         res_caja = db.table("cierres").select("*").eq("estado", "abierto").order("fecha_apertura", desc=True).limit(1).execute()
         if not res_caja.data:
@@ -192,7 +192,6 @@ elif opcion == "🛒 Venta Rápida":
         c_p1, c_p2 = st.columns([1, 1.5])
         with c_p1:
             st.markdown(st.session_state.ultimo_ticket, unsafe_allow_html=True)
-            # Aquí podrías agregar un botón para descargar PDF usando fpdf
         with c_p2:
             st.success("### ✅ VENTA REGISTRADA")
             if st.button("🔄 REGISTRAR NUEVA VENTA", type="primary", use_container_width=True):
@@ -201,7 +200,7 @@ elif opcion == "🛒 Venta Rápida":
                 st.rerun()
         st.stop()
 
-    # C. Layout POS: Buscador (Izquierda) | Carrito y Cobro (Derecha)
+    # C. Layout POS
     col_izq, col_der = st.columns([1.1, 1])
 
     with col_izq:
@@ -229,28 +228,22 @@ elif opcion == "🛒 Venta Rápida":
                                     "precio": float(p['precio_detal']), "stock": p['stock']
                                 })
                             st.rerun()
-            else:
-                st.warning("Sin stock o no encontrado.")
 
     with col_der:
         st.subheader("📋 Carrito")
         if not st.session_state.car:
             st.info("Agregue productos para comenzar.")
         else:
-            # Renderizado de Carrito Editable
             total_usd = 0.0
             for idx, item in enumerate(st.session_state.car):
                 with st.container(border=True):
                     r1, r2, r3, r4 = st.columns([2, 1.2, 1, 0.5])
                     r1.write(f"**{item['nombre']}**")
-                    # Cantidad Editable
                     nueva_cant = r2.number_input("Cant.", min_value=0.1, max_value=float(item['stock']), 
                                                  value=float(item['cant']), key=f"cant_{item['id']}")
                     item['cant'] = nueva_cant
-                    
                     subtotal = item['precio'] * item['cant']
                     total_usd += subtotal
-                    
                     r3.write(f"${subtotal:.2f}")
                     if r4.button("🗑️", key=f"del_{idx}"):
                         st.session_state.car.pop(idx)
@@ -260,69 +253,91 @@ elif opcion == "🛒 Venta Rápida":
             
             # --- SECCIÓN DE PAGOS ---
             total_vef = total_usd * tasa_v
-            
             st.markdown(f"### Total: `${total_usd:.2f}` / `{total_vef:,.2f} Bs`")
             
-            monto_cobrar = st.number_input("Monto a Cobrar ($)", value=total_usd, step=0.01, help="Ajuste para redondeos")
+            # REQUERIMIENTO: Monto a cobrar modificable en BOLÍVARES
+            monto_cobrar_bs = st.number_input("Monto a Cobrar (Bs)", value=float(total_vef), step=1.0, help="Ajuste el monto final en Bolívares")
+            monto_cobrar_usd = monto_cobrar_bs / tasa_v
             
             with st.expander("💳 Registrar Pagos Mixtos", expanded=True):
                 px1, px2 = st.columns(2)
-                p_efectivo_usd = px1.number_input("Efectivo $", min_value=0.0, step=1.0)
-                p_efectivo_bs = px2.number_input("Efectivo Bs", min_value=0.0, step=10.0)
-                p_zelle = px1.number_input("Zelle", min_value=0.0, step=1.0)
-                p_pmovil = px2.number_input("Pago Móvil", min_value=0.0, step=10.0)
-                p_punto = px1.number_input("Punto de Venta", min_value=0.0, step=10.0)
-                p_otros = px2.number_input("Otros/Transferencia", min_value=0.0, step=1.0)
+                p_efectivo_usd = px1.number_input("Efectivo $", min_value=0.0)
+                p_efectivo_bs = px2.number_input("Efectivo Bs", min_value=0.0)
+                p_zelle = px1.number_input("Zelle $", min_value=0.0)
+                p_pmovil = px2.number_input("Pago Móvil Bs", min_value=0.0)
+                p_punto = px1.number_input("Punto Bs", min_value=0.0)
+                p_otros = px2.number_input("Otros $", min_value=0.0)
 
-            # Cálculo de Balance
+            # Cálculo de Balance en USD para lógica interna
             total_pagado_usd = p_efectivo_usd + p_zelle + p_otros + ((p_efectivo_bs + p_pmovil + p_punto) / tasa_v)
-            balance = total_pagado_usd - monto_cobrar
+            balance_usd = total_pagado_usd - monto_cobrar_usd
             
-            if balance < -0.01:
-                st.error(f"Faltante: ${abs(balance):.2f}")
+            if balance_usd < -0.01:
+                st.error(f"Faltante: ${abs(balance_usd):.2f} / {abs(balance_usd*tasa_v):,.2f} Bs")
             else:
-                st.success(f"Vuelto: ${balance:.2f} (o {balance*tasa_v:.2f} Bs)")
+                st.success(f"Vuelto: ${balance_usd:.2f} / {balance_usd*tasa_v:,.2f} Bs")
 
-            # --- FINALIZAR VENTA ---
-            if st.button("🚀 FINALIZAR Y GENERAR TICKET", type="primary", use_container_width=True, disabled=(total_pagado_usd < monto_cobrar)):
+            # --- FINALIZAR VENTA (BOTÓN) ---
+            if st.button("🚀 FINALIZAR Y GENERAR TICKET", type="primary", use_container_width=True, disabled=(total_pagado_usd < (monto_cobrar_usd - 0.01))):
                 try:
-                    # 1. Registrar en DB 'ventas'
+                    # 1. Empaquetar Carrito para JSONB
+                    items_json = []
+                    for i in st.session_state.car:
+                        items_json.append({
+                            "id": i['id'],
+                            "nombre": i['nombre'],
+                            "cantidad": i['cant'],
+                            "precio_u": i['precio'],
+                            "subtotal": i['cant'] * i['precio']
+                        })
+
+                    # 2. Registrar en DB 'ventas'
                     venta_data = {
                         "id_cierre": id_turno,
+                        "producto": f"Venta de {len(st.session_state.car)} productos", # Cabecera resumen
                         "total_usd": total_usd,
                         "tasa_usada": tasa_v,
-                        "metodos_pago": {
-                            "efectivo_usd": p_efectivo_usd, "efectivo_bs": p_efectivo_bs,
-                            "zelle": p_zelle, "pago_movil": p_pmovil, "punto": p_punto
-                        },
-                        "items": st.session_state.car,
+                        "pago_efectivo": p_efectivo_usd,
+                        "pago_zelle": p_zelle,
+                        "pago_pmovil": p_pmovil,
+                        "pago_punto": p_punto,
+                        "items": items_json, # Columna JSONB
                         "fecha": datetime.now().isoformat()
                     }
                     db.table("ventas").insert(venta_data).execute()
 
-                    # 2. Descontar Stock
+                    # 3. Actualización de Stock (Resta automática)
                     for item in st.session_state.car:
-                        nuevo_stock = item['stock'] - item['cant']
+                        nuevo_stock = float(item['stock']) - float(item['cant'])
                         db.table("inventario").update({"stock": nuevo_stock}).eq("id", item['id']).execute()
 
-                    # 3. Crear Ticket Visual
-                    ticket_html = f"""
-                    <div style="border:1px solid #ddd; padding:15px; border-radius:10px; font-family:monospace; background-color: #f9f9f9; color: black;">
-                        <h4 style="text-align:center; margin:0;">RECIBO DE VENTA</h4>
-                        <p style="text-align:center; font-size:12px;">{datetime.now().strftime('%d/%m/%Y %H:%M')}</p>
+                    # 4. Crear Ticket Detallado desde el JSON
+                    filas_ticket = ""
+                    for it in items_json:
+                        filas_ticket += f"""
+                        <div style='display:flex; justify-content:space-between; font-size:12px;'>
+                            <span>{it['cantidad']}x {it['nombre'][:18]}</span>
+                            <span>${it['subtotal']:.2f}</span>
+                        </div>"""
+
+                    st.session_state.ultimo_ticket = f"""
+                    <div style="border:1px solid #ddd; padding:15px; border-radius:10px; font-family:monospace; background-color: #fff; color: black;">
+                        <h3 style="text-align:center; margin:0;">TICKET DE VENTA</h3>
+                        <p style="text-align:center; font-size:11px;">{datetime.now().strftime('%d/%m/%Y %H:%M:%S')}</p>
                         <hr>
-                        {"".join([f"<div style='display:flex; justify-content:space-between;'><span>{i['cant']}x {i['nombre'][:15]}</span><span>${(i['cant']*i['precio']):.2f}</span></div>" for i in st.session_state.car])}
+                        {filas_ticket}
                         <hr>
                         <div style="display:flex; justify-content:space-between; font-weight:bold;"><span>TOTAL USD:</span><span>${total_usd:.2f}</span></div>
-                        <div style="display:flex; justify-content:space-between; font-size:12px;"><span>TOTAL Bs:</span><span>{total_vef:,.2f}</span></div>
-                        <p style="font-size:10px; text-align:center; margin-top:10px;">¡Gracias por su compra!</p>
+                        <div style="display:flex; justify-content:space-between;"><span>TOTAL Bs:</span><span>{total_vef:,.2f}</span></div>
+                        <p style="font-size:10px; text-align:center; margin-top:10px;">ID Turno: {id_turno}</p>
                     </div>
                     """
-                    st.session_state.ultimo_ticket = ticket_html
                     st.session_state.venta_finalizada = True
                     st.rerun()
+                    
                 except Exception as e:
-                    st.error(f"Error al procesar venta: {e}")
+                    st.error(f"Error crítico en transacción: {e}")
+   
     # --- F. HISTORIAL DE VENTAS (TIPO EXCEL) ---
     st.divider()
     st.subheader("📊 Historial del Turno Actual")
@@ -506,6 +521,7 @@ elif opcion == "📊 Cierre de Caja":
             if st.button("Cerrar Turno (Sin Ventas)"):
                 db.table("cierres").update({"estado": "cerrado", "fecha_cierre": datetime.now().isoformat()}).eq("id", id_cierre).execute()
                 st.rerun()
+
 
 
 
