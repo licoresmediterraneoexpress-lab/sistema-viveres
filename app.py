@@ -355,128 +355,70 @@ elif opcion == "🛒 Venta Rápida":
                     st.error(f"Error de Integridad de Datos: {str(e)}")
 
 # --- MÓDULO: HISTORIAL DE VENTAS PRO ---
-if opcion == "📜 Historial de Ventas":
-    st.markdown("## 📜 Historial de Ventas Pro")
+st.divider()
+st.subheader("📊 Historial de Ventas Pro")
 
-    # 1. Obtener Turno Activo para el Filtro Inicial
-    id_turno_actual = st.session_state.get('id_cierre_activo') # Ajustar según tu nombre de variable
+# 1. Carga de Datos con Blindaje y Filtro de Turno
+try:
+    # Consultamos las ventas. Filtramos por el id_turno activo por defecto.
+    res_h = db.table("ventas").select("*").eq("id_cierre", int(float(id_turno))).order("fecha", desc=True).execute()
     
-    # 2. Carga de Datos con Blindaje
-    try:
-        # Traemos todas las ventas para permitir búsqueda global, luego filtramos
-        res = db.table("ventas").select("*").order("fecha", desc=True).execute()
-        df_raw = pd.DataFrame(res.data)
-    except Exception as e:
-        st.error(f"❌ Error de conexión con Supabase: {e}")
-        st.stop()
-
-    if df_raw.empty:
-        st.info("No hay ventas registradas aún.")
-        st.stop()
-
-    # 3. Formateo y Extracción de Datos
-    # Extraer Fecha y Hora de la columna ISO 'fecha'
-    df_raw['fecha_dt'] = pd.to_datetime(df_raw['fecha'])
-    df_raw['Fecha'] = df_raw['fecha_dt'].dt.strftime('%d/%m/%Y')
-    df_raw['Hora'] = df_raw['fecha_dt'].dt.strftime('%I:%M %p')
-
-    # 4. Buscador Inteligente y Filtros
-    col_f1, col_f2 = st.columns([2, 1])
-    with col_f1:
-        busqueda = st.text_input("🔍 Buscador inteligente", placeholder="Buscar por producto, cliente o ID...")
-    with col_f2:
-        solo_turno_actual = st.checkbox("Filtrar por Turno Activo", value=True)
-
-    # Lógica de filtrado
-    mask = df_raw.astype(str).apply(lambda x: x.str.contains(busqueda, case=False)).any(axis=1)
-    df_filtrado = df_raw[mask]
-
-    if solo_turno_actual and id_turno_actual:
-        df_filtrado = df_filtrado[df_filtrado['id_cierre'] == int(id_turno_actual)]
-
-    # 5. Visualización Estilo Excel
-    st.markdown("---")
-    
-    # Encabezados de la tabla
-    h_col1, h_col2, h_col3, h_col4, h_col5, h_col6, h_col7 = st.columns([1, 1.5, 2, 1, 1.5, 1.5, 1.5])
-    h_col1.bold("ID")
-    h_col2.bold("Fecha/Hora")
-    h_col3.bold("Resumen")
-    h_col4.bold("Cant.")
-    h_col5.bold("Monto Bs")
-    h_col6.bold("Monto $")
-    h_col7.bold("Acciones")
-
-    for _, fila in df_filtrado.iterrows():
-        # Determinar color según estado
-        es_anulado = fila['estado'] == 'Anulado'
-        color_texto = "gray" if es_anulado else "inherit"
-        opacidad = 0.5 if es_anulado else 1.0
+    if res_h.data:
+        df_h = pd.DataFrame(res_h.data)
         
-        with st.container():
-            c1, c2, c3, c4, c5, c6, c7 = st.columns([1, 1.5, 2, 1, 1.5, 1.5, 1.5])
+        # 2. Buscador Inteligente
+        busqueda = st.text_input("🔍 Buscador Inteligente", placeholder="Filtrar por producto, cliente o ID...")
+        
+        # Filtro de búsqueda (aplica a nombre de producto, cliente o ID)
+        if busqueda:
+            mask = df_h.astype(str).apply(lambda x: x.str.contains(busqueda, case=False)).any(axis=1)
+            df_h = df_h[mask]
+
+        # 3. Formateo de Datos Estilo Excel
+        # Extraer hora, asegurar tipos y formatear strings
+        df_h['Hora'] = pd.to_datetime(df_h['fecha']).dt.strftime('%I:%M %p')
+        df_h['Fecha_F'] = pd.to_datetime(df_h['fecha']).dt.strftime('%d/%m/%Y')
+
+        # --- ENCABEZADOS DE TABLA PERSONALIZADA ---
+        h_col1, h_col2, h_col3, h_col4, h_col5, h_col6, h_col7 = st.columns([1, 1.2, 2.5, 0.8, 1.5, 1.2, 1.5])
+        h_col1.write("**ID**")
+        h_col2.write("**Hora**")
+        h_col3.write("**Producto / Resumen**")
+        h_col4.write("**Cant**")
+        h_col5.write("**Monto Bs**")
+        h_col6.write("**Monto $**")
+        h_col7.write("**Acciones**")
+        st.divider()
+
+        # 4. Renderizado de Filas
+        for index, fila in df_h.iterrows():
+            # Estilo para ventas anuladas
+            es_anulada = fila['estado'] == 'Anulado'
+            st_style = "color: #9e9e9e; text-decoration: line-through;" if es_anulada else "color: white;"
             
-            # Formateo de montos
-            monto_bs = f"{fila['monto_cobrado_bs']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-            monto_usd = f"${fila['total_usd']:,.2f}"
+            c1, c2, c3, c4, c5, c6, c7 = st.columns([1, 1.2, 2.5, 0.8, 1.5, 1.2, 1.5])
             
-            c1.markdown(f"<span style='color:{color_texto}'>{int(fila['id'])}</span>", unsafe_allow_html=True)
-            c2.markdown(f"<span style='color:{color_texto}; font-size:12px;'>{fila['Fecha']}<br>{fila['Hora']}</span>", unsafe_allow_html=True)
-            c3.markdown(f"<span style='color:{color_texto}'>{fila['producto']}</span>", unsafe_allow_html=True)
-            c4.markdown(f"<span style='color:{color_texto}'>{int(fila['cantidad'])}</span>", unsafe_allow_html=True)
-            c5.markdown(f"<span style='color:{color_texto}'>{monto_bs}</span>", unsafe_allow_html=True)
-            c6.markdown(f"<span style='color:{color_texto}'>{monto_usd}</span>", unsafe_allow_html=True)
-            
-            # Botones de Acción
-            btn_col1, btn_col2 = c7.columns(2)
+            # Formateo profesional de moneda
+            monto_bs_f = f"{fila['monto_cobrado_bs']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            monto_usd_f = f"${fila['total_usd']:,.2f}"
+
+            c1.markdown(f"<span style='{st_style}'>{int(fila['id'])}</span>", unsafe_allow_html=True)
+            c2.markdown(f"<span style='{st_style}'>{fila['Hora']}</span>", unsafe_allow_html=True)
+            c3.markdown(f"<span style='{st_style}'>{fila['producto']}</span>", unsafe_allow_html=True)
+            c4.markdown(f"<span style='{st_style}'>{int(fila['cantidad'])}</span>", unsafe_allow_html=True)
+            c5.markdown(f"<span style='{st_style}'>{monto_bs_f}</span>", unsafe_allow_html=True)
+            c6.markdown(f"<span style='{st_style}'>{monto_usd_f}</span>", unsafe_allow_html=True)
+
+            # --- BOTONES DE ACCIÓN ---
+            col_btn1, col_btn2 = c7.columns(2)
             
             # Botón Reimprimir
-            if btn_col1.button("📋", key=f"reimp_{fila['id']}", help="Reimprimir Ticket"):
-                st.session_state.ultimo_ticket = f"Reimpresión Venta #{fila['id']}" # Aquí llamarías a tu generador de HTML
-                st.info(f"Reabriendo ticket de la venta #{fila['id']}...")
+            if col_btn1.button("📋", key=f"reimp_{fila['id']}", help="Reimprimir Ticket"):
+                # Aquí lógica para cargar el ticket en st.session_state
+                st.session_state.ultimo_ticket = f"Reimpresión Venta #{fila['id']}" # Solo ejemplo
+                st.toast(f"Ticket #{fila['id']} listo para impresión")
 
-            # Botón Anular
-            if not es_anulado:
-                if btn_col2.button("🚫", key=f"anul_{fila['id']}", help="Anular Venta"):
-                    st.warning(f"¿Confirmar anulación de la Venta #{fila['id']}?")
-                    if st.button("SÍ, ANULAR", key=f"conf_{fila['id']}"):
-                        try:
-                            # --- LÓGICA DE REVERSIÓN DE STOCK ---
-                            items_a_revertir = fila['items'] # Es una lista de dicts (JSONB)
-                            
-                            for item in items_a_revertir:
-                                # 1. Buscar stock actual del producto
-                                res_inv = db.table("inventario").select("stock").eq("id", item['id']).single().execute()
-                                if res_inv.data:
-                                    stock_actual = float(res_inv.data['stock'])
-                                    nuevo_stock = stock_actual + float(item['cantidad'])
-                                    
-                                    # 2. Actualizar inventario
-                                    db.table("inventario").update({"stock": nuevo_stock}).eq("id", item['id']).execute()
-                            
-                            # 3. Cambiar estado de la venta
-                            db.table("ventas").update({"estado": "Anulado"}).eq("id", int(fila['id'])).execute()
-                            
-                            st.success(f"Venta #{fila['id']} anulada y stock devuelto.")
-                            st.rerun()
-                        except Exception as ex:
-                            st.error(f"Error al anular: {ex}")
-            else:
-                btn_col2.write("❌")
-
-    # 6. Resumen de Totales (Dashboard Inferior)
-    st.markdown("---")
-    # Solo sumamos las ventas que NO están anuladas
-    df_activos = df_filtrado[df_filtrado['estado'] != 'Anulado']
-    
-    total_usd_sum = df_activos['total_usd'].sum()
-    total_bs_sum = df_activos['monto_cobrado_bs'].sum()
-    total_items = df_activos['cantidad'].sum()
-
-    m_col1, m_col2, m_col3 = st.columns(3)
-    m_col1.metric("Total Ventas ($)", f"${total_usd_sum:,.2f}")
-    m_col2.metric("Total Ventas (Bs)", f"{total_bs_sum:,.2f} Bs")
-    m_col3.metric("Productos Vendidos", f"{int(total_items)} Und")
+            # Botón Anular (Solo si no está anulada)
 
 # --- 5. MÓDULO GASTOS ---
 elif opcion == "💸 Gastos":
@@ -600,6 +542,7 @@ elif opcion == "📊 Cierre de Caja":
             if st.button("Cerrar Turno (Sin Ventas)"):
                 db.table("cierres").update({"estado": "cerrado", "fecha_cierre": datetime.now().isoformat()}).eq("id", id_cierre).execute()
                 st.rerun()
+
 
 
 
