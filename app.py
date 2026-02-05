@@ -257,7 +257,7 @@ elif opcion == "🛒 Venta Rápida":
             
             # Monto a cobrar modificable en BOLÍVARES
             monto_cobrar_bs_input = st.number_input("Monto a Cobrar (Bs)", value=float(total_vef), step=1.0)
-            monto_cobrar_usd = monto_cobrar_bs_input / tasa_v
+            monto_cobrar_usd = float(monto_cobrar_bs_input / tasa_v)
             
             with st.expander("💳 Registrar Pagos Mixtos", expanded=True):
                 px1, px2 = st.columns(2)
@@ -268,10 +268,10 @@ elif opcion == "🛒 Venta Rápida":
                 p_punto = px1.number_input("Punto Bs", min_value=0.0, key="p_pun")
                 p_otros = px2.number_input("Otros $", min_value=0.0, key="p_otr")
 
-            # Cálculos de Totales y Balance
-            total_pagado_usd = p_divisas + p_zelle + p_otros + ((p_efectivo + p_movil + p_punto) / tasa_v)
-            total_pagado_vef = total_pagado_usd * tasa_v
-            balance_usd = total_pagado_usd - monto_cobrar_usd
+            # Cálculos de Totales y Balance (Blindaje de tipos Float)
+            total_pagado_usd = float(p_divisas + p_zelle + p_otros + ((p_efectivo + p_movil + p_punto) / tasa_v))
+            total_pagado_vef = float(total_pagado_usd * tasa_v)
+            balance_usd = float(total_pagado_usd - monto_cobrar_usd)
             
             if balance_usd < -0.01:
                 st.error(f"Faltante: ${abs(balance_usd):.2f} / {abs(balance_usd*tasa_v):,.2f} Bs")
@@ -283,43 +283,46 @@ elif opcion == "🛒 Venta Rápida":
                 try:
                     # 1. Preparar datos del carrito (JSONB) y sumar unidades totales
                     items_json = []
-                    unidades_totales = 0.0
+                    unidades_totales_float = 0.0
                     costo_total_venta = 0.0
                     
                     for i in st.session_state.car:
-                        unidades_totales += float(i['cant'])
+                        unidades_totales_float += float(i['cant'])
                         costo_total_venta += (float(i.get('costo', 0)) * float(i['cant']))
                         items_json.append({
                             "id": i['id'],
                             "nombre": i['nombre'],
                             "cantidad": i['cant'],
                             "precio_u": i['precio'],
-                            "subtotal": round(i['cant'] * i['precio'], 2)
+                            "subtotal": round(float(i['cant'] * i['precio']), 2)
                         })
 
-                    # 2. Registrar en DB 'ventas' (Mapeo Estricto de Columnas)
+                    # Generación de ID único entero para id_transaccion
+                    ts_id = int(datetime.now().timestamp())
+
+                    # 2. Registrar en DB 'ventas' (Mapeo Estricto y Conversión Forzada)
                     venta_data = {
-                        "id_cierre": id_turno,
+                        "id_cierre": int(float(id_turno)),                   # Forzado a INT
+                        "fecha": datetime.now().isoformat(),
                         "producto": f"Venta de {len(items_json)} ítems",
-                        "total_usd": round(total_usd, 2),
-                        "tasa_cambio": tasa_v,
+                        "cantidad": int(float(unidades_totales_float)),      # Forzado a INT (Resuelve error 4.0)
+                        "total_usd": round(float(total_usd), 2),
+                        "tasa_cambio": float(tasa_v),
                         "pago_punto": float(p_punto),
                         "pago_efectivo": float(p_efectivo),
                         "pago_movil": float(p_movil),
                         "pago_zelle": float(p_zelle),
                         "pago_otros": float(p_otros),
                         "pago_divisas": float(p_divisas),
-                        "items": items_json,
-                        "monto_cobrado_bs": round(float(monto_cobrar_bs_input), 2),
-                        "total_pagado_real": round(float(total_pagado_usd), 2),
-                        "monto_real_vef": round(float(total_pagado_vef), 2),
                         "costo_venta": round(float(costo_total_venta), 2),
-                        "fecha": datetime.now().isoformat(),
-                        "cantidad": float(unidades_totales),
-                        "estado": "finalizado",
-                        "cliente": "Mostrador",
                         "propina": 0.0,
-                        "id_transaccion": f"POS-{id_turno}-{int(datetime.now().timestamp())}"
+                        "id_transaccion": ts_id,                              # INT puro
+                        "cliente": "Mostrador",
+                        "estado": "finalizado",
+                        "total_pagado_real": round(float(total_pagado_usd), 2),
+                        "monto_cobrado_bs": round(float(monto_cobrar_bs_input), 2),
+                        "monto_real_vef": round(float(total_pagado_vef), 2),
+                        "items": items_json
                     }
                     
                     # Ejecución del Insert
@@ -330,13 +333,13 @@ elif opcion == "🛒 Venta Rápida":
                         nuevo_stock = float(item['stock']) - float(item['cant'])
                         db.table("inventario").update({"stock": nuevo_stock}).eq("id", item['id']).execute()
 
-                    # 4. Generación de Ticket Visual para la UI
+                    # 4. Generación de Ticket Visual
                     filas_html = "".join([f"<div style='display:flex; justify-content:space-between; font-size:12px;'><span>{it['cantidad']}x {it['nombre'][:15]}</span><span>${it['subtotal']:.2f}</span></div>" for it in items_json])
                     
                     st.session_state.ultimo_ticket = f"""
                     <div style="border:1px solid #ddd; padding:15px; border-radius:10px; font-family:monospace; background-color: #fff; color: black;">
                         <h4 style="text-align:center; margin:0;">TICKET DE VENTA</h4>
-                        <p style="text-align:center; font-size:10px;">Turno: {id_turno} | {datetime.now().strftime('%H:%M:%S')}</p>
+                        <p style="text-align:center; font-size:10px;">Turno: {id_turno} | Trans: {ts_id}</p>
                         <hr>
                         {filas_html}
                         <hr>
@@ -349,7 +352,7 @@ elif opcion == "🛒 Venta Rápida":
                     st.rerun()
 
                 except Exception as e:
-                    st.error(f"Error en la transacción: {str(e)}")
+                    st.error(f"Error de Integridad de Datos: {str(e)}")
 
     # --- F. HISTORIAL DE VENTAS (TIPO EXCEL) ---
     st.divider()
@@ -534,6 +537,7 @@ elif opcion == "📊 Cierre de Caja":
             if st.button("Cerrar Turno (Sin Ventas)"):
                 db.table("cierres").update({"estado": "cerrado", "fecha_cierre": datetime.now().isoformat()}).eq("id", id_cierre).execute()
                 st.rerun()
+
 
 
 
