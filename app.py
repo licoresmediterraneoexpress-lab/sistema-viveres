@@ -152,110 +152,215 @@ if opcion == "📦 Inventario":
                         st.success(f"¡{n_nombre} registrado!"); time.sleep(1); st.rerun()
                     except Exception as e: st.error(f"Error: {e}")
 
-# --- 4. MÓDULO VENTA RÁPIDA ---
+# --- 4. MÓDULO VENTA RÁPIDA (REFACTORIZACIÓN PROFESIONAL) ---
 elif opcion == "🛒 Venta Rápida":
-    if 'tasa_dia' not in st.session_state: st.session_state.tasa_dia = 60.0
+    # A. Inicialización de Estados y Validación de Turno
+    if 'car' not in st.session_state: st.session_state.car = []
     if 'venta_finalizada' not in st.session_state: st.session_state.venta_finalizada = False
     if 'ultimo_ticket' not in st.session_state: st.session_state.ultimo_ticket = ""
-
+    
+    # Obtener Turno Activo (id_cierre)
     try:
         res_caja = db.table("cierres").select("*").eq("estado", "abierto").order("fecha_apertura", desc=True).limit(1).execute()
         if not res_caja.data:
-            st.error("🚫 TURNO CERRADO. Debe realizar una apertura en 'Cierre de Caja'.")
+            st.error("🚫 SISTEMA BLOQUEADO: No hay un turno de caja abierto.")
+            st.info("Por favor, vaya al módulo 'Cierre de Caja' e inicie una nueva jornada.")
             st.stop()
         turno_actual = res_caja.data[0]
-    except:
-        st.error("Error de conexión"); st.stop()
+        id_turno = turno_actual['id']
+        tasa_v = st.session_state.tasa_dia
+    except Exception as e:
+        st.error(f"Error Crítico de Base de Datos: {e}"); st.stop()
 
-    st.header("🛒 Ventas Mediterraneo Express")
-    
-    with st.sidebar:
-        st.subheader("⚙️ Configuración")
-        st.session_state.tasa_dia = st.number_input("Tasa BCV (Bs/$)", min_value=1.0, value=st.session_state.tasa_dia, format="%.2f")
-        if st.button("🧹 Vaciar Carrito"):
-            st.session_state.car = []; st.rerun()
+    st.markdown(f"<h1 style='color:#0041C2;'>🛒 Terminal de Ventas <span style='font-size:18px; color:grey;'>| Turno #{id_turno}</span></h1>", unsafe_allow_html=True)
 
+    # B. Lógica de "Nueva Venta" (Pantalla de Éxito)
     if st.session_state.venta_finalizada:
-        st.success("✅ VENTA COMPLETADA")
-        st.code(st.session_state.ultimo_ticket, language="text")
-        if st.button("🔄 NUEVA VENTA", type="primary"):
-            st.session_state.car = []; st.session_state.venta_finalizada = False; st.rerun()
+        st.balloons()
+        c_p1, c_p2 = st.columns([1, 2])
+        with c_p1:
+            st.markdown(st.session_state.ultimo_ticket, unsafe_allow_html=True)
+        with c_p2:
+            st.success("### ✅ ¡VENTA REGISTRADA CON ÉXITO!")
+            if st.button("🔄 REGISTRAR NUEVA VENTA", type="primary", use_container_width=True):
+                st.session_state.car = []
+                st.session_state.venta_finalizada = False
+                st.rerun()
         st.stop()
 
-    st.subheader("🔍 Selección de Productos")
-    busc = st.text_input("Buscar producto...", key="txt_busc").strip().lower()
+    # C. Layout Principal (Buscador y Carrito)
+    col_izq, col_der = st.columns([1.2, 1])
 
-    if busc:
-        res_p = db.table("inventario").select("*").ilike("nombre", f"%{busc}%").execute()
-        if res_p.data:
-            df_f = pd.DataFrame(res_p.data)
-            with st.container(border=True):
-                col1, col2, col3 = st.columns([2, 1, 1])
-                item_sel = col1.selectbox(f"Resultados ({len(df_f)})", df_f['nombre'].tolist())
-                p_data = df_f[df_f['nombre'] == item_sel].iloc[0]
-                col2.metric("Stock", f"{p_data['stock']:.0f}")
-                cant_sel = col3.number_input("Cantidad", min_value=1, value=1)
-                
-                if st.button("➕ Añadir al Carrito", type="primary"):
-                    p_u = float(p_data['precio_mayor']) if cant_sel >= p_data['min_mayor'] else float(p_data['precio_detal'])
-                    st.session_state.car.append({
-                        "p": item_sel, "c": cant_sel, "u": p_u, "t": round(p_u * cant_sel, 2),
-                        "costo_u": float(p_data['costo']), "min_m": p_data['min_mayor'],
-                        "p_detal": float(p_data['precio_detal']), "p_mayor": float(p_data['precio_mayor'])
-                    })
-                    st.rerun()
-
-    if st.session_state.car:
-        st.divider()
-        st.subheader("📋 Resumen del Pedido")
-        indices_a_borrar = []
-        for i, item in enumerate(st.session_state.car):
-            with st.container(border=True):
-                c1, c2, c3, c4, c5 = st.columns([3, 2, 2, 2, 1])
-                c1.write(f"**{item['p']}**")
-                n_c = c2.number_input("Cant.", min_value=1, value=item['c'], key=f"edit_q_{i}")
-                if n_c != item['c']:
-                    item['c'] = n_c
-                    item['u'] = item['p_mayor'] if n_c >= item['min_m'] else item['p_detal']
-                    item['t'] = round(item['u'] * n_c, 2); st.rerun()
-                c3.write(f"${item['u']:.2f}"); c4.write(f"**${item['t']:.2f}**")
-                if c5.button("🗑️", key=f"del_{i}"): indices_a_borrar.append(i)
-
-        for idx in sorted(indices_a_borrar, reverse=True): st.session_state.car.pop(idx); st.rerun()
-
-        sub_total = sum(item['t'] for item in st.session_state.car)
-        tasa = st.session_state.tasa_dia
-        st.markdown(f"### Total: ${sub_total:,.2f} / {(sub_total * tasa):,.2f} Bs.")
+    with col_izq:
+        st.subheader("🔍 Buscador Inteligente")
+        busc_term = st.text_input("Escriba el nombre del producto...", placeholder="Ej: Harina, Arroz...", key="main_search").strip()
         
-        with st.expander("💳 Registro de Pago", expanded=True):
-            p1, p2, p3 = st.columns(3)
-            ef_bs = p1.number_input("Efectivo Bs", 0.0)
-            pm_bs = p1.number_input("Pago Móvil Bs", 0.0)
-            pu_bs = p2.number_input("Punto Bs", 0.0)
-            di_usd = p2.number_input("Divisas $", 0.0)
-            ze_usd = p3.number_input("Zelle $", 0.0)
-            total_pagado_bs = ef_bs + pm_bs + pu_bs + (di_usd * tasa) + (ze_usd * tasa)
-            st.metric("Vuelto Bs", f"{max(0, total_pagado_bs - (sub_total * tasa)):,.2f} Bs")
-
-        if st.button("🚀 FINALIZAR VENTA", type="primary", use_container_width=True):
-            if total_pagado_bs < (sub_total * tasa - 0.05):
-                st.error("Monto insuficiente")
+        if busc_term:
+            res_p = db.table("inventario").select("*").ilike("nombre", f"%{busc_term}%").limit(5).execute()
+            if res_p.data:
+                for p in res_p.data:
+                    with st.container(border=True):
+                        c1, c2, c3 = st.columns([3, 1, 1])
+                        c1.markdown(f"**{p['nombre']}**\n\nStock: `{p['stock']}`")
+                        c2.markdown(f"<p style='color:green; font-weight:bold;'>${p['precio_detal']:.2f}</p>", unsafe_allow_html=True)
+                        if c3.button("➕ Añadir", key=f"add_{p['id']}", use_container_width=True):
+                            # Lógica de precio según stock/mayor
+                            p_unit = float(p['precio_detal'])
+                            st.session_state.car.append({
+                                "id": p['id'], "nombre": p['nombre'], "cant": 1, 
+                                "u": p_unit, "costo": float(p['costo']), "min_m": p['min_mayor'],
+                                "p_detal": float(p['precio_detal']), "p_mayor": float(p['precio_mayor'])
+                            })
+                            st.rerun()
             else:
-                ahora = datetime.now()
-                id_tx = f"TX-{ahora.strftime('%y%m%d%H%M%S')}"
-                for x in st.session_state.car:
-                    db.table("ventas").insert({
-                        "id_transaccion": id_tx, "producto": x['p'], "cantidad": x['c'], 
-                        "total_usd": x['t'], "tasa_cambio": tasa, "pago_efectivo": ef_bs, 
-                        "pago_punto": pu_bs, "pago_movil": pm_bs, "pago_zelle": ze_usd, 
-                        "pago_divisas": di_usd, "costo_venta": x['costo_u'] * x['c'], "fecha": ahora.isoformat()
-                    }).execute()
-                    inv = db.table("inventario").select("stock").eq("nombre", x['p']).execute()
-                    if inv.data: db.table("inventario").update({"stock": inv.data[0]['stock'] - x['c']}).eq("nombre", x['p']).execute()
+                st.warning("Producto no encontrado.")
+
+    with col_der:
+        st.subheader("📋 Detalle del Pedido")
+        if not st.session_state.car:
+            st.info("El carrito está vacío.")
+        else:
+            subtotal_usd = 0
+            idx_to_remove = -1
+            
+            for i, item in enumerate(st.session_state.car):
+                # Calcular precio dinámico según cantidad
+                item['u'] = item['p_mayor'] if item['cant'] >= item['min_m'] else item['p_detal']
+                item_total = item['u'] * item['cant']
+                subtotal_usd += item_total
                 
-                ticket = f"MEDITERRANEO EXPRESS\nTicket: {id_tx}\nTotal: ${sub_total:.2f}\nPagado Bs: {total_pagado_bs:.2f}"
-                st.session_state.ultimo_ticket = ticket
-                st.session_state.venta_finalizada = True; st.balloons(); st.rerun()
+                with st.container(border=True):
+                    row1, row2 = st.columns([3, 1])
+                    row1.markdown(f"**{item['nombre']}**")
+                    if row2.button("🗑️", key=f"del_{i}"): idx_to_remove = i
+                    
+                    c_a, c_b, c_c = st.columns([1.5, 2, 1.5])
+                    if c_a.button("➖", key=f"min_{i}"):
+                        if item['cant'] > 1: item['cant'] -= 1; st.rerun()
+                    c_b.markdown(f"<h4 style='text-align:center;'>{item['cant']}</h4>", unsafe_allow_html=True)
+                    if c_c.button("➕", key=f"pls_{i}"):
+                        item['cant'] += 1; st.rerun()
+                    st.caption(f"Precio: ${item['u']:.2f} | Subtotal: ${item_total:.2f}")
+
+            if idx_to_remove > -1:
+                st.session_state.car.pop(idx_to_remove); st.rerun()
+
+            st.divider()
+            
+            # D. Totales y Caja Mixta
+            total_factura = st.number_input("Total a Cobrar ($)", value=float(subtotal_usd), step=0.01)
+            total_bs = total_factura * tasa_v
+            
+            st.markdown(f"### Total: `{total_factura:,.2f}$` / `{total_bs:,.2f} Bs.`")
+            
+            with st.expander("💳 REGISTRO DE PAGOS MIXTOS", expanded=True):
+                p_col1, p_col2 = st.columns(2)
+                v_ef_bs = p_col1.number_input("Efectivo Bs", min_value=0.0)
+                v_pm_bs = p_col1.number_input("Pago Móvil Bs", min_value=0.0)
+                v_pu_bs = p_col1.number_input("Punto Venta Bs", min_value=0.0)
+                
+                v_di_usd = p_col2.number_input("Divisas $", min_value=0.0)
+                v_ze_usd = p_col2.number_input("Zelle $", min_value=0.0)
+                v_ot_usd = p_col2.number_input("Otros $", min_value=0.0)
+
+            # E. Monitor de Pago en Tiempo Real
+            pagado_usd = v_di_usd + v_ze_usd + v_ot_usd + ((v_ef_bs + v_pm_bs + v_pu_bs) / tasa_v)
+            pendiente = total_factura - pagado_usd
+            
+            if pendiente > 0.01:
+                st.metric("Monto Pendiente", f"${pendiente:,.2f}", delta=f"-{pendiente*tasa_v:,.2f} Bs", delta_color="inverse")
+            else:
+                st.metric("Vuelto / Cambio", f"${abs(pendiente):,.2f}", delta=f"{abs(pendiente)*tasa_v:,.2f} Bs")
+
+            # F. Finalización de Venta
+            if st.button("🚀 FINALIZAR Y FACTURAR", type="primary", use_container_width=True):
+                if pendiente > 0.05:
+                    st.error(f"Faltan ${pendiente:,.2f} para completar el pago.")
+                else:
+                    try:
+                        ahora = datetime.now()
+                        id_tx = f"TX-{ahora.strftime('%y%m%d%H%M%S')}"
+                        
+                        # Guardar cada item en la tabla ventas
+                        for x in st.session_state.car:
+                            db.table("ventas").insert({
+                                "id_transaccion": id_tx,
+                                "id_cierre": id_turno,
+                                "producto": x['nombre'],
+                                "cantidad": x['cant'],
+                                "total_usd": x['u'] * x['cant'],
+                                "total_pagado_real": total_factura,
+                                "tasa_cambio": tasa_v,
+                                "pago_efectivo": v_ef_bs,
+                                "pago_punto": v_pu_bs,
+                                "pago_movil": v_pm_bs,
+                                "pago_zelle": v_ze_usd,
+                                "pago_divisas": v_di_usd,
+                                "pago_otros": v_ot_usd,
+                                "costo_venta": x['costo'] * x['cant'],
+                                "fecha": ahora.isoformat()
+                            }).execute()
+                            
+                            # Descuento de Stock
+                            res_inv = db.table("inventario").select("stock").eq("id", x['id']).execute()
+                            if res_inv.data:
+                                nuevo_stock = res_inv.data[0]['stock'] - x['cant']
+                                db.table("inventario").update({"stock": nuevo_stock}).eq("id", x['id']).execute()
+
+                        # Generar Ticket
+                        st.session_state.ultimo_ticket = f"""
+                        <div style='background-color:#f0f0f0; padding:20px; border-radius:10px; font-family:monospace; border:1px dashed #333;'>
+                            <h3 style='text-align:center;'>🚢 MEDITERRANEO EXPRESS</h3>
+                            <p style='text-align:center;'>Ticket: {id_tx}<br>Fecha: {ahora.strftime('%d/%m/%Y %H:%M')}</p>
+                            <hr>
+                            <p><b>Total Cobrado: ${total_factura:,.2f}</b><br>
+                            Tasa: {tasa_v:,.2f} Bs/$<br>
+                            Pagado en Bs: {(v_ef_bs + v_pm_bs + v_pu_bs):,.2f}<br>
+                            Pagado en USD: {(v_di_usd + v_ze_usd + v_ot_usd):,.2f}</p>
+                            <p style='text-align:center;'>*** Gracias por su compra ***</p>
+                        </div>
+                        """
+                        st.session_state.venta_finalizada = True
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error al registrar: {e}")
+
+    # --- SECCIÓN: HISTORIAL DEL TURNO ACTUAL ---
+    st.divider()
+    st.markdown("### 📊 Historial de Ventas - Turno Actual")
+    
+    try:
+        res_hist = db.table("ventas").select("*").eq("id_cierre", id_turno).order("fecha", desc=True).execute()
+        if res_hist.data:
+            df_hist = pd.DataFrame(res_hist.data)
+            
+            # Formatear para visualización
+            df_hist['Hora'] = pd.to_datetime(df_hist['fecha']).dt.strftime('%H:%M')
+            
+            # Agrupar por transacción para mostrar limpio
+            df_view = df_hist.groupby('id_transaccion').agg({
+                'Hora': 'first',
+                'producto': lambda x: ", ".join(x),
+                'total_usd': 'sum',
+                'pago_efectivo': 'first',
+                'pago_punto': 'first',
+                'pago_movil': 'first',
+                'pago_divisas': 'first',
+                'pago_zelle': 'first'
+            }).reset_index()
+
+            st.dataframe(
+                df_view.rename(columns={
+                    'id_transaccion': 'Ticket',
+                    'producto': 'Productos',
+                    'total_usd': 'Monto ($)'
+                })[['Hora', 'Ticket', 'Productos', 'Monto ($)']],
+                use_container_width=True, hide_index=True
+            )
+        else:
+            st.info("Aún no hay ventas registradas en este turno.")
+    except Exception as e:
+        st.error(f"No se pudo cargar el historial: {e}")
 
 # --- 5. MÓDULO GASTOS ---
 elif opcion == "💸 Gastos":
@@ -379,3 +484,4 @@ elif opcion == "📊 Cierre de Caja":
             if st.button("Cerrar Turno (Sin Ventas)"):
                 db.table("cierres").update({"estado": "cerrado", "fecha_cierre": datetime.now().isoformat()}).eq("id", id_cierre).execute()
                 st.rerun()
+
