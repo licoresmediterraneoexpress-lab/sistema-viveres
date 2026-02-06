@@ -5,127 +5,71 @@ from datetime import datetime
 import time
 import json
 
-st.set_page_config(page_title="Sistema POS Pro", layout="wide")
+# --- 1. CONFIGURACIÓN INICIAL ---
+st.set_page_config(page_title="Mediterraneo Express PRO", layout="wide")
 
-# 2. Inyección de Estilos CSS Personalizados
+# --- 2. INYECCIÓN DE ESTILOS (AQUÍ MODIFICAMOS LOS COLORES) ---
 st.markdown("""
     <style>
-    /* Fondo de la aplicación */
+    /* Fondo general de la aplicación */
     .stApp {
         background-color: #F8F9FA;
     }
 
-    /* Estilo del Sidebar (Menú Lateral) */
+    /* BARRA LATERAL (MENU) - AZUL CLARO */
     [data-testid="stSidebar"] {
-        background-color: #002D62; /* Azul rey profundo */
-        border-right: 1px solid #001a39;
+        background-color: #ADD8E6 !important; /* Azul Claro */
+        border-right: 1px solid #90C3D4;
     }
 
-    /* Texto del Sidebar */
-    [data-testid="stSidebar"] .stText, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p {
-        color: #FFFFFF !important;
+    /* LETRAS DEL MENU (Negras) */
+    [data-testid="stSidebar"] .stText, 
+    [data-testid="stSidebar"] span, 
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] label {
+        color: #000000 !important;
         font-weight: 500;
-        font-size: 1.1rem;
     }
 
-    /* Hover y Selección en el Menú (Radio Buttons / Selectbox) */
-    div[data-testid="stSidebarUserContent"] .st-emotion-cache-17l6ba3 {
-        background-color: #003a7d;
-        border-radius: 8px;
-    }
-    
-    /* Personalización de inputs en Sidebar */
-    [data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] {
-        background-color: #003a7d;
-        border: 1px solid #0056b3;
-        color: white;
+    /* TEXTOS GENERALES EN NEGRO */
+    h1, h2, h3, h4, p, span, label {
+        color: #000000 !important;
     }
 
-    /* Encabezados Principales */
-    h1 {
-        color: #002D62 !important;
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        border-bottom: 2px solid #002D62;
-        padding-bottom: 10px;
-    }
-    
-    h2, h3 {
-        color: #0056b3 !important;
-    }
-
-    /* Estilo de "Tarjetas" (Cards) para Contenedores */
-    div[data-testid="stVerticalBlock"] > div[style*="border"] {
-        background-color: #FFFFFF !important;
-        border: none !important;
-        border-radius: 12px !important;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.08) !important;
-        padding: 20px !important;
-        margin-bottom: 15px !important;
-    }
-
-    /* Botones Primarios (Llamativos) */
+    /* BOTÓN FINALIZAR (Azul Oscuro con Letras Blancas) */
     .stButton > button[kind="primary"] {
-        background-color: #FF8C00 !important; /* Naranja Vibrante */
-        color: white !important;
-        border: none !important;
+        background-color: #002D62 !important; /* Azul Rey Profundo */
+        color: #FFFFFF !important; /* Letras Blancas */
         border-radius: 8px !important;
-        width: 100%;
-        transition: all 0.3s ease;
         font-weight: bold;
         text-transform: uppercase;
     }
+
+    /* BOTONES DE ANULACIÓN (Rojo con Letras Blancas) */
+    .stButton > button:contains("Anular"), 
+    .stButton > button:contains("Eliminar") {
+        background-color: #D32F2F !important;
+        color: #FFFFFF !important;
+    }
+
+    /* TARJETAS DE CONTENEDORES (Blancas con sombra suave) */
+    div[data-testid="stVerticalBlock"] > div[style*="border"] {
+        background-color: #FFFFFF !important;
+        color: #000000 !important;
+        border-radius: 12px !important;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08) !important;
+    }
     
-    .stButton > button[kind="primary"]:hover {
-        background-color: #E67E00 !important;
-        transform: translateY(-2px);
-        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
-    }
-
-    /* Botones de Anulación/Eliminar */
-    .stButton > button:contains("Anular"), .stButton > button:contains("Eliminar"), .stButton > button:contains("CERRAR") {
-        background-color: #D32F2F !important; /* Rojo Estándar Elegante */
-        color: white !important;
-        border-radius: 8px !important;
-    }
-
-    /* Estilo de métricas */
-    [data-testid="stMetricValue"] {
-        color: #002D62 !important;
-        font-weight: bold;
-    }
-
-    /* Tabla de Historial y Filas */
-    .stMarkdown div[style*="background-color: #333"] {
-        background-color: #002D62 !important; /* Cabeceras de tabla azul */
-        border-radius: 8px 8px 0 0;
+    /* INPUTS (Cuadros de texto) */
+    input {
+        color: #000000 !important;
     }
 
     </style>
     """, unsafe_allow_html=True)
 
-# --- 1. CONFIGURACIÓN INICIAL ---
-st.set_page_config(page_title="Mediterraneo Express PRO", layout="wide")
-
+# --- CONTINUACIÓN DEL CÓDIGO (No tocar) ---
 URL = "https://orrfldqwpjkkooeuqnmp.supabase.co"
-KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9ycmZsZHF3cGpra29vZXVxbm1wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkzMDg5MDEsImV4cCI6MjA4NDg4NDkwMX0.va4XR7_lDF2QV9SBXTusmAa_bgqV9oKwiIhC23hsC7E"
-CLAVE_ADMIN = "1234"
-
-@st.cache_resource
-def init_db():
-    return create_client(URL, KEY)
-
-db = init_db()
-
-# Estilos Profesionales
-st.markdown("""
-<style>
-    .stApp {background-color: #F4F7F6;}
-    [data-testid='stSidebar'] {background-color: #002D62;}
-    .main-header {color: #002D62; font-weight: bold; border-bottom: 2px solid #FF8C00;}
-    .stButton>button {border-radius: 5px; font-weight: bold;}
-    .stDataFrame {border: 1px solid #e0e0e0; border-radius: 10px;}
-</style>
-""", unsafe_allow_html=True)
 
 # --- ESTADO DE SESIÓN ---
 if 'car' not in st.session_state: st.session_state.car = []
@@ -723,6 +667,7 @@ elif opcion == "📊 Cierre de Caja":
 
     # Pie de página informativo
     st.caption(f"ID Turno Actual: {st.session_state.get('id_turno', 'Ninguno')}")
+
 
 
 
