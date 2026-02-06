@@ -5,6 +5,104 @@ from datetime import datetime
 import time
 import json
 
+st.set_page_config(page_title="Sistema POS Pro", layout="wide")
+
+# 2. Inyección de Estilos CSS Personalizados
+st.markdown("""
+    <style>
+    /* Fondo de la aplicación */
+    .stApp {
+        background-color: #F8F9FA;
+    }
+
+    /* Estilo del Sidebar (Menú Lateral) */
+    [data-testid="stSidebar"] {
+        background-color: #002D62; /* Azul Rey Profundo */
+        border-right: 1px solid #001a39;
+    }
+
+    /* Texto del Sidebar */
+    [data-testid="stSidebar"] .stText, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p {
+        color: #FFFFFF !important;
+        font-weight: 500;
+        font-size: 1.1rem;
+    }
+
+    /* Hover y Selección en el Menú (Radio Buttons / Selectbox) */
+    div[data-testid="stSidebarUserContent"] .st-emotion-cache-17l6ba3 {
+        background-color: #003a7d;
+        border-radius: 8px;
+    }
+    
+    /* Personalización de inputs en Sidebar */
+    [data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] {
+        background-color: #003a7d;
+        border: 1px solid #0056b3;
+        color: white;
+    }
+
+    /* Encabezados Principales */
+    h1 {
+        color: #002D62 !important;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        border-bottom: 2px solid #002D62;
+        padding-bottom: 10px;
+    }
+    
+    h2, h3 {
+        color: #0056b3 !important;
+    }
+
+    /* Estilo de "Tarjetas" (Cards) para Contenedores */
+    div[data-testid="stVerticalBlock"] > div[style*="border"] {
+        background-color: #FFFFFF !important;
+        border: none !important;
+        border-radius: 12px !important;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08) !important;
+        padding: 20px !important;
+        margin-bottom: 15px !important;
+    }
+
+    /* Botones Primarios (Llamativos) */
+    .stButton > button[kind="primary"] {
+        background-color: #FF8C00 !important; /* Naranja Vibrante */
+        color: white !important;
+        border: none !important;
+        border-radius: 8px !important;
+        width: 100%;
+        transition: all 0.3s ease;
+        font-weight: bold;
+        text-transform: uppercase;
+    }
+    
+    .stButton > button[kind="primary"]:hover {
+        background-color: #E67E00 !important;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    }
+
+    /* Botones de Anulación/Eliminar */
+    .stButton > button:contains("Anular"), .stButton > button:contains("Eliminar"), .stButton > button:contains("CERRAR") {
+        background-color: #D32F2F !important; /* Rojo Estándar Elegante */
+        color: white !important;
+        border-radius: 8px !important;
+    }
+
+    /* Estilo de métricas */
+    [data-testid="stMetricValue"] {
+        color: #002D62 !important;
+        font-weight: bold;
+    }
+
+    /* Tabla de Historial y Filas */
+    .stMarkdown div[style*="background-color: #333"] {
+        background-color: #002D62 !important; /* Cabeceras de tabla azul */
+        border-radius: 8px 8px 0 0;
+    }
+
+    </style>
+    """, unsafe_allow_html=True)
+
 # --- 1. CONFIGURACIÓN INICIAL ---
 st.set_page_config(page_title="Mediterraneo Express PRO", layout="wide")
 
@@ -625,3 +723,4 @@ elif opcion == "📊 Cierre de Caja":
 
     # Pie de página informativo
     st.caption(f"ID Turno Actual: {st.session_state.get('id_turno', 'Ninguno')}")
+
