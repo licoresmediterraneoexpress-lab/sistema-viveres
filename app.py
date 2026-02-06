@@ -17,7 +17,7 @@ st.markdown("""
 
     /* Estilo del Sidebar (Menú Lateral) */
     [data-testid="stSidebar"] {
-        background-color: #002D62; /* Azul Cielo profundo */
+        background-color: #002D62; /* Azul rey profundo */
         border-right: 1px solid #001a39;
     }
 
@@ -723,5 +723,6 @@ elif opcion == "📊 Cierre de Caja":
 
     # Pie de página informativo
     st.caption(f"ID Turno Actual: {st.session_state.get('id_turno', 'Ninguno')}")
+
 
 
