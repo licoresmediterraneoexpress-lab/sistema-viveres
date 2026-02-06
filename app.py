@@ -8,7 +8,7 @@ import json
 # --- 1. CONFIGURACIÓN INICIAL ---
 st.set_page_config(page_title="Mediterraneo Express PRO", layout="wide")
 
-# --- 2. INYECCIÓN DE ESTILOS (AQUÍ MODIFICAMOS LOS COLORES) ---
+# --- 2. INYECCIÓN DE ESTILOS ---
 st.markdown("""
     <style>
     /* Fondo general de la aplicación */
@@ -64,35 +64,47 @@ st.markdown("""
     input {
         color: #000000 !important;
     }
-
     </style>
     """, unsafe_allow_html=True)
 
-# --- CONTINUACIÓN DEL CÓDIGO (No tocar) ---
+# --- CONFIGURACIÓN DE CONEXIÓN ---
 URL = "https://orrfldqwpjkkooeuqnmp.supabase.co"
+KEY = "TU_SUPABASE_KEY" # Asegúrate de tener tu KEY aquí
+db = create_client(URL, KEY)
+CLAVE_ADMIN = "1234" # Configuración de seguridad
 
 # --- ESTADO DE SESIÓN ---
 if 'car' not in st.session_state: st.session_state.car = []
 if 'venta_finalizada' not in st.session_state: st.session_state.venta_finalizada = False
 
-# --- 2. LÓGICA DE TURNO ---
+# --- 2. LÓGICA DE TURNO UNIFICADA (ELIMINA DUPLICADOS) ---
+# Esta sección consulta una sola vez si hay un turno abierto para todo el sistema
 try:
     res_caja = db.table("cierres").select("*").eq("estado", "abierto").order("fecha_apertura", desc=True).limit(1).execute()
     turno_activo = res_caja.data[0] if res_caja.data else None
     id_turno = turno_activo['id'] if turno_activo else None
-except Exception:
+    # Sincronizamos con session_state para persistencia en módulos
+    st.session_state.id_turno = id_turno 
+except Exception as e:
     turno_activo = None
     id_turno = None
+    st.session_state.id_turno = None
 
 # --- 3. MENÚ LATERAL ---
 with st.sidebar:
-    st.markdown("<h2 style='color:white;text-align:center;'>🚢 MEDITERRANEO</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='color:#002D62;text-align:center;'>🚢 MEDITERRANEO</h2>", unsafe_allow_html=True)
     opcion = st.radio("MENÚ PRINCIPAL", ["📦 Inventario", "🛒 Punto de Venta", "📜 Historial", "💸 Gastos", "📊 Cierre de Caja"])
     st.divider()
-    if turno_activo:
+    if id_turno:
         st.success(f"Turno Abierto: #{id_turno}")
     else:
         st.error("Caja Cerrada")
+
+# --- BLOQUE DE SEGURIDAD PARA MÓDULOS OPERATIVOS ---
+if opcion in ["🛒 Punto de Venta", "📜 Historial", "💸 Gastos"] and not id_turno:
+    st.warning("⚠️ ACCESO RESTRINGIDO")
+    st.info("Debe abrir la caja en el módulo 'Cierre de Caja' para operar.")
+    st.stop()
 
 # --- 4. MÓDULO INVENTARIO ---
 if opcion == "📦 Inventario":
@@ -667,6 +679,7 @@ elif opcion == "📊 Cierre de Caja":
 
     # Pie de página informativo
     st.caption(f"ID Turno Actual: {st.session_state.get('id_turno', 'Ninguno')}")
+
 
 
 
