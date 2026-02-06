@@ -72,6 +72,8 @@ URL = "https://orrfldqwpjkkooeuqnmp.supabase.co"
 KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9ycmZsZHF3cGpra29vZXVxbm1wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkzMDg5MDEsImV4cCI6MjA4NDg4NDkwMX0.va4XR7_lDF2QV9SBXTusmAa_bgqV9oKwiIhC23hsC7E"
 CLAVE_ADMIN = "1234" # Configuración de seguridad
 
+db = create_client(URL, KEY)
+
 # --- ESTADO DE SESIÓN ---
 if 'car' not in st.session_state: st.session_state.car = []
 if 'venta_finalizada' not in st.session_state: st.session_state.venta_finalizada = False
@@ -678,6 +680,7 @@ elif opcion == "📊 Cierre de Caja":
 
     # Pie de página informativo
     st.caption(f"ID Turno Actual: {st.session_state.get('id_turno', 'Ninguno')}")
+
 
 
 
