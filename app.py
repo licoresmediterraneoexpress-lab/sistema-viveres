@@ -160,7 +160,7 @@ if opcion == "📦 Inventario":
                     db.table("inventario").delete().eq("nombre", del_sel).execute()
                     st.success("Eliminado"); time.sleep(1); st.rerun()
 
-    # Registro Nuevo
+   # Registro Nuevo
     with st.expander("➕ Añadir Nuevo Producto"):
         with st.form("new_p"):
             f1, f2 = st.columns(2)
@@ -171,9 +171,26 @@ if opcion == "📦 Inventario":
             n_d = f4.number_input("Detal", 0.0)
             n_m = f5.number_input("Mayor", 0.0)
             n_min = st.number_input("Min. para Mayor", 1)
+            
             if st.form_submit_button("REGISTRAR"):
-                db.table("inventario").insert({"nombre": n_n, "stock": n_s, "costo": n_c, "precio_detal": n_d, "precio_mayor": n_m, "min_mayor": n_min}).execute()
-                st.rerun()
+                try:
+                    # Inserción en base de datos
+                    db.table("inventario").insert({
+                        "nombre": n_n, 
+                        "stock": n_s, 
+                        "costo": n_c, 
+                        "precio_detal": n_d, 
+                        "precio_mayor": n_m, 
+                        "min_mayor": n_min
+                    }).execute()
+                    
+                    # Mensaje de éxito y reinicio de la aplicación para limpiar la pantalla
+                    st.success("✅ ¡Guardado con éxito!")
+                    st.rerun()
+
+                except Exception as ex:
+                    # Captura de error para evitar que la aplicación se detenga
+                    st.error(f"Error al registrar: {ex}")
 
 # --- 5. MÓDULO PUNTO DE VENTA (SOPORTE PAGOS MIXTOS) ---
 elif opcion == "🛒 Punto de Venta":
@@ -680,6 +697,7 @@ elif opcion == "📊 Cierre de Caja":
 
     # Pie de página informativo
     st.caption(f"ID Turno Actual: {st.session_state.get('id_turno', 'Ninguno')}")
+
 
 
 
