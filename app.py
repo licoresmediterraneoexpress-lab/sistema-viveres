@@ -576,107 +576,53 @@ elif opcion == "📊 Cierre de Caja":
                     st.error(f"Error crítico de apertura: {e}")
     
     else:
-        # --- LÓGICA DE CIERRE Y AUDITORÍA ---
-        id_turno = st.session_state.id_turno
-        
-        # 1. Recuperar Datos del Registro de Cierre Actual
-        res_turno = db.table("cierres").select("*").eq("id", id_turno).single().execute()
-        d_turno = res_turno.data
-        tasa_dia = float(d_turno['tasa_apertura'])
-
-        # 2. Cálculos del Sistema (Segregación de Pagos)
-        # Filtramos estrictamente por id_cierre para soportar turnos nocturnos
-        v_res = db.table("ventas").select("*").eq("id_cierre", id_turno).neq("estado", "Anulado").execute()
-        df_v = pd.DataFrame(v_res.data) if v_res.data else pd.DataFrame()
-
-        if not df_v.empty:
-            # Forzar conversión a float para cálculos matemáticos
-            cols_money = [
-                'pago_efectivo', 'pago_divisas', 'pago_movil', 'pago_punto', 
-                'pago_zelle', 'pago_otros', 'total_usd', 'costo_venta'
-            ]
-            for c in cols_money:
-                df_v[c] = df_v[c].fillna(0).astype(float)
-
-            # Segregación exacta
-            sys_efec_bs = df_v['pago_efectivo'].sum()
-            sys_divisas = df_v['pago_divisas'].sum()
-            sys_pago_movil = df_v['pago_movil'].sum()
-            sys_punto = df_v['pago_punto'].sum()
-            sys_zelle = df_v['pago_zelle'].sum()
-            sys_otros = df_v['pago_otros'].sum() # Se asume USD por defecto en la sumatoria total
-            
-            sys_total_usd = df_v['total_usd'].sum()
-            sys_total_costo = df_v['costo_venta'].sum()
-        else:
-            sys_efec_bs = sys_divisas = sys_pago_movil = sys_punto = sys_zelle = sys_otros = sys_total_usd = sys_total_costo = 0.0
-
-        # 3. Formulario de Declaración Ciega (Seguridad)
-        st.subheader("🕵️ Declaración de Conteo Físico")
-        st.info("Ingrese los montos físicos presentes en caja y bancos. El sistema calculará la diferencia al finalizar.")
-        
-        with st.container(border=True):
-            c1, c2, c3 = st.columns(3)
-            f_bs = c1.number_input("Efectivo Bolívares (Físico)", min_value=0.0, step=1.0, key="f_bs")
-            f_usd = c2.number_input("Efectivo Divisas $ (Físico)", min_value=0.0, step=1.0, key="f_usd")
-            f_pmovil = c3.number_input("Monto Pago Móvil (Banco)", min_value=0.0, step=1.0, key="f_pm")
-            
-            f_punto = c1.number_input("Monto Punto de Venta (Banco)", min_value=0.0, step=1.0, key="f_pv")
-            f_zelle = c2.number_input("Monto Zelle / Otros $ (Banco)", min_value=0.0, step=1.0, key="f_zl")
-
-        # 4. Cálculos de Auditoría y Salida
+       # 4. Cálculos de Auditoría y Salida
         if st.button("📊 GENERAR PRE-CIERRE Y AUDITAR", use_container_width=True):
             st.divider()
             
-            # Cálculo de Diferencias (Ventas + Fondos Iniciales)
-            # Lo que debería haber en Bs:
-            debe_bs = sys_efec_bs + float(d_turno['fondo_bs'])
-            # Lo que debería haber en USD:
-            debe_usd = sys_divisas + float(d_turno['fondo_usd'])
-            # Bancos:
+            # --- CÁLCULO DE DIFERENCIAS ---
+            debe_bs = sys_efec_bs + float(d_turno.get('fondo_bs', 0))
+            debe_usd = sys_divisas + float(d_turno.get('fondo_usd', 0))
             debe_bancos_bs = sys_pago_movil + sys_punto
             debe_bancos_usd = sys_zelle + sys_otros
 
-            # Totales Declarados
-            total_declarado_bs = f_bs + f_pmovil + f_punto
-            total_declarado_usd = f_usd + f_zelle
-            
-            # Diferencia Final (Normalizada a USD para registro)
             diff_bs = (f_bs - debe_bs) + (f_pmovil - sys_pago_movil) + (f_punto - sys_punto)
             diff_usd = (f_usd - debe_usd) + (f_zelle - debe_bancos_usd)
-            
             diferencia_final_usd = diff_usd + (diff_bs / tasa_dia)
 
-            # Panel de Resultados
-            st.markdown("<div class='resumen-auditoria'>", unsafe_allow_html=True)
+            # --- PANEL DE RESULTADOS ---
             st.subheader("📈 Resultado de la Jornada")
-            
             m1, m2, m3 = st.columns(3)
             m1.metric("Total Facturado (USD)", f"${sys_total_usd:,.2f}")
-            m1.metric("Total Facturado (Bs)", f"{sys_total_usd * tasa_dia:,.2f} Bs")
             
-            # Cálculo de Ganancia Neta
             ganancia_neta = sys_total_usd - sys_total_costo
-            m2.metric("Ganancia Neta", f"${ganancia_neta:,.2f}", delta="Utilidad Bruta")
+            m2.metric("Ganancia Neta", f"${ganancia_neta:,.2f}")
             
-            # Valorización de Inventario
+            # --- OPTIMIZACIÓN DE INVENTARIO (Aquí estaba el error) ---
+            # Solo pedimos las columnas necesarias para no saturar la conexión
             inv_res = db.table("inventario").select("stock, costo").execute()
-            valor_inv = sum([float(x['stock']) * float(x['costo']) for x in inv_res.data]) if inv_res.data else 0.0
-            m3.metric("Valor Inventario", f"${valor_inv:,.2f}")
-            
-            st.markdown("</div>", unsafe_allow_html=True)
-
-            # Visualización de Cuadre
-            if abs(diferencia_final_usd) < 0.01:
-                st.markdown(f"<div class='cuadre-positivo'>✅ CAJA CUADRADA: La diferencia es de $0.00.</div>", unsafe_allow_html=True)
-            elif diferencia_final_usd > 0:
-                st.markdown(f"<div class='cuadre-positivo'>🟢 SOBRANTE DETECTADO: +${diferencia_final_usd:,.2f} USD</div>", unsafe_allow_html=True)
+            if inv_res.data:
+                # Usamos un generador más eficiente en memoria
+                valor_inv = sum(float(item['stock'] or 0) * float(item['costo'] or 0) for item in inv_res.data)
             else:
-                st.markdown(f"<div class='cuadre-negativo'>🔴 FALTANTE DETECTADO: -${abs(diferencia_final_usd):,.2f} USD</div>", unsafe_allow_html=True)
+                valor_inv = 0.0
+            
+            m3.metric("Valor Inventario", f"${valor_inv:,.2f}")
 
-            # Botón Final de Persistencia
+            # --- VISUALIZACIÓN DE CUADRE ---
+            if abs(diferencia_final_usd) < 0.01:
+                st.success("✅ CAJA CUADRADA: La diferencia es de $0.00.")
+            elif diferencia_final_usd > 0:
+                st.info(f"🟢 SOBRANTE: +${diferencia_final_usd:,.2f} USD")
+            else:
+                st.error(f"🔴 FALTANTE: -${abs(diferencia_final_usd):,.2f} USD")
+
+            # --- BOTÓN FINAL DE PERSISTENCIA ---
             st.warning("⚠️ Una vez cerrado, no podrá modificar ventas de este turno.")
-            if st.button("🔒 CERRAR TURNO DEFINITIVAMENTE", type="primary"):
+            
+            # Usamos un checkbox de confirmación para evitar cierres accidentales o dobles clics
+            confirmar = st.checkbox("Confirmo que los montos son correctos")
+            if st.button("🔒 CERRAR TURNO DEFINITIVAMENTE", type="primary", disabled=not confirmar):
                 try:
                     update_data = {
                         "fecha_cierre": datetime.now().isoformat(),
@@ -687,22 +633,14 @@ elif opcion == "📊 Cierre de Caja":
                     }
                     db.table("cierres").update(update_data).eq("id", id_turno).execute()
                     
-                    # Reset de sesión
+                    # Actualizar también el estado en la tabla de gastos si es necesario
+                    db.table("gastos").update({"estado": "cerrado"}).ilike("descripcion", f"%{d_turno['id']}%").execute()
+
                     st.session_state.id_turno = None
+                    st.balloons()
                     st.success("Jornada finalizada exitosamente.")
+                    import time
                     time.sleep(2)
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error al persistir el cierre: {e}")
-
-    # Pie de página informativo
-    st.caption(f"ID Turno Actual: {st.session_state.get('id_turno', 'Ninguno')}")
-
-
-
-
-
-
-
-
-
