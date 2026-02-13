@@ -170,30 +170,129 @@ elif opcion == "💸 Gastos":
             db.table("gastos").insert({"id_cierre": id_turno, "descripcion": desc, "monto_usd": monto}).execute()
             st.success("Gasto registrado")
 
-# --- CIERRE DE CAJA (OPTIMIZADO PARA NO SATURAR) ---
-elif opcion == "📊 Cierre de Caja":
-    st.markdown("<h1>📊 Cierre de Caja</h1>", unsafe_allow_html=True)
-    
-    if not id_turno:
-        with st.form("apertura"):
-            t = st.number_input("Tasa Apertura", value=60.0)
-            if st.form_submit_button("ABRIR CAJA"):
-                db.table("cierres").insert({"tasa_apertura": t, "estado": "abierto", "fecha_apertura": datetime.now().isoformat()}).execute()
+# --- CONFIGURACIÓN DE ESTILO ---
+st.markdown(f"""
+    <style>
+    /* Estilo de botones */
+    div.stButton > button {{
+        background-color: #002D62 !important;
+        color: white !important;
+        border-radius: 8px;
+        border: none;
+        font-weight: bold;
+        width: 100%;
+    }}
+    /* Color de letras global */
+    h1, h2, h3, p, label, .stMetric {{
+        color: black !important;
+    }}
+    /* Contenedores de cuadre */
+    .cuadre-positivo {{ padding:15px; background-color:#d4edda; color:#155724; border-radius:10px; border:2px solid #c3e6cb; margin-bottom:10px; }}
+    .cuadre-negativo {{ padding:15px; background-color:#f8d7da; color:#721c24; border-radius:10px; border:2px solid #f5c6cb; margin-bottom:10px; }}
+    </style>
+    """, unsafe_allow_html=True)
+
+def modulo_cierre_caja(db):
+    st.markdown("<h1 style='text-align: center;'>📊 Gestión de Caja y Auditoría</h1>", unsafe_allow_html=True)
+
+    # --- 1. LÓGICA DE APERTURA ---
+    if 'id_turno' not in st.session_state or st.session_state.id_turno is None:
+        with st.container(border=True):
+            st.subheader("🔓 Apertura de Nuevo Turno")
+            col1, col2, col3 = st.columns(3)
+            
+            tasa = col1.number_input("Tasa de Cambio (Bs/$)", min_value=1.0, value=60.0, format="%.2f")
+            f_bs = col2.number_input("Fondo Inicial Bs", min_value=0.0, step=100.0)
+            f_usd = col3.number_input("Fondo Inicial USD", min_value=0.0, step=10.0)
+
+            if st.button("🚀 INICIAR JORNADA"):
+                try:
+                    data_apertura = {
+                        "fecha_apertura": datetime.now().isoformat(),
+                        "tasa_cambio": float(tasa),
+                        "fondo_bs": float(f_bs),
+                        "fondo_usd": float(f_usd),
+                        "estado": "abierto"
+                    }
+                    res = db.table("cierres").insert(data_apertura).execute()
+                    
+                    if res.data:
+                        st.session_state.id_turno = res.data[0]['id']
+                        st.success(f"✅ Turno #{st.session_state.id_turno} abierto.")
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Error al abrir turno: {e}")
+        return
+
+    # --- SI HAY TURNO ACTIVO ---
+    id_actual = st.session_state.id_turno
+
+    # --- 2. PRE-CIERRE (CÁLCULOS DINÁMICOS) ---
+    with st.container(border=True):
+        st.subheader(f"🔍 Auditoría de Turno Activo: #{id_actual}")
+        
+        # Consultas optimizadas
+        res_v = db.table("ventas").select("total_usd").eq("id_cierre", id_actual).eq("estado", "Finalizado").execute()
+        total_ventas = sum(item.get('total_usd', 0) for item in res_v.data) if res_v.data else 0
+
+        res_g = db.table("gastos").select("monto_usd").eq("id_cierre", id_actual).execute()
+        total_gastos = sum(item.get('monto_usd', 0) for item in res_g.data) if res_g.data else 0
+
+        # Recuperar fondo inicial
+        res_c = db.table("cierres").select("fondo_usd", "tasa_cambio").eq("id", id_actual).single().execute()
+        fondo_inicial = res_c.data.get('fondo_usd', 0)
+        tasa_actual = res_c.data.get('tasa_cambio', 1)
+
+        esperado_sistema = (total_ventas + fondo_inicial) - total_gastos
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Ventas (USD)", f"${total_ventas:,.2f}")
+        c2.metric("Gastos (USD)", f"-${total_gastos:,.2f}")
+        c3.metric("Debe haber en Caja", f"${esperado_sistema:,.2f}")
+
+        # Auditoría de Inventario
+        st.divider()
+        if st.button("📦 AUDITAR VALOR DE INVENTARIO"):
+            with st.spinner("Calculando valorización..."):
+                inv_res = db.table("inventario").select("stock, costo").execute()
+                valor_inv = sum(float(i.get('stock', 0) or 0) * float(i.get('costo', 0) or 0) for i in inv_res.data)
+                st.info(f"💰 Valor total del inventario en almacén: **${valor_inv:,.2f} USD**")
+
+    # --- 3. CÁLCULO DE DIFERENCIAS (CUADRE) ---
+    with st.container(border=True):
+        st.subheader("💵 Cuadre Físico")
+        fisico_usd = st.number_input("Monto contado físicamente en caja (USD)", min_value=0.0, step=1.0)
+        diferencia = fisico_usd - esperado_sistema
+
+        if diferencia == 0:
+            st.markdown('<div class="cuadre-positivo">✅ CAJA CUADRADA: El monto físico coincide con el sistema.</div>', unsafe_allow_html=True)
+        elif diferencia > 0:
+            st.markdown(f'<div class="cuadre-positivo">🟢 SOBRANTE: +${diferencia:,.2f} USD</div>', unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div class="cuadre-negativo">🔴 FALTANTE: -${abs(diferencia):,.2f} USD</div>', unsafe_allow_html=True)
+
+    # --- 4. CIERRE DEFINITIVO ---
+    with st.container(border=True):
+        st.subheader("🔐 Finalizar Turno")
+        st.warning("Esta acción bloqueará todas las ventas y gastos de este turno.")
+        
+        confirmar = st.checkbox("He verificado los montos y confirmo el cierre de caja.")
+        
+        if st.button("🔒 CERRAR CAJA DEFINITIVAMENTE", disabled=not confirmar):
+            try:
+                data_cierre = {
+                    "fecha_cierre": datetime.now().isoformat(),
+                    "total_ventas": float(total_ventas),
+                    "total_gastos": float(total_gastos),
+                    "saldo_final_real": float(fisico_usd),
+                    "diferencia": float(diferencia),
+                    "estado": "cerrado"
+                }
+                db.table("cierres").update(data_cierre).eq("id", id_actual).execute()
+                
+                # Limpiar estado y reiniciar
+                st.session_state.id_turno = None
+                st.success("Caja cerrada correctamente. Redirigiendo...")
                 st.rerun()
-    else:
-        # Peticiones simplificadas para evitar timeout
-        v_res = db.table("ventas").select("total_usd").eq("id_cierre", id_turno).eq("estado", "Finalizado").execute()
-        total_v = sum(float(v['total_usd']) for v in v_res.data) if v_res.data else 0.0
-        
-        st.metric("Ventas del Turno", f"${total_v:.2f}")
-        
-        if st.button("🔒 CERRAR TURNO DEFINITIVAMENTE"):
-            db.table("cierres").update({
-                "estado": "cerrado", 
-                "total_ventas": total_v,
-                "fecha_cierre": datetime.now().isoformat()
-            }).eq("id", id_turno).execute()
-            st.session_state.id_turno = None
-            st.success("Caja Cerrada")
-            time.sleep(1)
-            st.rerun()
+            except Exception as e:
+                st.error(f"Error al procesar el cierre: {e}")
