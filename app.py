@@ -484,46 +484,104 @@ elif opcion == "📊 Cierre de Caja":
                     if res_ins.data:
                         nuevo_id = res_ins.data[0]['id']
                         st.session_state.id_turno = nuevo_id
+                        st.session_state['tasa_dia'] = tasa_v
                         st.success(f"✅ Turno #{nuevo_id} abierto exitosamente.")
                         time.sleep(1); st.rerun()
-                except Exception as e: st.error(f"Error crítico de apertura: {e}")
+                except Exception as e: 
+                    st.error(f"Error crítico de apertura: {e}")
     else:
+        # INICIALIZACIÓN DE VARIABLES DE TOTALES
+        sys_efec_bs = 0.0
+        sys_divisas = 0.0
+        sys_total_usd = 0.0
+        sys_total_costo = 0.0
+        sys_pago_movil = 0.0
+        sys_punto = 0.0
+        sys_zelle = 0.0
+        sys_otros = 0.0
+
+        # Obtener la tasa de cambio del turno actual
+        tasa_v = float(turno_activo.get('tasa_apertura', 1.0)) if turno_activo else 1.0
+
+        # Obtener gastos del turno
+        res_gastos = db.table("gastos").select("*").eq("id_cierre", id_turno).execute()
+        total_gastos_usd = sum(float(gasto.get('monto_usd', 0)) for gasto in res_gastos.data) if res_gastos.data else 0.0
+
+        # Obtener ventas del turno
+        res_ventas = db.table("ventas").select("*").eq("id_cierre", id_turno).eq("estado", "Finalizado").execute()
+        for venta in res_ventas.data:
+            sys_total_usd += float(venta.get('total_usd', 0))
+            sys_total_costo += float(venta.get('costo_venta', 0))
+            sys_pago_movil += float(venta.get('pago_movil', 0))
+            sys_punto += float(venta.get('pago_punto', 0))
+            sys_zelle += float(venta.get('pago_zelle', 0))
+            sys_otros += float(venta.get('pago_otros', 0))
+
         if st.button("📊 GENERAR PRE-CIERRE Y AUDITAR", use_container_width=True):
             st.divider()
-            # Nota: Aquí se asume que las variables sys_... y f_... fueron definidas previamente
+            
+            # CAPTURA DE CONTEOS FÍSICOS
+            st.subheader("🧮 Conteo Físico")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                f_bs = st.number_input("Efectivo en Bolívares", min_value=0.0, value=0.0, format="%.2f")
+                f_pmovil = st.number_input("Total Pago Móvil", min_value=0.0, value=0.0, format="%.2f")
+            
+            with col2:
+                f_usd = st.number_input("Efectivo en Divisas ($)", min_value=0.0, value=0.0, format="%.2f")
+                f_punto = st.number_input("Total Punto de Venta", min_value=0.0, value=0.0, format="%.2f")
+            
+            with col3:
+                f_zelle = st.number_input("Total Zelle/Otros", min_value=0.0, value=0.0, format="%.2f")
+
             try:
+                # Cálculo de diferencias
                 debe_bs = sys_efec_bs + float(turno_activo.get('fondo_bs', 0))
                 debe_usd = sys_divisas + float(turno_activo.get('fondo_usd', 0))
+                
+                # Restar gastos del total esperado
+                sys_total_usd_neto = sys_total_usd - total_gastos_usd
+
                 diff_bs = (f_bs - debe_bs) + (f_pmovil - sys_pago_movil) + (f_punto - sys_punto)
                 diff_usd = (f_usd - debe_usd) + (f_zelle - (sys_zelle + sys_otros))
                 diferencia_final_usd = diff_usd + (diff_bs / tasa_v)
 
                 st.subheader("📈 Resultado de la Jornada")
                 m1, m2, m3 = st.columns(3)
-                m1.metric("Total Facturado (USD)", f"${sys_total_usd:,.2f}")
-                ganancia_neta = sys_total_usd - sys_total_costo
+                m1.metric("Total Facturado (USD)", f"${sys_total_usd_neto:,.2f}")
+                ganancia_neta = sys_total_usd_neto - sys_total_costo
                 m2.metric("Ganancia Neta", f"${ganancia_neta:,.2f}")
                 
                 inv_res = db.table("inventario").select("stock, costo").execute()
                 valor_inv = sum(float(item['stock'] or 0) * float(item['costo'] or 0) for item in inv_res.data) if inv_res.data else 0.0
                 m3.metric("Valor Inventario", f"${valor_inv:,.2f}")
 
-                if abs(diferencia_final_usd) < 0.01: st.success("✅ CAJA CUADRADA")
-                elif diferencia_final_usd > 0: st.info(f"🟢 SOBRANTE: +${diferencia_final_usd:,.2f} USD")
-                else: st.error(f"🔴 FALTANTE: -${abs(diferencia_final_usd):,.2f} USD")
+                st.markdown(f"**Gastos del Turno:** ${total_gastos_usd:,.2f}")
+
+                if abs(diferencia_final_usd) < 0.01: 
+                    st.success("✅ CAJA CUADRADA")
+                elif diferencia_final_usd > 0: 
+                    st.info(f"🟢 SOBRANTE: +${diferencia_final_usd:,.2f} USD")
+                else: 
+                    st.error(f"🔴 FALTANTE: -${abs(diferencia_final_usd):,.2f} USD")
 
                 st.warning("⚠️ Una vez cerrado, no podrá modificar ventas de este turno.")
                 confirmar = st.checkbox("Confirmo que los montos son correctos")
+                
                 if st.button("🔒 CERRAR TURNO DEFINITIVAMENTE", type="primary", disabled=not confirmar):
                     update_data = {
                         "fecha_cierre": datetime.now().isoformat(),
-                        "total_ventas": float(sys_total_usd),
+                        "total_ventas": float(sys_total_usd_neto),
                         "total_ganancias": float(ganancia_neta),
                         "diferencia": float(diferencia_final_usd),
                         "estado": "cerrado"
                     }
                     db.table("cierres").update(update_data).eq("id", id_turno).execute()
-                    db.table("gastos").update({"estado": "cerrado"}).ilike("descripcion", f"%{id_turno}%").execute()
+                    db.table("gastos").update({"estado": "cerrado"}).eq("id_cierre", id_turno).execute()
                     st.session_state.id_turno = None
-                    st.balloons(); st.success("Jornada finalizada exitosamente."); time.sleep(2); st.rerun()
-            except NameError as e: st.error(f"Error: Faltan datos por definir para el cálculo ({e})")
+                    st.balloons()
+                    st.success("Jornada finalizada exitosamente.")
+                    time.sleep(2)
+                    st.rerun()
+            except Exception as e: 
+                st.error(f"Error en el cierre de caja: {e}")
