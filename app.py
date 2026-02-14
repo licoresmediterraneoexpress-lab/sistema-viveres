@@ -545,4 +545,18 @@ elif opcion == "📊 Cierre de Caja":
             col1, col2, col3 = st.columns(3)
             with col1:
                 f_bs = st.number_input("Efectivo en Bolívares", min_value=0.0, value=0.0, format="%.2f")
-                f_pmovil = st.number_input("Total Pago Móvil", min_value=0.0, value=0.0, format="%.
+                f_pmovil = st.number_input("Total Pago Móvil", min_value=0.0, value=0.0, format="%.2f")
+            
+            with col2:
+                f_usd = st.number_input("Efectivo en Divisas ($)", min_value=0.0, value=0.0, format="%.2f")
+                f_punto = st.number_input("Total Punto de Venta", min_value=0.0, value=0.0, format="%.2f")
+            
+            with col3:
+                f_zelle = st.number_input("Total Zelle/Otros", min_value=0.0, value=0.0, format="%.2f")
+
+            try:
+                # Cálculo de diferencias
+                debe_bs = sys_efec_bs + float(turno_activo.get('fondo_bs', 0))
+                debe_usd = sys_divisas + float(turno_activo.get('fondo_usd', 0))
+                
+                # Restar
