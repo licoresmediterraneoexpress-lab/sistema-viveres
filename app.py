@@ -170,135 +170,49 @@ elif opcion == "💸 Gastos":
             db.table("gastos").insert({"id_cierre": id_turno, "descripcion": desc, "monto_usd": monto}).execute()
             st.success("Gasto registrado")
 
-# --- CONFIGURACIÓN DE ESTILO ---
-st.markdown("""
-    <style>
-    .main { background-color: white; }
-    h1, h2, h3, p, label, .stMetric { color: black !important; }
-    div.stButton > button {
-        background-color: #002D62 !important;
-        color: white !important;
-        border-radius: 5px;
-        border: none;
-        font-weight: bold;
-        width: 100%;
-    }
-    .cuadre-box { padding: 20px; border-radius: 10px; margin: 10px 0; border: 2px solid #eee; font-weight: bold; text-align: center; }
-    .sobrante { background-color: #d4edda; color: #155724; border-color: #c3e6cb; }
-    .faltante { background-color: #f8d7da; color: #721c24; border-color: #f5c6cb; }
-    </style>
-    """, unsafe_allow_html=True)
-
 def modulo_cierre_caja(db):
-    st.markdown("<h1 style='text-align: center;'>📊 Cierre de Caja por Turnos</h1>", unsafe_allow_html=True)
-
-    # 1. LÓGICA DE APERTURA
-    if 'id_turno' not in st.session_state or st.session_state.id_turno is None:
-        with st.container(border=True):
-            st.subheader("🔓 Apertura de Turno")
-            col_ap1, col_ap2, col_ap3 = st.columns(3)
-            
-            tasa_ap = col_ap1.number_input("Tasa de Apertura (Bs/$)", min_value=1.0, value=60.0, format="%.2f")
-            f_bs = col_ap2.number_input("Fondo Inicial Bs", min_value=0.0, step=10.0)
-            f_usd = col_ap3.number_input("Fondo Inicial USD", min_value=0.0, step=10.0)
-
-            if st.button("🚀 INICIAR TURNO"):
-                try:
-                    data_ins = {
-                        "fecha_apertura": datetime.now().isoformat(),
-                        "tasa_apertura": float(tasa_ap),
-                        "fondo_bs": float(f_bs),
-                        "fondo_usd": float(f_usd),
-                        "estado": "abierto"
-                    }
-                    res = db.table("cierres").insert(data_ins).execute()
-                    if res.data:
-                        st.session_state.id_turno = res.data[0]['id']
-                        st.success(f"✅ Turno #{st.session_state.id_turno} abierto.")
-                        st.rerun()
-                except Exception as e:
-                    st.error(f"Error en apertura: {e}")
+    # 1. Prueba de Vida
+    st.write("### 🛠️ Diagnóstico de Sistema")
+    
+    # 2. Verificar Conexión
+    if db is None:
+        st.error("❌ Error Crítico: La conexión a la base de datos (db) llegó vacía al módulo.")
         return
 
-    # --- DATOS DEL TURNO ACTUAL ---
-    id_actual = st.session_state.id_turno
+    # 3. Verificar Session State
+    if 'id_turno' not in st.session_state:
+        st.session_state.id_turno = None
+        st.info("ℹ️ Inicializando estado de turno...")
 
-    # 2. PANEL DE AUDITORÍA
     try:
-        # Consultar Ventas (agregamos .get() para evitar None)
-        res_v = db.table("ventas").select("total_usd, total_costo, metodo_pago").eq("id_cierre", id_actual).eq("estado", "Finalizado").execute()
-        ventas_data = res_v.data if res_v.data else []
+        # INTENTO DE CARGA REAL
+        st.write(f"**Estado actual:** {'Turno Abierto #' + str(st.session_state.id_turno) if st.session_state.id_turno else 'Caja Cerrada'}")
         
-        # Consultar Gastos
-        res_g = db.table("gastos").select("monto_usd").eq("id_cierre", id_actual).execute()
-        total_gastos = sum(float(g.get('monto_usd', 0)) for g in res_g.data) if res_g.data else 0
+        # --- BLOQUE DE APERTURA ---
+        if st.session_state.id_turno is None:
+            with st.container(border=True):
+                st.subheader("🔓 Apertura de Turno")
+                tasa = st.number_input("Tasa", value=60.0)
+                if st.button("🚀 FORZAR APERTURA"):
+                    res = db.table("cierres").insert({
+                        "tasa_apertura": tasa, 
+                        "estado": "abierto",
+                        "fecha_apertura": datetime.now().isoformat()
+                    }).execute()
+                    if res.data:
+                        st.session_state.id_turno = res.data[0]['id']
+                        st.rerun()
+            return
 
-        # Totales por método de pago
-        metodos = ["Punto de Venta", "Pago Móvil", "Divisas", "Zelle", "Efectivo Bs", "Otros"]
-        stats_sistema = {m: sum(float(v.get('total_usd', 0)) for v in ventas_data if v.get('metodo_pago') == m) for m in metodos}
+        # --- BLOQUE DE AUDITORÍA ---
+        # Si llega aquí y se pone en blanco, el error está en la consulta a 'ventas'
+        st.write("Consultando datos en Supabase...")
         
-        total_facturado = sum(float(v.get('total_usd', 0)) for v in ventas_data)
-        total_costos = sum(float(v.get('total_costo', 0) or 0) for v in ventas_data)
-        ganancia_neta = total_facturado - total_costos - total_gastos
-
-        with st.container(border=True):
-            st.subheader(f"🔍 Auditoría del Turno Activo: #{id_actual}")
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Ventas Totales", f"${total_facturado:,.2f}")
-            c2.metric("Costo Mercancía", f"${total_costos:,.2f}")
-            c3.metric("Ganancia Neta", f"${ganancia_neta:,.2f}")
-
-            with st.expander("Ver desglose del sistema (Lo facturado)"):
-                st.table([{"Método": k, "Monto USD": f"${v:,.2f}"} for k, v in stats_sistema.items()])
-
-        # 3. CUADRE FÍSICO MANUAL
-        with st.container(border=True):
-            st.subheader("💵 Ingreso de Caja Físico")
-            c1, c2, c3 = st.columns(3)
-            f_punto = c1.number_input("Punto de Venta", min_value=0.0)
-            f_pmovil = c2.number_input("Pago Móvil", min_value=0.0)
-            f_zelle = c3.number_input("Zelle", min_value=0.0)
-            
-            c4, c5, c6 = st.columns(3)
-            f_efec_usd = c4.number_input("Efectivo USD", min_value=0.0)
-            f_efec_bs = c5.number_input("Efectivo Bs", min_value=0.0)
-            f_otros = c6.number_input("Otros", min_value=0.0)
-
-            total_fisico = f_punto + f_pmovil + f_zelle + f_efec_usd + f_efec_bs + f_otros
-            diferencia = total_fisico - total_facturado
-
-            st.divider()
-            col_res1, col_res2 = st.columns(2)
-            col_res1.metric("Total en Sistema", f"${total_facturado:,.2f}")
-            col_res2.metric("Total en Mano", f"${total_fisico:,.2f}", delta=f"{diferencia:,.2f}")
-
-            if abs(diferencia) < 0.01:
-                st.success("✅ La caja cuadra perfectamente.")
-            elif diferencia > 0:
-                st.markdown(f"<div class='cuadre-box sobrante'>🟢 SOBRANTE: +${diferencia:,.2f} USD</div>", unsafe_allow_html=True)
-            else:
-                st.markdown(f"<div class='cuadre-box faltante'>🔴 FALTANTE: -${abs(diferencia):,.2f} USD</div>", unsafe_allow_html=True)
-
-        # 4. CIERRE DEFINITIVO
-        with st.container(border=True):
-            st.subheader("🔐 Finalizar Turno")
-            tasa_cierre = st.number_input("Tasa de Cierre (Bs/$)", value=60.0)
-            confirmado = st.checkbox("Certifico que los montos son correctos.")
-            
-            if st.button("🔒 CERRAR TURNO DEFINITIVAMENTE", disabled=not confirmado):
-                update_data = {
-                    "fecha_cierre": datetime.now().isoformat(),
-                    "total_ventas": float(total_facturado),
-                    "total_costos": float(total_costos),
-                    "total_ganancias": float(ganancia_neta),
-                    "diferencia": float(diferencia),
-                    "tasa_cierre": float(tasa_cierre),
-                    "estado": "cerrado"
-                }
-                db.table("cierres").update(update_data).eq("id", id_actual).execute()
-                st.session_state.id_turno = None
-                st.success("Caja cerrada correctamente.")
-                st.rerun()
+        # Prueba simple: ¿Existe la tabla ventas?
+        test_v = db.table("ventas").select("count", count="exact").eq("id_cierre", st.session_state.id_turno).execute()
+        st.success(f"Conexión exitosa. Ventas encontradas: {test_v.count}")
 
     except Exception as e:
-        st.error(f"Error al procesar datos del turno: {e}")
+        # ESTO MOSTRARÁ EL ERROR REAL EN PANTALLA
+        st.error(f"⚠️ ERROR DE EJECUCIÓN: {e}")
+        st.exception(e) # Esto muestra el rastro del error
