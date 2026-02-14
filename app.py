@@ -170,9 +170,6 @@ elif opcion == "💸 Gastos":
             db.table("gastos").insert({"id_cierre": id_turno, "descripcion": desc, "monto_usd": monto}).execute()
             st.success("Gasto registrado")
 
-import streamlit as st
-from datetime import datetime
-
 # --- CONFIGURACIÓN DE ESTILO ---
 st.markdown("""
     <style>
