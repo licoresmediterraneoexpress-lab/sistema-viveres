@@ -559,4 +559,4 @@ elif opcion == "📊 Cierre de Caja":
                 debe_bs = sys_efec_bs + float(turno_activo.get('fondo_bs', 0))
                 debe_usd = sys_divisas + float(turno_activo.get('fondo_usd', 0))
                 
-                # Restar
+                # Rest
