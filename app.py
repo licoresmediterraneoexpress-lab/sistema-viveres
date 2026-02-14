@@ -182,7 +182,6 @@ if opcion == "📦 Inventario":
                     st.rerun()
                 except Exception as ex:
                     st.error(f"Error al registrar: {ex}")
-
 # --- 5. MÓDULO PUNTO DE VENTA ---
 elif opcion == "🛒 Punto de Venta":
     validar_turno_abierto("Punto de Venta")
@@ -557,6 +556,5 @@ elif opcion == "📊 Cierre de Caja":
             try:
                 # Cálculo de diferencias
                 debe_bs = sys_efec_bs + float(turno_activo.get('fondo_bs', 0))
-                debe_usd = sys_divisas + float(turno_activo.get('fondo_usd', 0))
+                debe_usd)
                 
-                # Rest
