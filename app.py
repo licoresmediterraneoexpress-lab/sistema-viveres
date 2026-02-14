@@ -8,211 +8,639 @@ import json
 # --- 1. CONFIGURACIÓN INICIAL ---
 st.set_page_config(page_title="Mediterraneo Express PRO", layout="wide")
 
-# --- 2. INYECCIÓN DE ESTILOS (TU DISEÑO ORIGINAL) ---
+# --- 2. INYECCIÓN DE ESTILOS ---
 st.markdown("""
-    <style>
-    .stApp { background-color: #F8F9FA; }
-    [data-testid="stSidebar"] { background-color: #ADD8E6 !important; border-right: 1px solid #90C3D4; }
-    [data-testid="stSidebar"] .stText, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p, [data-testid="stSidebar"] label {
-        color: #000000 !important; font-weight: 500;
-    }
-    h1, h2, h3, h4, p, span, label { color: #000000 !important; }
-    .stButton > button[kind="primary"] {
-        background-color: #002D62 !important; color: #FFFFFF !important;
-        border-radius: 8px !important; font-weight: bold; text-transform: uppercase;
-    }
-    .stButton > button:contains("Anular"), .stButton > button:contains("Eliminar") {
-        background-color: #D32F2F !important; color: #FFFFFF !important;
-    }
-    input { color: #000000 !important; }
-    </style>
-    """, unsafe_allow_html=True)
+    <style>
+    /* Fondo general de la aplicación */
+    .stApp {
+        background-color: #F8F9FA;
+    }
 
-# --- CONEXIÓN ---
+    /* BARRA LATERAL (MENU) - AZUL CLARO */
+    [data-testid="stSidebar"] {
+        background-color: #ADD8E6 !important; /* Azul Claro */
+        border-right: 1px solid #90C3D4;
+    }
+
+    /* LETRAS DEL MENU (Negras) */
+    [data-testid="stSidebar"] .stText, 
+    [data-testid="stSidebar"] span, 
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] label {
+        color: #000000 !important;
+        font-weight: 500;
+    }
+
+    /* TEXTOS GENERALES EN NEGRO */
+    h1, h2, h3, h4, p, span, label {
+        color: #000000 !important;
+    }
+
+    /* BOTÓN FINALIZAR (Azul Oscuro con Letras Blancas) */
+    .stButton > button[kind="primary"] {
+        background-color: #002D62 !important; /* Azul Rey Profundo */
+        color: #FFFFFF !important; /* Letras Blancas */
+        border-radius: 8px !important;
+        font-weight: bold;
+        text-transform: uppercase;
+    }
+
+    /* BOTONES DE ANULACIÓN (Rojo con Letras Blancas) */
+    .stButton > button:contains("Anular"), 
+    .stButton > button:contains("Eliminar") {
+        background-color: #D32F2F !important;
+        color: #FFFFFF !important;
+    }
+
+    /* TARJETAS DE CONTENEDORES (Blancas con sombra suave) */
+    div[data-testid="stVerticalBlock"] > div[style*="border"] {
+        background-color: #FFFFFF !important;
+        color: #000000 !important;
+        border-radius: 12px !important;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08) !important;
+    }
+    
+    /* INPUTS (Cuadros de texto) */
+    input {
+        color: #000000 !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- CONFIGURACIÓN DE CONEXIÓN ---
 URL = "https://orrfldqwpjkkooeuqnmp.supabase.co"
 KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9ycmZsZHF3cGpra29vZXVxbm1wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkzMDg5MDEsImV4cCI6MjA4NDg4NDkwMX0.va4XR7_lDF2QV9SBXTusmAa_bgqV9oKwiIhC23hsC7E"
-CLAVE_ADMIN = "1234"
+CLAVE_ADMIN = "1234" # Configuración de seguridad
+
 db = create_client(URL, KEY)
 
 # --- ESTADO DE SESIÓN ---
 if 'car' not in st.session_state: st.session_state.car = []
-if 'id_turno' not in st.session_state: st.session_state.id_turno = None
+if 'venta_finalizada' not in st.session_state: st.session_state.venta_finalizada = False
 
-# --- LÓGICA DE TURNO (OPTIMIZADA) ---
-@st.cache_data(ttl=10) # Cache de 10 segundos para no saturar Supabase con cada clic
-def obtener_turno():
-    try:
-        res = db.table("cierres").select("*").eq("estado", "abierto").order("fecha_apertura", desc=True).limit(1).execute()
-        return res.data[0] if res.data else None
-    except: return None
+# --- 2. LÓGICA DE TURNO UNIFICADA (ELIMINA DUPLICADOS) ---
+# Esta sección consulta una sola vez si hay un turno abierto para todo el sistema
+try:
+    res_caja = db.table("cierres").select("*").eq("estado", "abierto").order("fecha_apertura", desc=True).limit(1).execute()
+    turno_activo = res_caja.data[0] if res_caja.data else None
+    id_turno = turno_activo['id'] if turno_activo else None
+    # Sincronizamos con session_state para persistencia en módulos
+    st.session_state.id_turno = id_turno 
+except Exception as e:
+    turno_activo = None
+    id_turno = None
+    st.session_state.id_turno = None
 
-turno_activo = obtener_turno()
-id_turno = turno_activo['id'] if turno_activo else None
-st.session_state.id_turno = id_turno
-
-# --- MENÚ LATERAL ---
+# --- 3. MENÚ LATERAL ---
 with st.sidebar:
-    st.markdown("<h2 style='color:#002D62;text-align:center;'>🚢 MEDITERRANEO</h2>", unsafe_allow_html=True)
-    opcion = st.radio("MENÚ PRINCIPAL", ["📦 Inventario", "🛒 Punto de Venta", "📜 Historial", "💸 Gastos", "📊 Cierre de Caja"])
-    st.divider()
-    if id_turno: st.success(f"Turno Abierto: #{id_turno}")
-    else: st.error("Caja Cerrada")
+    st.markdown("<h2 style='color:#002D62;text-align:center;'>🚢 MEDITERRANEO</h2>", unsafe_allow_html=True)
+    opcion = st.radio("MENÚ PRINCIPAL", ["📦 Inventario", "🛒 Punto de Venta", "📜 Historial", "💸 Gastos", "📊 Cierre de Caja"])
+    st.divider()
+    if id_turno:
+        st.success(f"Turno Abierto: #{id_turno}")
+    else:
+        st.error("Caja Cerrada")
 
-# Seguridad módulos
+# --- BLOQUE DE SEGURIDAD PARA MÓDULOS OPERATIVOS ---
 if opcion in ["🛒 Punto de Venta", "📜 Historial", "💸 Gastos"] and not id_turno:
-    st.warning("⚠️ ACCESO RESTRINGIDO: Abra caja primero.")
-    st.stop()
+    st.warning("⚠️ ACCESO RESTRINGIDO")
+    st.info("Debe abrir la caja en el módulo 'Cierre de Caja' para operar.")
+    st.stop()
 
-# --- MÓDULO INVENTARIO ---
+# --- 4. MÓDULO INVENTARIO ---
 if opcion == "📦 Inventario":
-    st.markdown("<h1>📦 Gestión de Inventario</h1>", unsafe_allow_html=True)
-    res = db.table("inventario").select("*").order("nombre").execute()
-    df_inv = pd.DataFrame(res.data) if res.data else pd.DataFrame()
+    st.markdown("<h1 class='main-header'>📦 Gestión de Inventario</h1>", unsafe_allow_html=True)
+    
+    res = db.table("inventario").select("*").order("nombre").execute()
+    df_inv = pd.DataFrame(res.data) if res.data else pd.DataFrame()
 
-    if not df_inv.empty:
-        busc = st.text_input("🔍 Buscar Producto")
-        df_mostrar = df_inv[df_inv['nombre'].str.contains(busc, case=False)] if busc else df_inv
-        st.dataframe(df_mostrar[['nombre', 'stock', 'precio_detal', 'precio_mayor']], use_container_width=True, hide_index=True)
+    if not df_inv.empty:
+        # Buscador
+        busc = st.text_input("🔍 Buscar Producto", placeholder="Nombre del producto...")
+        df_mostrar = df_inv[df_inv['nombre'].str.contains(busc, case=False)] if busc else df_inv
 
-        col1, col2 = st.columns(2)
-        with col1:
-            sel = st.selectbox("Editar Producto", [None] + df_mostrar['nombre'].tolist())
-            if sel:
-                p = df_inv[df_inv['nombre'] == sel].iloc[0]
-                with st.form("edit"):
-                    n_stock = st.number_input("Stock", value=float(p['stock']))
-                    n_detal = st.number_input("Precio $", value=float(p['precio_detal']))
-                    if st.form_submit_button("GUARDAR"):
-                        db.table("inventario").update({"stock": n_stock, "precio_detal": n_detal}).eq("id", p['id']).execute()
-                        st.rerun()
-        with col2:
-            del_sel = st.selectbox("Eliminar Producto", [None] + df_mostrar['nombre'].tolist())
-            pw = st.text_input("Clave Admin", type="password")
-            if st.button("ELIMINAR") and pw == CLAVE_ADMIN and del_sel:
-                db.table("inventario").delete().eq("nombre", del_sel).execute()
-                st.rerun()
+        # Botones de Acción arriba de la tabla
+        st.subheader("📋 Existencias")
+        
+        # Diálogo Edición
+        @st.dialog("✏️ Modificar Producto")
+        def edit_dial(prod):
+            with st.form("f_edit"):
+                n_nom = st.text_input("Nombre", value=prod['nombre'])
+                c1, c2 = st.columns(2)
+                n_stock = c1.number_input("Stock", value=float(prod['stock']))
+                n_costo = c2.number_input("Costo $", value=float(prod['costo']))
+                c3, c4, c5 = st.columns(3)
+                n_detal = c3.number_input("Precio Detal $", value=float(prod['precio_detal']))
+                n_mayor = c4.number_input("Precio Mayor $", value=float(prod['precio_mayor']))
+                n_min = c5.number_input("Min. Mayor", value=int(prod['min_mayor']))
+                
+                if st.form_submit_button("GUARDAR"):
+                    db.table("inventario").update({
+                        "nombre": n_nom, "stock": n_stock, "costo": n_costo,
+                        "precio_detal": n_detal, "precio_mayor": n_mayor, "min_mayor": n_min
+                    }).eq("id", prod['id']).execute()
+                    st.rerun()
 
-    with st.expander("➕ Añadir Nuevo"):
-        with st.form("nuevo"):
-            n = st.text_input("Nombre").upper()
-            s = st.number_input("Stock", 0.0)
-            c = st.number_input("Costo", 0.0)
-            p = st.number_input("Precio", 0.0)
-            if st.form_submit_button("REGISTRAR"):
-                db.table("inventario").insert({"nombre":n, "stock":s, "costo":c, "precio_detal":p}).execute()
-                st.rerun()
+        # Visualización en Tabla
+        st.dataframe(df_mostrar[['nombre', 'stock', 'precio_detal', 'precio_mayor', 'min_mayor']], use_container_width=True, hide_index=True)
 
-# --- PUNTO DE VENTA ---
+        col_act1, col_act2 = st.columns(2)
+        with col_act1:
+            sel = st.selectbox("Seleccione para Editar", [None] + df_mostrar['nombre'].tolist())
+            if sel:
+                p_data = df_inv[df_inv['nombre'] == sel].iloc[0].to_dict()
+                if st.button(f"Modificar {sel}"): edit_dial(p_data)
+        
+        with col_act2:
+            del_sel = st.selectbox("Seleccione para Eliminar", [None] + df_mostrar['nombre'].tolist())
+            clave = st.text_input("Clave Admin", type="password", key="del_key")
+            if st.button("Eliminar Producto", type="primary"):
+                if clave == CLAVE_ADMIN and del_sel:
+                    db.table("inventario").delete().eq("nombre", del_sel).execute()
+                    st.success("Eliminado"); time.sleep(1); st.rerun()
+
+   # Registro Nuevo
+    with st.expander("➕ Añadir Nuevo Producto"):
+        with st.form("new_p"):
+            f1, f2 = st.columns(2)
+            n_n = f1.text_input("Nombre").upper()
+            n_s = f2.number_input("Stock Inicial", 0.0)
+            f3, f4, f5 = st.columns(3)
+            n_c = f3.number_input("Costo", 0.0)
+            n_d = f4.number_input("Detal", 0.0)
+            n_m = f5.number_input("Mayor", 0.0)
+            n_min = st.number_input("Min. para Mayor", 1)
+            
+            if st.form_submit_button("REGISTRAR"):
+                try:
+                    # Inserción en base de datos
+                    db.table("inventario").insert({
+                        "nombre": n_n, 
+                        "stock": n_s, 
+                        "costo": n_c, 
+                        "precio_detal": n_d, 
+                        "precio_mayor": n_m, 
+                        "min_mayor": n_min
+                    }).execute()
+                    
+                    # Mensaje de éxito y reinicio de la aplicación para limpiar la pantalla
+                    st.success("✅ ¡Guardado con éxito!")
+                    st.rerun()
+
+                except Exception as ex:
+                    # Captura de error para evitar que la aplicación se detenga
+                    st.error(f"Error al registrar: {ex}")
+
+# --- 5. MÓDULO PUNTO DE VENTA (SOPORTE PAGOS MIXTOS) ---
 elif opcion == "🛒 Punto de Venta":
-    st.markdown("<h1>🛒 Punto de Venta</h1>", unsafe_allow_html=True)
-    tasa = st.number_input("Tasa BCV", value=60.0)
-    
-    c1, c2 = st.columns([1, 1.2])
-    with c1:
-        busc_v = st.text_input("Buscar producto...")
-        res_v = db.table("inventario").select("*").ilike("nombre", f"%{busc_v}%").gt("stock", 0).limit(5).execute()
-        for p in res_v.data:
-            with st.container(border=True):
-                col_a, col_b = st.columns([3, 1])
-                col_a.write(f"**{p['nombre']}** (${p['precio_detal']})")
-                if col_b.button("➕", key=f"add_{p['id']}"):
-                    st.session_state.car.append({"id": p['id'], "nombre": p['nombre'], "cant": 1.0, "precio": float(p['precio_detal']), "costo": float(p['costo'])})
-                    st.rerun()
+    # Sincronización de Turno (Uso de id_turno desde session_state)
+    if not st.session_state.get('id_turno'):
+        st.error("⚠️ DEBE ABRIR CAJA PRIMERO")
+        st.info("Vaya al módulo de 'Cierre de Caja' para iniciar una jornada.")
+        st.stop()
+    
+    id_turno = int(st.session_state.id_turno)
+    
+    st.markdown("<h1 class='main-header'>🛒 Punto de Venta</h1>", unsafe_allow_html=True)
+    
+    # 1. CONTROL DE TASA (Blindaje Float)
+    tasa_actual_val = float(st.session_state.get('tasa_dia', 1.0))
+    tasa = st.number_input("Tasa BCV (Bs/$)", value=tasa_actual_val, format="%.2f", step=0.01)
+    
+    c_izq, c_der = st.columns([1, 1.1])
+    
+    with c_izq:
+        st.subheader("🔍 Buscador de Productos")
+        busc_v = st.text_input("Escribe nombre o ID...", placeholder="Ej: Harina Pan", key="pos_search")
+        
+        # Filtro en tiempo real con Supabase
+        if busc_v:
+            res_v = db.table("inventario").select("*").ilike("nombre", f"%{busc_v}%").gt("stock", 0).limit(8).execute()
+        else:
+            res_v = db.table("inventario").select("*").gt("stock", 0).limit(8).execute()
 
-    with c2:
-        st.subheader("Carrito")
-        total = 0.0
-        for i, item in enumerate(st.session_state.car):
-            total += item['cant'] * item['precio']
-            st.write(f"{item['nombre']} x {item['cant']} = ${item['cant']*item['precio']:.2f}")
-        
-        st.divider()
-        st.metric("Total USD", f"${total:.2f}")
-        st.metric("Total Bs", f"{total*tasa:,.2f} Bs")
+        for p in res_v.data:
+            with st.container(border=True):
+                col1, col2, col3 = st.columns([2, 1, 1])
+                col1.markdown(f"**{p['nombre']}**\n\nStock: `{int(p['stock'])}`")
+                col2.markdown(f"<h4 style='color:green;'>${float(p['precio_detal']):.2f}</h4>", unsafe_allow_html=True)
+                
+                # Botón de añadir con un solo clic
+                if col3.button("➕ Añadir", key=f"add_{p['id']}", use_container_width=True):
+                    # Evitar duplicados: Si ya existe en el carrito, sumar 1
+                    found = False
+                    for item in st.session_state.car:
+                        if item['id'] == p['id']:
+                            item['cant'] += 1.0
+                            found = True
+                            break
+                    if not found:
+                        st.session_state.car.append({
+                            "id": int(p['id']), 
+                            "nombre": p['nombre'], 
+                            "cant": 1.0, 
+                            "precio": float(p['precio_detal']), 
+                            "costo": float(p['costo'])
+                        })
+                    st.rerun()
 
-        if st.button("🚀 FINALIZAR VENTA") and st.session_state.car:
-            for it in st.session_state.car:
-                # Actualiza stock
-                res_s = db.table("inventario").select("stock").eq("id", it['id']).execute()
-                new_s = float(res_s.data[0]['stock']) - it['cant']
-                db.table("inventario").update({"stock": new_s}).eq("id", it['id']).execute()
-            
-            # Registrar venta
-            db.table("ventas").insert({
-                "id_cierre": id_turno, "producto": "Venta Multi", "total_usd": total, 
-                "monto_cobrado_bs": total*tasa, "tasa_cambio": tasa, "estado": "Finalizado",
-                "fecha": datetime.now().isoformat()
-            }).execute()
-            st.session_state.car = []
-            st.success("Venta Guardada")
-            time.sleep(1)
-            st.rerun()
+    with c_der:
+        st.subheader("📋 Carrito de Ventas")
+        total_usd = 0.0
+        
+        if not st.session_state.car:
+            st.info("El carrito está vacío.")
+        else:
+            # Iteración del carrito con corrección de StreamlitMixedNumericTypesError
+            for i, item in enumerate(st.session_state.car):
+                with st.container(border=True):
+                    c1, c2, c3 = st.columns([2.5, 1.5, 0.5])
+                    
+                    # CORRECCIÓN DE ERROR DE TIPOS: Forzar todos los parámetros a float
+                    item['cant'] = c1.number_input(
+                        f"{item['nombre']} ($/u {item['precio']:.2f})", 
+                        min_value=0.1, 
+                        step=1.0, 
+                        value=float(item['cant']), 
+                        key=f"c_{item['id']}_{i}"
+                    )
+                    
+                    subt = float(item['cant']) * float(item['precio'])
+                    total_usd += subt
+                    c2.markdown(f"**Subt:**\n${subt:.2f}")
+                    
+                    if c3.button("❌", key=f"del_{i}"):
+                        st.session_state.car.pop(i)
+                        st.rerun()
+        
+        st.divider()
+        total_bs_sist = float(total_usd * tasa)
+        st.markdown(f"### Total: `${total_usd:.2f}` / `{total_bs_sist:,.2f} Bs`")
+        
+        # Campo editable para redondeos manuales
+        monto_bs_cobrar = st.number_input("Monto a cobrar en Bolívares (Redondeo)", value=float(total_bs_sist), format="%.2f")
+        
+        with st.expander("💳 REGISTRAR PAGOS MIXTOS", expanded=True):
+            p1, p2 = st.columns(2)
+            # Todos los inputs forzados a float para cálculos consistentes
+            d_efec_usd = p1.number_input("Efectivo $", min_value=0.0, format="%.2f", key="pay_ef_usd")
+            d_zelle = p1.number_input("Zelle $", min_value=0.0, format="%.2f", key="pay_zelle")
+            d_otros = p1.number_input("Otros $", min_value=0.0, format="%.2f", key="pay_otros")
+            
+            d_efec_bs = p2.number_input("Efectivo Bs", min_value=0.0, format="%.2f", key="pay_ef_bs")
+            d_pmovil = p2.number_input("Pago Móvil Bs", min_value=0.0, format="%.2f", key="pay_pm")
+            d_punto = p2.number_input("Punto de Venta Bs", min_value=0.0, format="%.2f", key="pay_pv")
+            
+            # Cálculo de balance en tiempo real
+            pagado_usd_desde_bs = (d_efec_bs + d_pmovil + d_punto) / tasa if tasa > 0 else 0.0
+            total_pagado_usd = d_efec_usd + d_zelle + d_otros + pagado_usd_desde_bs
+            
+            monto_esperado_usd = monto_bs_cobrar / tasa if tasa > 0 else 0.0
+            vuelto_usd = total_pagado_usd - monto_esperado_usd
+            
+            if vuelto_usd >= -0.01:
+                st.success(f"✅ Vuelto: ${vuelto_usd:.2f} / {vuelto_usd * tasa:,.2f} Bs")
+            else:
+                st.error(f"❌ Faltante: ${abs(vuelto_usd):.2f} / {abs(vuelto_usd * tasa):,.2f} Bs")
 
-# --- HISTORIAL ---
+        # Botón Finalizar con validación de pago y blindaje de tipos para Supabase
+        if st.button("🚀 FINALIZAR VENTA", type="primary", use_container_width=True, disabled=(vuelto_usd < -0.01 or not st.session_state.car)):
+            try:
+                items_resumen = ""
+                costo_v = 0.0
+                
+                # 1. Proceso de Actualización de Inventario y Resumen
+                for it in st.session_state.car:
+                    # Consultar stock actual para evitar valores negativos
+                    curr = db.table("inventario").select("stock").eq("id", it['id']).execute()
+                    if curr.data:
+                        new_st = float(curr.data[0]['stock']) - float(it['cant'])
+                        db.table("inventario").update({"stock": new_st}).eq("id", it['id']).execute()
+                    
+                    items_resumen += f"{int(it['cant'])}x {it['nombre']}, "
+                    costo_v += (float(it['costo']) * float(it['cant']))
+
+                # 2. Inserción en Tabla Ventas (Blindaje de tipos PGRST204)
+                venta_payload = {
+                    "id_cierre": int(id_turno), 
+                    "producto": items_resumen.strip(", "), 
+                    "cantidad": int(len(st.session_state.car)),
+                    "total_usd": float(round(total_usd, 2)), 
+                    "monto_cobrado_bs": float(round(monto_bs_cobrar, 2)), 
+                    "tasa_cambio": float(tasa),
+                    "pago_divisas": float(d_efec_usd), 
+                    "pago_zelle": float(d_zelle), 
+                    "pago_otros": float(d_otros),
+                    "pago_efectivo": float(d_efec_bs), 
+                    "pago_movil": float(d_pmovil), 
+                    "pago_punto": float(d_punto),
+                    "costo_venta": float(round(costo_v, 2)), 
+                    "estado": "Finalizado", 
+                    "items": st.session_state.car, # JSONB
+                    "id_transaccion": int(datetime.now().timestamp()),
+                    "fecha": datetime.now().isoformat()
+                }
+                
+                db.table("ventas").insert(venta_payload).execute()
+                
+                # 3. Generación de Ticket (Vista Previa)
+                st.balloons()
+                st.markdown("""
+                    <div style="background-color:white; color:black; padding:20px; border-radius:10px; font-family:monospace; border:1px solid #ccc;">
+                        <h3 style="text-align:center;">TICKET DE VENTA</h3>
+                        <p><b>Fecha:</b> """+datetime.now().strftime("%d/%m/%Y %H:%M")+"""</p>
+                        <hr>
+                        """+items_resumen+"""
+                        <hr>
+                        <p><b>TOTAL USD:</b> $"""+f"{total_usd:.2f}"+"""</p>
+                        <p><b>TOTAL BS:</b> """+f"{monto_bs_cobrar:,.2f}"+"""</p>
+                        <p style="text-align:center;">¡Gracias por su compra!</p>
+                    </div>
+                """, unsafe_allow_html=True)
+                
+                # Limpiar carrito y estado
+                st.session_state.car = []
+                if st.button("🔄 Nueva Venta", use_container_width=True):
+                    st.rerun()
+                
+            except Exception as e:
+                st.error(f"Error crítico al guardar: {e}")
+
+# --- 6. MÓDULO HISTORIAL (PROFESIONAL Y AUDITABLE) ---
 elif opcion == "📜 Historial":
-    st.markdown("<h1>📜 Historial</h1>", unsafe_allow_html=True)
-    res_h = db.table("ventas").select("*").eq("id_cierre", id_turno).order("fecha", desc=True).execute()
-    if res_h.data:
-        df_h = pd.DataFrame(res_h.data)
-        st.table(df_h[['id', 'total_usd', 'monto_cobrado_bs', 'estado']])
-        if st.button("Anular Última Venta"):
-            last_id = res_h.data[0]['id']
-            db.table("ventas").update({"estado": "Anulado"}).eq("id", last_id).execute()
-            st.rerun()
+    if not st.session_state.get('id_turno'):
+        st.error("⚠️ DEBE ABRIR CAJA PARA VER EL HISTORIAL DEL TURNO"); st.stop()
+    
+    id_turno = st.session_state.id_turno
 
-# --- GASTOS ---
+    # Inyección de CSS para Estilo Excel y Contenedores
+    st.markdown("""
+        <style>
+        .report-container { border: 1px solid #ddd; border-radius: 5px; padding: 10px; background-color: #1e1e1e; }
+        .table-header { background-color: #333; padding: 10px; border-bottom: 2px solid #555; font-weight: bold; color: #00ffcc; }
+        .total-row { background-color: #262730; padding: 15px; border-top: 2px solid #00ffcc; font-size: 1.2rem; font-weight: bold; margin-top: 10px; }
+        </style>
+    """, unsafe_allow_html=True)
+
+    st.markdown("<h1 class='main-header'>📜 Historial de Ventas</h1>", unsafe_allow_html=True)
+    st.info(f"🔎 Auditando **Turno ID: {id_turno}**")
+
+    # 1. CARGA DE DATOS
+    try:
+        res_h = db.table("ventas").select("*").eq("id_cierre", id_turno).order("fecha", desc=True).execute()
+        data_ventas = res_h.data if res_h.data else []
+    except Exception as e:
+        st.error(f"Error de conexión con Supabase: {e}"); data_ventas = []
+
+    if data_ventas:
+        # Cargamos el DataFrame original
+        df_h = pd.DataFrame(data_ventas)
+        
+        # Blindaje de tipos y manejo de nulos preventivo
+        df_h['total_usd'] = df_h['total_usd'].astype(float)
+        df_h['monto_cobrado_bs'] = df_h['monto_cobrado_bs'].astype(float)
+        df_h['producto'] = df_h['producto'].fillna("")
+        df_h['cliente'] = df_h['cliente'].fillna("General")
+        
+        # Formateo de fechas para visualización y filtro
+        df_h['fecha_dt'] = pd.to_datetime(df_h['fecha'])
+        df_h['hora'] = df_h['fecha_dt'].dt.strftime('%I:%M %p')
+        df_h['fecha_corta'] = df_h['fecha_dt'].dt.strftime('%d/%m/%Y')
+
+        # 2. BUSCADOR INTELIGENTE (MEJORADO)
+        with st.container(border=True):
+            c_busc1, c_busc2, c_busc3 = st.columns([2, 1, 1])
+            busqueda = c_busc1.text_input("🔍 Filtro inteligente", placeholder="Buscar por ID, Producto o Cliente...")
+            f_fecha = c_busc2.text_input("📅 Fecha (DD/MM/YYYY)", placeholder="Ej: 05/02/2026")
+            estado_filtro = c_busc3.selectbox("Estado", ["Todos", "Finalizado", "Anulado"])
+
+        # Lógica de Filtrado Multicolumna y Manejo de Nulos
+        # Creamos una copia para filtrar sin perder los datos originales de la sesión
+        df_filtrado = df_h.copy()
+
+        if busqueda:
+            # CORRECCIÓN DE SINTAXIS: Se añade .str y se maneja case/na
+            mask = (
+                df_filtrado['id'].astype(str).str.contains(busqueda, case=False, na=False) |
+                df_filtrado['producto'].str.contains(busqueda, case=False, na=False) |
+                df_filtrado['cliente'].astype(str).str.contains(busqueda, case=False, na=False)
+            )
+            df_filtrado = df_filtrado[mask]
+            
+        if f_fecha:
+            df_filtrado = df_filtrado[df_filtrado['fecha_corta'].str.contains(f_fecha, na=False)]
+            
+        if estado_filtro != "Todos":
+            df_filtrado = df_filtrado[df_filtrado['estado'] == estado_filtro]
+
+        # 3. ENCABEZADOS ESTILO EXCEL
+        st.markdown("<div class='table-header'>", unsafe_allow_html=True)
+        h1, h2, h3, h4, h5, h6 = st.columns([0.8, 1, 3, 1.2, 1.2, 1.3])
+        for col, h in zip([h1, h2, h3, h4, h5, h6], ["ID", "HORA", "PRODUCTOS", "USD", "BS", "ACCIÓN"]):
+            col.write(f"**{h}**")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # 4. CUERPO DE LA TABLA (Usando df_filtrado)
+        for _, fila in df_filtrado.iterrows():
+            es_anulado = fila['estado'] == 'Anulado'
+            st_style = "color: #888; text-decoration: line-through;" if es_anulado else "color: white;"
+            
+            with st.container():
+                c1, c2, c3, c4, c5, c6 = st.columns([0.8, 1, 3, 1.2, 1.2, 1.3])
+                c1.markdown(f"<span style='{st_style}'>{fila['id']}</span>", unsafe_allow_html=True)
+                c2.markdown(f"<span style='{st_style}'>{fila['hora']}</span>", unsafe_allow_html=True)
+                
+                # Procesamiento seguro de nombres de productos
+                items_raw = fila.get('items')
+                try:
+                    if isinstance(items_raw, str):
+                        items_lista = json.loads(items_raw)
+                    elif isinstance(items_raw, list):
+                        items_lista = items_raw
+                    else:
+                        items_lista = []
+                    
+                    nombres_items = ", ".join([str(i.get('nombre', 'Desconocido')) for i in items_lista]) if items_lista else fila['producto']
+                except:
+                    nombres_items = fila['producto']
+                
+                prod_display = (nombres_items[:50] + '...') if len(nombres_items) > 50 else nombres_items
+                c3.markdown(f"<span style='{st_style}' title='{nombres_items}'>{prod_display}</span>", unsafe_allow_html=True)
+                c4.markdown(f"<span style='{st_style}'>${fila['total_usd']:,.2f}</span>", unsafe_allow_html=True)
+                c5.markdown(f"<span style='{st_style}'>{fila['monto_cobrado_bs']:,.2f} Bs</span>", unsafe_allow_html=True)
+
+                if not es_anulado:
+                    if c6.button("🚫 Anular", key=f"btn_anul_{fila['id']}", use_container_width=True):
+                        try:
+                            with st.spinner("Procesando anulación..."):
+                                items_a_revertir = fila.get('items')
+                                if items_a_revertir:
+                                    if isinstance(items_a_revertir, str):
+                                        items_a_revertir = json.loads(items_a_revertir)
+                                    
+                                    for item in items_a_revertir:
+                                        id_prod = item.get('id')
+                                        cant_v = float(item.get('cant', 0))
+                                        if id_prod:
+                                            res_inv = db.table("inventario").select("stock").eq("id", id_prod).execute()
+                                            if res_inv.data:
+                                                stk_act = float(res_inv.data[0]['stock'])
+                                                db.table("inventario").update({"stock": stk_act + cant_v}).eq("id", id_prod).execute()
+                                else:
+                                    st.warning(f"⚠️ Venta #{fila['id']}: No hay desglose para revertir stock.")
+
+                                db.table("ventas").update({"estado": "Anulado"}).eq("id", fila['id']).execute()
+                                st.toast(f"Venta #{fila['id']} anulada", icon="✅")
+                                time.sleep(1); st.rerun()
+                        except Exception as e:
+                            st.error(f"Error crítico en reversión: {str(e)}")
+                else:
+                    c6.markdown("<center>❌</center>", unsafe_allow_html=True)
+            st.markdown("<hr style='margin:2px; border-color:#444'>", unsafe_allow_html=True)
+
+        # 5. TOTALES (RECALCULADOS SEGÚN EL FILTRO)
+        # Sumamos solo las ventas activas (no anuladas) de los resultados filtrados
+        df_totales = df_filtrado[df_filtrado['estado'] != 'Anulado']
+        
+        st.markdown(f"""
+            <div class='total-row'>
+                <div style='display: flex; justify-content: space-between;'>
+                    <span>TOTALES EN PANTALLA (Ventas Activas):</span>
+                    <span>
+                        <span style='color: #00ffcc;'>$ {df_totales['total_usd'].sum():,.2f}</span> | 
+                        <span style='color: #ffcc00;'>Bs. {df_totales['monto_cobrado_bs'].sum():,.2f}</span>
+                    </span>
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.info("No hay registros en este turno.")
+
+# --- 7. MÓDULO GASTOS ---
 elif opcion == "💸 Gastos":
-    st.markdown("<h1>💸 Gastos</h1>", unsafe_allow_html=True)
-    with st.form("gastos"):
-        desc = st.text_input("Descripción")
-        monto = st.number_input("Monto $", 0.0)
-        if st.form_submit_button("GUARDAR"):
-            db.table("gastos").insert({"id_cierre": id_turno, "descripcion": desc, "monto_usd": monto}).execute()
-            st.success("Gasto registrado")
+    st.markdown("<h1 class='main-header'>💸 Gastos Operativos</h1>", unsafe_allow_html=True)
+    with st.form("g"):
+        d = st.text_input("Descripción")
+        m = st.number_input("Monto $", 0.0)
+        if st.form_submit_button("REGISTRAR GASTO") and id_turno:
+            db.table("gastos").insert({"id_cierre": id_turno, "descripcion": d, "monto_usd": m}).execute()
+            st.success("Gasto guardado")
 
-def modulo_cierre_caja(db):
-    # 1. Prueba de Vida
-    st.write("### 🛠️ Diagnóstico de Sistema")
-    
-    # 2. Verificar Conexión
-    if db is None:
-        st.error("❌ Error Crítico: La conexión a la base de datos (db) llegó vacía al módulo.")
-        return
+# --- 8. CIERRE DE CAJA (PROFESIONAL, BLINDADO Y SEGREGADO) ---
+elif opcion == "📊 Cierre de Caja":
+    st.markdown("<h1 class='main-header'>📊 Gestión de Caja y Auditoría</h1>", unsafe_allow_html=True)
+    
+    # Inyección de CSS para resaltar métricas de auditoría
+    st.markdown("""
+        <style>
+        .cuadre-positivo { padding:20px; background-color:#d4edda; color:#155724; border-radius:10px; border:2px solid #c3e6cb; font-weight: bold; }
+        .cuadre-negativo { padding:20px; background-color:#f8d7da; color:#721c24; border-radius:10px; border:2px solid #f5c6cb; font-weight: bold; }
+        .resumen-auditoria { background-color: #1e1e1e; padding: 20px; border-radius: 10px; border: 1px solid #444; margin-bottom: 20px; }
+        </style>
+    """, unsafe_allow_html=True)
 
-    # 3. Verificar Session State
-    if 'id_turno' not in st.session_state:
-        st.session_state.id_turno = None
-        st.info("ℹ️ Inicializando estado de turno...")
+    # REPARACIÓN CRÍTICA: Lógica de Apertura
+    if not st.session_state.get('id_turno'):
+        st.warning("⚠️ No hay un turno activo. Por favor, abra la caja para comenzar a facturar.")
+        
+        with st.form("apertura_jornada_blindada"):
+            st.subheader("🔓 Apertura de Turno")
+            col_ap1, col_ap2 = st.columns(2)
+            
+            tasa_v = col_ap1.number_input("Tasa de Cambio del Día (Bs/$)", min_value=1.0, value=60.0, format="%.2f")
+            f_bs_v = col_ap1.number_input("Fondo Inicial en Bolívares (Efectivo)", min_value=0.0, value=0.0, step=10.0)
+            f_usd_v = col_ap2.number_input("Fondo Inicial en Divisas (Efectivo $)", min_value=0.0, value=0.0, step=1.0)
+            
+            if st.form_submit_button("🚀 ABRIR CAJA E INICIAR JORNADA", use_container_width=True):
+                try:
+                    # Registro en base de datos
+                    data_ins = {
+                        "tasa_apertura": float(tasa_v),
+                        "fondo_bs": float(f_bs_v),
+                        "fondo_usd": float(f_usd_v),
+                        "monto_apertura": float(f_usd_v), # Compatibilidad con esquemas previos
+                        "estado": "abierto",
+                        "fecha_apertura": datetime.now().isoformat()
+                    }
+                    res_ins = db.table("cierres").insert(data_ins).execute()
+                    
+                    if res_ins.data:
+                        # Actualización inmediata del state para evitar NoneType
+                        nuevo_id = res_ins.data[0]['id']
+                        st.session_state.id_turno = nuevo_id
+                        st.success(f"✅ Turno #{nuevo_id} abierto exitosamente.")
+                        time.sleep(1)
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Error crítico de apertura: {e}")
+    
+    else:
+       # 4. Cálculos de Auditoría y Salida
+        if st.button("📊 GENERAR PRE-CIERRE Y AUDITAR", use_container_width=True):
+            st.divider()
+            
+            # --- CÁLCULO DE DIFERENCIAS ---
+            debe_bs = sys_efec_bs + float(d_turno.get('fondo_bs', 0))
+            debe_usd = sys_divisas + float(d_turno.get('fondo_usd', 0))
+            debe_bancos_bs = sys_pago_movil + sys_punto
+            debe_bancos_usd = sys_zelle + sys_otros
 
-    try:
-        # INTENTO DE CARGA REAL
-        st.write(f"**Estado actual:** {'Turno Abierto #' + str(st.session_state.id_turno) if st.session_state.id_turno else 'Caja Cerrada'}")
-        
-        # --- BLOQUE DE APERTURA ---
-        if st.session_state.id_turno is None:
-            with st.container(border=True):
-                st.subheader("🔓 Apertura de Turno")
-                tasa = st.number_input("Tasa", value=60.0)
-                if st.button("🚀 FORZAR APERTURA"):
-                    res = db.table("cierres").insert({
-                        "tasa_apertura": tasa, 
-                        "estado": "abierto",
-                        "fecha_apertura": datetime.now().isoformat()
-                    }).execute()
-                    if res.data:
-                        st.session_state.id_turno = res.data[0]['id']
-                        st.rerun()
-            return
+            diff_bs = (f_bs - debe_bs) + (f_pmovil - sys_pago_movil) + (f_punto - sys_punto)
+            diff_usd = (f_usd - debe_usd) + (f_zelle - debe_bancos_usd)
+            diferencia_final_usd = diff_usd + (diff_bs / tasa_dia)
 
-        # --- BLOQUE DE AUDITORÍA ---
-        # Si llega aquí y se pone en blanco, el error está en la consulta a 'ventas'
-        st.write("Consultando datos en Supabase...")
-        
-        # Prueba simple: ¿Existe la tabla ventas?
-        test_v = db.table("ventas").select("count", count="exact").eq("id_cierre", st.session_state.id_turno).execute()
-        st.success(f"Conexión exitosa. Ventas encontradas: {test_v.count}")
+            # --- PANEL DE RESULTADOS ---
+            st.subheader("📈 Resultado de la Jornada")
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Total Facturado (USD)", f"${sys_total_usd:,.2f}")
+            
+            ganancia_neta = sys_total_usd - sys_total_costo
+            m2.metric("Ganancia Neta", f"${ganancia_neta:,.2f}")
+            
+            # --- OPTIMIZACIÓN DE INVENTARIO (Aquí estaba el error) ---
+            # Solo pedimos las columnas necesarias para no saturar la conexión
+            inv_res = db.table("inventario").select("stock, costo").execute()
+            if inv_res.data:
+                # Usamos un generador más eficiente en memoria
+                valor_inv = sum(float(item['stock'] or 0) * float(item['costo'] or 0) for item in inv_res.data)
+            else:
+                valor_inv = 0.0
+            
+            m3.metric("Valor Inventario", f"${valor_inv:,.2f}")
 
-    except Exception as e:
-        # ESTO MOSTRARÁ EL ERROR REAL EN PANTALLA
-        st.error(f"⚠️ ERROR DE EJECUCIÓN: {e}")
-        st.exception(e) # Esto muestra el rastro del error
+            # --- VISUALIZACIÓN DE CUADRE ---
+            if abs(diferencia_final_usd) < 0.01:
+                st.success("✅ CAJA CUADRADA: La diferencia es de $0.00.")
+            elif diferencia_final_usd > 0:
+                st.info(f"🟢 SOBRANTE: +${diferencia_final_usd:,.2f} USD")
+            else:
+                st.error(f"🔴 FALTANTE: -${abs(diferencia_final_usd):,.2f} USD")
+
+            # --- BOTÓN FINAL DE PERSISTENCIA ---
+            st.warning("⚠️ Una vez cerrado, no podrá modificar ventas de este turno.")
+            
+            # Usamos un checkbox de confirmación para evitar cierres accidentales o dobles clics
+            confirmar = st.checkbox("Confirmo que los montos son correctos")
+            if st.button("🔒 CERRAR TURNO DEFINITIVAMENTE", type="primary", disabled=not confirmar):
+                try:
+                    update_data = {
+                        "fecha_cierre": datetime.now().isoformat(),
+                        "total_ventas": float(sys_total_usd),
+                        "total_ganancias": float(ganancia_neta),
+                        "diferencia": float(diferencia_final_usd),
+                        "estado": "cerrado"
+                    }
+                    db.table("cierres").update(update_data).eq("id", id_turno).execute()
+                    
+                    # Actualizar también el estado en la tabla de gastos si es necesario
+                    db.table("gastos").update({"estado": "cerrado"}).ilike("descripcion", f"%{d_turno['id']}%").execute()
+
+                    st.session_state.id_turno = None
+                    st.balloons()
+                    st.success("Jornada finalizada exitosamente.")
+                    import time
+                    time.sleep(2)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error al persistir el cierre: {e}")
