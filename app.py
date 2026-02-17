@@ -1582,3 +1582,459 @@ elif opcion == "📜 HISTORIAL":
     except Exception as e:
         st.error(f"Error cargando historial: {e}")
         st.exception(e)
+
+# ============================================
+# MÓDULO 5: CIERRE DE CAJA MEJORADO
+# ============================================
+elif opcion == "📊 CIERRE DE CAJA":
+    st.markdown("<h1 class='main-header'>📊 Cierre de Caja</h1>", unsafe_allow_html=True)
+    
+    # ============================================
+    # PESTAÑAS: APERTURA/CIERRE ACTUAL E HISTORIAL
+    # ============================================
+    tab_c1, tab_c2, tab_c3 = st.tabs(["🔓 Apertura / Cierre Actual", "📋 Historial de Cierres", "📈 Reportes y Estadísticas"])
+    
+    # ============================================
+    # TAB 1: APERTURA Y CIERRE ACTUAL
+    # ============================================
+    with tab_c1:
+        if not st.session_state.id_turno:
+            st.warning("🔓 No hay turno activo. Complete para abrir caja:")
+            
+            with st.form("apertura_caja"):
+                col_a1, col_a2 = st.columns(2)
+                
+                with col_a1:
+                    tasa_apertura = st.number_input("💱 Tasa del día (Bs/$)", min_value=1.0, value=60.0, step=0.5, format="%.2f")
+                    fondo_bs = st.number_input("💰 Fondo inicial Bs", min_value=0.0, value=0.0, step=10.0, format="%.2f")
+                
+                with col_a2:
+                    fondo_usd = st.number_input("💰 Fondo inicial USD", min_value=0.0, value=0.0, step=5.0, format="%.2f")
+                    st.markdown(f"<br>", unsafe_allow_html=True)
+                    st.markdown(f"**👤 Abre:** {st.session_state.usuario_actual['nombre'] if st.session_state.usuario_actual else 'No especificado'}")
+                
+                if st.form_submit_button("🚀 ABRIR CAJA", type="primary", use_container_width=True):
+                    if not st.session_state.usuario_actual:
+                        st.error("Debe iniciar sesión para abrir caja")
+                    else:
+                        try:
+                            data = {
+                                "tasa_apertura": tasa_apertura,
+                                "fondo_bs": fondo_bs,
+                                "fondo_usd": fondo_usd,
+                                "monto_apertura": fondo_usd,
+                                "estado": "abierto",
+                                "fecha_apertura": datetime.now().isoformat(),
+                                "usuario_apertura": st.session_state.usuario_actual['nombre']
+                            }
+                            
+                            if st.session_state.online_mode:
+                                res = db.table("cierres").insert(data).execute()
+                                if res.data:
+                                    st.session_state.id_turno = res.data[0]['id']
+                                    st.session_state.tasa_dia = tasa_apertura
+                                    st.success(f"✅ Turno #{res.data[0]['id']} abierto por {st.session_state.usuario_actual['nombre']}")
+                                    time.sleep(1)
+                                    st.rerun()
+                            else:
+                                # Modo offline
+                                if 'operaciones_pendientes' not in st.session_state:
+                                    st.session_state.operaciones_pendientes = []
+                                st.session_state.operaciones_pendientes.append({
+                                    'tipo': 'apertura',
+                                    'datos': data
+                                })
+                                st.session_state.id_turno = 999  # Temporal
+                                st.session_state.tasa_dia = tasa_apertura
+                                st.success("✅ Turno abierto en modo offline (se sincronizará después)")
+                                time.sleep(1)
+                                st.rerun()
+                                
+                        except Exception as e:
+                            st.error(f"Error al abrir caja: {e}")
+        else:
+            id_turno = st.session_state.id_turno
+            tasa = st.session_state.tasa_dia
+            
+            st.success(f"📍 Turno activo: #{id_turno} - Abierto por: {turno_activo.get('usuario_apertura', 'N/A') if turno_activo else 'N/A'}")
+            
+            # ============================================
+            # OBTENER DATOS DEL TURNO
+            # ============================================
+            if st.session_state.online_mode:
+                # Ventas
+                ventas_res = db.table("ventas").select("*").eq("id_cierre", id_turno).eq("estado", "Finalizado").execute()
+                ventas = ventas_res.data if ventas_res.data else []
+                
+                # Gastos
+                gastos_res = db.table("gastos").select("*").eq("id_cierre", id_turno).execute()
+                gastos = gastos_res.data if gastos_res.data else []
+            else:
+                # Modo offline
+                ventas_local = OfflineManager.obtener_datos_local(f'ventas_{id_turno}')
+                ventas = ventas_local if ventas_local else []
+                gastos_local = OfflineManager.obtener_datos_local(f'gastos_{id_turno}')
+                gastos = gastos_local if gastos_local else []
+            
+            # Calcular totales
+            total_ventas_usd = sum(v['total_usd'] for v in ventas)
+            total_costos = sum(v['costo_venta'] for v in ventas)
+            ganancia_bruta = total_ventas_usd - total_costos
+            
+            total_gastos = sum(g['monto_usd'] for g in gastos)
+            ganancia_neta = ganancia_bruta - total_gastos
+            
+            # ============================================
+            # RESUMEN DEL TURNO
+            # ============================================
+            st.subheader("📈 Resumen del turno")
+            
+            col_r1, col_r2, col_r3, col_r4 = st.columns(4)
+            col_r1.metric("Ventas totales", formatear_usd(total_ventas_usd))
+            col_r2.metric("Costo de ventas", formatear_usd(total_costos))
+            col_r3.metric("Ganancia bruta", formatear_usd(ganancia_bruta))
+            col_r4.metric("Gastos", formatear_usd(total_gastos))
+            
+            # Ganancia neta destacada
+            st.markdown("---")
+            col_n1, col_n2, col_n3 = st.columns(3)
+            
+            with col_n1:
+                st.markdown(f"""
+                    <div style='background: linear-gradient(135deg, #28a745 0%, #20c997 100%); 
+                            padding: 1.5rem; border-radius: 10px; color: white; text-align: center;'>
+                        <span style='font-size: 1rem; opacity: 0.9;'>💰 GANANCIA NETA</span><br>
+                        <span style='font-size: 2.5rem; font-weight: 700;'>{formatear_usd(ganancia_neta)}</span>
+                    </div>
+                """, unsafe_allow_html=True)
+            
+            with col_n2:
+                st.markdown(f"""
+                    <div style='background: linear-gradient(135deg, #17a2b8 0%, #009688 100%); 
+                            padding: 1.5rem; border-radius: 10px; color: white; text-align: center;'>
+                        <span style='font-size: 1rem; opacity: 0.9;'>📦 REPOSICIÓN</span><br>
+                        <span style='font-size: 2.5rem; font-weight: 700;'>{formatear_usd(total_costos)}</span>
+                    </div>
+                """, unsafe_allow_html=True)
+            
+            with col_n3:
+                margen = (ganancia_neta / total_ventas_usd * 100) if total_ventas_usd > 0 else 0
+                st.markdown(f"""
+                    <div style='background: linear-gradient(135deg, #ffc107 0%, #fd7e14 100%); 
+                            padding: 1.5rem; border-radius: 10px; color: white; text-align: center;'>
+                        <span style='font-size: 1rem; opacity: 0.9;'>📊 MARGEN</span><br>
+                        <span style='font-size: 2.5rem; font-weight: 700;'>{margen:.1f}%</span>
+                    </div>
+                """, unsafe_allow_html=True)
+            
+            st.markdown("---")
+            
+            # ============================================
+            # DESGLOSE DE VENTAS POR MÉTODO DE PAGO
+            # ============================================
+            with st.expander("💰 Desglose por método de pago", expanded=False):
+                if ventas:
+                    total_efectivo_usd = sum(v.get('pago_divisas', 0) for v in ventas)
+                    total_zelle = sum(v.get('pago_zelle', 0) for v in ventas)
+                    total_otros_usd = sum(v.get('pago_otros', 0) for v in ventas)
+                    total_efectivo_bs = sum(v.get('pago_efectivo', 0) for v in ventas)
+                    total_movil = sum(v.get('pago_movil', 0) for v in ventas)
+                    total_punto = sum(v.get('pago_punto', 0) for v in ventas)
+                    
+                    col_d1, col_d2 = st.columns(2)
+                    
+                    with col_d1:
+                        st.markdown("**💵 Pagos en USD**")
+                        st.metric("Efectivo USD", formatear_usd(total_efectivo_usd))
+                        st.metric("Zelle USD", formatear_usd(total_zelle))
+                        st.metric("Otros USD", formatear_usd(total_otros_usd))
+                    
+                    with col_d2:
+                        st.markdown("**💵 Pagos en Bs**")
+                        st.metric("Efectivo Bs", formatear_bs(total_efectivo_bs))
+                        st.metric("Pago Móvil Bs", formatear_bs(total_movil))
+                        st.metric("Punto Venta Bs", formatear_bs(total_punto))
+            
+            # ============================================
+            # DESGLOSE DE GASTOS
+            # ============================================
+            with st.expander("📋 Desglose de gastos", expanded=False):
+                if gastos:
+                    df_gastos = pd.DataFrame(gastos)
+                    if 'categoria' in df_gastos.columns:
+                        gastos_por_cat = df_gastos.groupby('categoria')['monto_usd'].sum().reset_index()
+                        gastos_por_cat.columns = ['Categoría', 'Total USD']
+                        st.dataframe(gastos_por_cat, use_container_width=True, hide_index=True)
+                    
+                    st.dataframe(
+                        df_gastos[['descripcion', 'monto_usd']],
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                else:
+                    st.info("No hay gastos en este turno")
+            
+            st.divider()
+            
+            # ============================================
+            # CONTEO FÍSICO PARA CIERRE
+            # ============================================
+            st.subheader("🧮 Conteo físico para cierre")
+            
+            with st.form("cierre_caja"):
+                col_c1, col_c2, col_c3 = st.columns(3)
+                
+                with col_c1:
+                    st.markdown("**Efectivo**")
+                    efec_bs_fisico = st.number_input("Efectivo Bs físico", min_value=0.0, value=0.0, format="%.2f", key="cierre_ef_bs")
+                    efec_usd_fisico = st.number_input("Efectivo USD físico", min_value=0.0, value=0.0, format="%.2f", key="cierre_ef_usd")
+                
+                with col_c2:
+                    st.markdown("**Pagos electrónicos Bs**")
+                    pmovil_fisico = st.number_input("Pago Móvil Bs", min_value=0.0, value=0.0, format="%.2f", key="cierre_pm")
+                    punto_fisico = st.number_input("Punto Venta Bs", min_value=0.0, value=0.0, format="%.2f", key="cierre_punto")
+                
+                with col_c3:
+                    st.markdown("**Pagos electrónicos USD**")
+                    zelle_fisico = st.number_input("Zelle USD", min_value=0.0, value=0.0, format="%.2f", key="cierre_zelle")
+                    otros_fisico = st.number_input("Otros USD", min_value=0.0, value=0.0, format="%.2f", key="cierre_otros")
+                
+                st.markdown("---")
+                
+                # Calcular esperados
+                esperado_bs = st.session_state.fondo_bs + (total_ventas_usd * tasa) - (total_gastos * tasa)
+                esperado_usd = st.session_state.fondo_usd + total_ventas_usd - total_gastos
+                
+                fisico_bs = efec_bs_fisico + pmovil_fisico + punto_fisico
+                fisico_usd = efec_usd_fisico + zelle_fisico + otros_fisico
+                
+                diferencia_bs = fisico_bs - esperado_bs
+                diferencia_usd = fisico_usd - esperado_usd
+                diferencia_total_usd = diferencia_usd + (diferencia_bs / tasa if tasa else 0)
+                
+                # Mostrar resultados del conteo
+                st.subheader("📊 Resultado del conteo")
+                
+                col_x1, col_x2 = st.columns(2)
+                with col_x1:
+                    st.metric("Esperado Bs", formatear_bs(esperado_bs))
+                    st.metric("Físico Bs", formatear_bs(fisico_bs), delta=f"{diferencia_bs:+,.2f} Bs")
+                
+                with col_x2:
+                    st.metric("Esperado USD", formatear_usd(esperado_usd))
+                    st.metric("Físico USD", formatear_usd(fisico_usd), delta=f"${diferencia_usd:+,.2f}")
+                
+                if abs(diferencia_total_usd) < 0.1:
+                    st.success("✅ ¡CAJA CUADRADA! Las diferencias son mínimas.")
+                elif diferencia_total_usd > 0:
+                    st.info(f"🟢 SOBRANTE: +${diferencia_total_usd:,.2f} USD")
+                else:
+                    st.error(f"🔴 FALTANTE: -${abs(diferencia_total_usd):,.2f} USD")
+                
+                st.warning("⚠️ Una vez cerrado, no podrá modificar ventas de este turno.")
+                confirmar = st.checkbox("✅ Confirmo que los datos son correctos")
+                
+                if st.form_submit_button("🔒 CERRAR TURNO", type="primary", use_container_width=True, disabled=not confirmar):
+                    try:
+                        update_data = {
+                            "fecha_cierre": datetime.now().isoformat(),
+                            "total_ventas": total_ventas_usd,
+                            "total_costos": total_costos,
+                            "total_ganancias": ganancia_neta,
+                            "diferencia": diferencia_total_usd,
+                            "tasa_cierre": tasa,
+                            "estado": "cerrado",
+                            "usuario_cierre": st.session_state.usuario_actual['nombre'] if st.session_state.usuario_actual else 'N/A'
+                        }
+                        
+                        if st.session_state.online_mode:
+                            db.table("cierres").update(update_data).eq("id", id_turno).execute()
+                            db.table("gastos").update({"estado": "cerrado"}).eq("id_cierre", id_turno).execute()
+                        else:
+                            if 'operaciones_pendientes' not in st.session_state:
+                                st.session_state.operaciones_pendientes = []
+                            st.session_state.operaciones_pendientes.append({
+                                'tipo': 'cierre',
+                                'id_turno': id_turno,
+                                'datos': update_data
+                            })
+                        
+                        # Generar reporte de cierre
+                        st.balloons()
+                        st.success("✅ Turno cerrado exitosamente!")
+                        
+                        # Mostrar resumen final
+                        with st.expander("📄 Reporte de cierre", expanded=True):
+                            st.markdown(f"""
+                            <div style="background:white; padding:20px; border-radius:10px; border:2px solid #1e3c72;">
+                                <h3 style="text-align:center;">BODEGÓN Y LICORERÍA MEDITERRANEO</h3>
+                                <h4 style="text-align:center;">REPORTE DE CIERRE</h4>
+                                <p style="text-align:center;">{datetime.now().strftime('%d/%m/%Y %H:%M')}</p>
+                                <hr>
+                                <p><b>Turno:</b> #{id_turno}</p>
+                                <p><b>Apertura:</b> {turno_activo.get('fecha_apertura', 'N/A')[:16] if turno_activo else 'N/A'}</p>
+                                <p><b>Cierre:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')}</p>
+                                <p><b>Abrió:</b> {turno_activo.get('usuario_apertura', 'N/A') if turno_activo else 'N/A'}</p>
+                                <p><b>Cerró:</b> {st.session_state.usuario_actual['nombre'] if st.session_state.usuario_actual else 'N/A'}</p>
+                                <hr>
+                                <p><b>Ventas totales:</b> {formatear_usd(total_ventas_usd)}</p>
+                                <p><b>Costo de ventas:</b> {formatear_usd(total_costos)}</p>
+                                <p><b>Gastos:</b> {formatear_usd(total_gastos)}</p>
+                                <p><b>Ganancia neta:</b> {formatear_usd(ganancia_neta)}</p>
+                                <p><b>Reposición:</b> {formatear_usd(total_costos)}</p>
+                                <hr>
+                                <p><b>Diferencia:</b> ${diferencia_total_usd:+,.2f}</p>
+                                <p style="text-align:center;">¡Gracias por su trabajo!</p>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        
+                        # Botón para exportar reporte
+                        reporte_df = pd.DataFrame([{
+                            'Turno': id_turno,
+                            'Fecha apertura': turno_activo.get('fecha_apertura', 'N/A')[:16] if turno_activo else 'N/A',
+                            'Fecha cierre': datetime.now().strftime('%d/%m/%Y %H:%M'),
+                            'Usuario apertura': turno_activo.get('usuario_apertura', 'N/A') if turno_activo else 'N/A',
+                            'Usuario cierre': st.session_state.usuario_actual['nombre'] if st.session_state.usuario_actual else 'N/A',
+                            'Ventas USD': total_ventas_usd,
+                            'Costos USD': total_costos,
+                            'Gastos USD': total_gastos,
+                            'Ganancia neta USD': ganancia_neta,
+                            'Reposición USD': total_costos,
+                            'Diferencia USD': diferencia_total_usd
+                        }])
+                        
+                        href = exportar_excel(reporte_df, f"cierre_turno_{id_turno}_{datetime.now().strftime('%Y%m%d_%H%M')}")
+                        st.markdown(href, unsafe_allow_html=True)
+                        
+                        # Limpiar sesión
+                        st.session_state.id_turno = None
+                        st.session_state.carrito = []
+                        
+                        if st.button("🔄 Volver al inicio"):
+                            st.rerun()
+                            
+                    except Exception as e:
+                        st.error(f"Error al cerrar turno: {e}")
+        
+        # ============================================
+        # TAB 2: HISTORIAL DE CIERRES
+        # ============================================
+        with tab_c2:
+            st.subheader("📋 Historial de cierres anteriores")
+            
+            try:
+                if st.session_state.online_mode:
+                    cierres_res = db.table("cierres").select("*").eq("estado", "cerrado").order("fecha_cierre", desc=True).limit(50).execute()
+                    df_cierres = pd.DataFrame(cierres_res.data) if cierres_res.data else pd.DataFrame()
+                else:
+                    st.info("Modo offline: no disponible")
+                    df_cierres = pd.DataFrame()
+                
+                if not df_cierres.empty:
+                    # Procesar fechas
+                    df_cierres['fecha_apertura'] = pd.to_datetime(df_cierres['fecha_apertura']).dt.strftime('%d/%m/%Y %H:%M')
+                    df_cierres['fecha_cierre'] = pd.to_datetime(df_cierres['fecha_cierre']).dt.strftime('%d/%m/%Y %H:%M')
+                    
+                    # Filtros
+                    col_hf1, col_hf2 = st.columns(2)
+                    with col_hf1:
+                        fecha_desde = st.date_input("Desde", value=None, key="hist_desde")
+                    with col_hf2:
+                        fecha_hasta = st.date_input("Hasta", value=None, key="hist_hasta")
+                    
+                    df_filtrado = df_cierres.copy()
+                    
+                    if fecha_desde:
+                        df_filtrado = df_filtrado[pd.to_datetime(df_filtrado['fecha_apertura']) >= pd.Timestamp(fecha_desde)]
+                    if fecha_hasta:
+                        df_filtrado = df_filtrado[pd.to_datetime(df_filtrado['fecha_apertura']) <= pd.Timestamp(fecha_hasta)]
+                    
+                    # Mostrar tabla
+                    columnas_mostrar = ['id', 'fecha_apertura', 'fecha_cierre', 'total_ventas', 'total_ganancias', 'diferencia', 'usuario_apertura', 'usuario_cierre']
+                    columnas_mostrar = [col for col in columnas_mostrar if col in df_filtrado.columns]
+                    
+                    st.dataframe(
+                        df_filtrado[columnas_mostrar],
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "id": "Turno",
+                            "fecha_apertura": "Apertura",
+                            "fecha_cierre": "Cierre",
+                            "total_ventas": st.column_config.NumberColumn("Ventas USD", format="$%.2f"),
+                            "total_ganancias": st.column_config.NumberColumn("Ganancia USD", format="$%.2f"),
+                            "diferencia": st.column_config.NumberColumn("Diferencia USD", format="$%.2f"),
+                            "usuario_apertura": "Abrió",
+                            "usuario_cierre": "Cerró"
+                        }
+                    )
+                    
+                    # Totales del historial
+                    col_ht1, col_ht2, col_ht3 = st.columns(3)
+                    col_ht1.metric("Total ventas período", formatear_usd(df_filtrado['total_ventas'].sum()))
+                    col_ht2.metric("Total ganancias período", formatear_usd(df_filtrado['total_ganancias'].sum()))
+                    col_ht3.metric("Promedio por turno", formatear_usd(df_filtrado['total_ganancias'].mean()))
+                    
+                    # Botón exportar historial
+                    if st.button("📥 Exportar historial completo", use_container_width=True):
+                        export_df = df_filtrado[columnas_mostrar].copy()
+                        href = exportar_excel(export_df, f"historial_cierres_{datetime.now().strftime('%Y%m%d')}")
+                        st.markdown(href, unsafe_allow_html=True)
+                        
+                else:
+                    st.info("No hay cierres anteriores registrados")
+                    
+            except Exception as e:
+                st.error(f"Error cargando historial: {e}")
+        
+        # ============================================
+        # TAB 3: REPORTES Y ESTADÍSTICAS
+        # ============================================
+        with tab_c3:
+            st.subheader("📈 Reportes y estadísticas")
+            
+            try:
+                if st.session_state.online_mode:
+                    # Cargar datos de ventas de todos los turnos cerrados
+                    cierres_res = db.table("cierres").select("*").eq("estado", "cerrado").execute()
+                    df_cierres = pd.DataFrame(cierres_res.data) if cierres_res.data else pd.DataFrame()
+                    
+                    if not df_cierres.empty:
+                        # Procesar fechas
+                        df_cierres['fecha_apertura'] = pd.to_datetime(df_cierres['fecha_apertura'])
+                        df_cierres['fecha_cierre'] = pd.to_datetime(df_cierres['fecha_cierre'])
+                        df_cierres['fecha'] = df_cierres['fecha_cierre'].dt.date
+                        
+                        # Gráfico de ventas por día
+                        st.subheader("📊 Ventas por día")
+                        ventas_diarias = df_cierres.groupby('fecha')['total_ventas'].sum().reset_index()
+                        
+                        if not ventas_diarias.empty:
+                            import plotly.express as px
+                            fig = px.line(ventas_diarias, x='fecha', y='total_ventas', 
+                                         title="Evolución de ventas diarias",
+                                         labels={'fecha': 'Fecha', 'total_ventas': 'Ventas USD'})
+                            st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Top días con mayores ventas
+                        st.subheader("🏆 Top 5 días con mayores ventas")
+                        top_dias = df_cierres.nlargest(5, 'total_ventas')[['fecha_cierre', 'total_ventas', 'total_ganancias']]
+                        top_dias['fecha_cierre'] = top_dias['fecha_cierre'].dt.strftime('%d/%m/%Y')
+                        top_dias.columns = ['Fecha', 'Ventas USD', 'Ganancias USD']
+                        st.dataframe(top_dias, use_container_width=True, hide_index=True)
+                        
+                        # Resumen general
+                        st.subheader("📋 Resumen general")
+                        col_gr1, col_gr2, col_gr3, col_gr4 = st.columns(4)
+                        col_gr1.metric("Total turnos", len(df_cierres))
+                        col_gr2.metric("Total ventas", formatear_usd(df_cierres['total_ventas'].sum()))
+                        col_gr3.metric("Total ganancias", formatear_usd(df_cierres['total_ganancias'].sum()))
+                        col_gr4.metric("Promedio ganancia/turno", formatear_usd(df_cierres['total_ganancias'].mean()))
+                        
+                    else:
+                        st.info("No hay suficientes datos para generar reportes")
+                else:
+                    st.info("Modo offline: los reportes requieren conexión")
+                    
+            except Exception as e:
+                st.error(f"Error generando reportes: {e}")
