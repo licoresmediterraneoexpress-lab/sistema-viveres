@@ -1582,7 +1582,6 @@ elif opcion == "📜 HISTORIAL":
     except Exception as e:
         st.error(f"Error cargando historial: {e}")
         st.exception(e)
-
 # ============================================
 # MÓDULO 5: CIERRE DE CAJA PROFESIONAL
 # ============================================
@@ -1788,7 +1787,7 @@ elif opcion == "📊 CIERRE DE CAJA":
             st.divider()
             
             # ============================================
-            # CONTEO FÍSICO PARA CIERRE
+            # CONTEO FÍSICO PARA CIERRE (CORREGIDO)
             # ============================================
             st.subheader("🧮 Conteo físico para cierre")
             
@@ -1839,30 +1838,29 @@ elif opcion == "📊 CIERRE DE CAJA":
                 with col_x1:
                     st.metric("Esperado Bs", f"{esperado_bs:,.2f} Bs")
                     st.metric("Físico Bs", f"{total_bs_fisico:,.2f} Bs")
-                    st.metric("Diferencia Bs", f"{diff_bs:+,.2f} Bs", 
-                             delta_color="off" if abs(diff_bs) < 1 else "inverse")
+                    st.metric("Diferencia Bs", f"{diff_bs:+,.2f} Bs")
                 
                 with col_x2:
                     st.metric("Esperado USD", f"${esperado_usd:,.2f}")
                     st.metric("Físico USD", f"${total_usd_fisico:,.2f}")
-                    st.metric("Diferencia USD", f"${diff_usd:+,.2f}", 
-                             delta_color="off" if abs(diff_usd) < 0.1 else "inverse")
+                    st.metric("Diferencia USD", f"${diff_usd:+,.2f}")
                 
-                st.metric("DIFERENCIA TOTAL USD", f"${diff_total_usd:+,.2f}",
-                         delta_color="off" if abs(diff_total_usd) < 0.1 else "inverse")
+                st.metric("DIFERENCIA TOTAL USD", f"${diff_total_usd:+,.2f}")
                 
-                # Mensaje claro
                 if abs(diff_total_usd) < 0.1:
-                    st.success("✅ **¡CAJA CUADRADA!** Las diferencias son mínimas.")
+                    st.success("✅ **¡CAJA CUADRADA!**")
                 elif diff_total_usd > 0:
-                    st.info(f"🟢 **SOBRANTE:** +${diff_total_usd:,.2f} USD a favor de la caja")
+                    st.info(f"🟢 **SOBRANTE:** +${diff_total_usd:,.2f} USD")
                 else:
-                    st.error(f"🔴 **FALTANTE:** -${abs(diff_total_usd):,.2f} USD en la caja")
+                    st.error(f"🔴 **FALTANTE:** -${abs(diff_total_usd):,.2f} USD")
                 
                 st.warning("⚠️ Una vez cerrado, no podrá modificar ventas de este turno.")
                 confirmar = st.checkbox("✅ Confirmo que los datos del conteo son correctos")
                 
-                if st.form_submit_button("🔒 CERRAR TURNO", type="primary", use_container_width=True, disabled=not confirmar):
+                # BOTÓN DE CIERRE
+                cerrar = st.form_submit_button("🔒 CERRAR TURNO", type="primary", use_container_width=True, disabled=not confirmar)
+                
+                if cerrar:
                     try:
                         update_data = {
                             "fecha_cierre": datetime.now().isoformat(),
@@ -1887,79 +1885,103 @@ elif opcion == "📊 CIERRE DE CAJA":
                         db.table("cierres").update(update_data).eq("id", id_turno).execute()
                         db.table("gastos").update({"estado": "cerrado"}).eq("id_cierre", id_turno).execute()
                         
-                        st.balloons()
-                        st.success("✅ Turno cerrado exitosamente!")
+                        # Guardar en session_state que se cerró correctamente para mostrar el reporte
+                        st.session_state.cierre_exitoso = {
+                            "id_turno": id_turno,
+                            "usuario_apertura": usuario_apertura,
+                            "tasa": tasa,
+                            "total_ventas_usd": total_ventas_usd,
+                            "total_costos": total_costos,
+                            "total_gastos": total_gastos,
+                            "ganancia_neta": ganancia_neta,
+                            "esperado_bs": esperado_bs,
+                            "total_bs_fisico": total_bs_fisico,
+                            "diff_bs": diff_bs,
+                            "esperado_usd": esperado_usd,
+                            "total_usd_fisico": total_usd_fisico,
+                            "diff_usd": diff_usd,
+                            "diff_total_usd": diff_total_usd
+                        }
                         
-                        # Mostrar resumen final
-                        with st.expander("📄 Reporte de cierre", expanded=True):
-                            st.markdown(f"""
-                            <div style="background:white; padding:20px; border-radius:10px; border:2px solid #1e3c72;">
-                                <h3 style="text-align:center;">BODEGÓN Y LICORERÍA MEDITERRANEO</h3>
-                                <h4 style="text-align:center;">REPORTE DE CIERRE DE CAJA</h4>
-                                <p style="text-align:center;">{datetime.now().strftime('%d/%m/%Y %H:%M')}</p>
-                                <hr>
-                                <p><b>Turno:</b> #{id_turno}</p>
-                                <p><b>Abrió:</b> {usuario_apertura}</p>
-                                <p><b>Cerró:</b> {st.session_state.usuario_actual['nombre'] if st.session_state.usuario_actual else 'N/A'}</p>
-                                <p><b>Tasa:</b> {tasa:.2f} Bs/$</p>
-                                <hr>
-                                <p><b>Ventas totales:</b> ${total_ventas_usd:,.2f}</p>
-                                <p><b>Costo de ventas:</b> ${total_costos:,.2f}</p>
-                                <p><b>Gastos:</b> ${total_gastos:,.2f}</p>
-                                <p><b>Ganancia neta:</b> ${ganancia_neta:,.2f}</p>
-                                <hr>
-                                <p><b>Esperado Bs:</b> {esperado_bs:,.2f} Bs</p>
-                                <p><b>Físico Bs:</b> {total_bs_fisico:,.2f} Bs</p>
-                                <p><b>Diferencia Bs:</b> {diff_bs:+,.2f} Bs</p>
-                                <p><b>Esperado USD:</b> ${esperado_usd:,.2f}</p>
-                                <p><b>Físico USD:</b> ${total_usd_fisico:,.2f}</p>
-                                <p><b>Diferencia USD:</b> ${diff_usd:+,.2f}</p>
-                                <p><b>Diferencia total USD:</b> ${diff_total_usd:+,.2f}</p>
-                                <hr>
-                                <p style="text-align:center;">¡Gracias por su trabajo!</p>
-                            </div>
-                            """, unsafe_allow_html=True)
-                        
-                        # Botón para exportar reporte
-                        reporte_df = pd.DataFrame([{
-                            'Turno': id_turno,
-                            'Fecha': datetime.now().strftime('%d/%m/%Y %H:%M'),
-                            'Abrió': usuario_apertura,
-                            'Cerró': st.session_state.usuario_actual['nombre'] if st.session_state.usuario_actual else 'N/A',
-                            'Tasa': tasa,
-                            'Ventas USD': total_ventas_usd,
-                            'Costos USD': total_costos,
-                            'Gastos USD': total_gastos,
-                            'Ganancia USD': ganancia_neta,
-                            'Esperado Bs': esperado_bs,
-                            'Físico Bs': total_bs_fisico,
-                            'Diferencia Bs': diff_bs,
-                            'Esperado USD': esperado_usd,
-                            'Físico USD': total_usd_fisico,
-                            'Diferencia USD': diff_usd,
-                            'Diferencia total USD': diff_total_usd
-                        }])
-                        
-                        from io import BytesIO
-                        import base64
-                        
-                        output = BytesIO()
-                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                            reporte_df.to_excel(writer, index=False, sheet_name='Cierre')
-                        excel_data = output.getvalue()
-                        b64 = base64.b64encode(excel_data).decode()
-                        href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="cierre_turno_{id_turno}.xlsx">📥 Descargar Reporte Excel</a>'
-                        st.markdown(href, unsafe_allow_html=True)
-                        
-                        # Limpiar sesión
+                        # Limpiar sesión del turno
                         st.session_state.id_turno = None
                         st.session_state.carrito = []
                         
-                        if st.button("🔄 Volver al inicio"):
-                            st.rerun()
+                        st.rerun()
                         
                     except Exception as e:
                         st.error(f"Error al cerrar turno: {e}")
+            
+            # Mostrar reporte si el cierre fue exitoso
+            if st.session_state.get('cierre_exitoso'):
+                datos = st.session_state.cierre_exitoso
+                
+                st.balloons()
+                st.success("✅ Turno cerrado exitosamente!")
+                
+                with st.expander("📄 Reporte de cierre", expanded=True):
+                    st.markdown(f"""
+                    <div style="background:white; padding:20px; border-radius:10px; border:2px solid #1e3c72;">
+                        <h3 style="text-align:center;">BODEGÓN Y LICORERÍA MEDITERRANEO</h3>
+                        <h4 style="text-align:center;">REPORTE DE CIERRE DE CAJA</h4>
+                        <p style="text-align:center;">{datetime.now().strftime('%d/%m/%Y %H:%M')}</p>
+                        <hr>
+                        <p><b>Turno:</b> #{datos['id_turno']}</p>
+                        <p><b>Abrió:</b> {datos['usuario_apertura']}</p>
+                        <p><b>Cerró:</b> {st.session_state.usuario_actual['nombre'] if st.session_state.usuario_actual else 'N/A'}</p>
+                        <p><b>Tasa:</b> {datos['tasa']:.2f} Bs/$</p>
+                        <hr>
+                        <p><b>Ventas totales:</b> ${datos['total_ventas_usd']:,.2f}</p>
+                        <p><b>Costo de ventas:</b> ${datos['total_costos']:,.2f}</p>
+                        <p><b>Gastos:</b> ${datos['total_gastos']:,.2f}</p>
+                        <p><b>Ganancia neta:</b> ${datos['ganancia_neta']:,.2f}</p>
+                        <hr>
+                        <p><b>Esperado Bs:</b> {datos['esperado_bs']:,.2f} Bs</p>
+                        <p><b>Físico Bs:</b> {datos['total_bs_fisico']:,.2f} Bs</p>
+                        <p><b>Diferencia Bs:</b> {datos['diff_bs']:+,.2f} Bs</p>
+                        <p><b>Esperado USD:</b> ${datos['esperado_usd']:,.2f}</p>
+                        <p><b>Físico USD:</b> ${datos['total_usd_fisico']:,.2f}</p>
+                        <p><b>Diferencia USD:</b> ${datos['diff_usd']:+,.2f}</p>
+                        <p><b>Diferencia total USD:</b> ${datos['diff_total_usd']:+,.2f}</p>
+                        <hr>
+                        <p style="text-align:center;">¡Gracias por su trabajo!</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                # Botón para exportar reporte
+                reporte_df = pd.DataFrame([{
+                    'Turno': datos['id_turno'],
+                    'Fecha': datetime.now().strftime('%d/%m/%Y %H:%M'),
+                    'Abrió': datos['usuario_apertura'],
+                    'Cerró': st.session_state.usuario_actual['nombre'] if st.session_state.usuario_actual else 'N/A',
+                    'Tasa': datos['tasa'],
+                    'Ventas USD': datos['total_ventas_usd'],
+                    'Costos USD': datos['total_costos'],
+                    'Gastos USD': datos['total_gastos'],
+                    'Ganancia USD': datos['ganancia_neta'],
+                    'Esperado Bs': datos['esperado_bs'],
+                    'Físico Bs': datos['total_bs_fisico'],
+                    'Diferencia Bs': datos['diff_bs'],
+                    'Esperado USD': datos['esperado_usd'],
+                    'Físico USD': datos['total_usd_fisico'],
+                    'Diferencia USD': datos['diff_usd'],
+                    'Diferencia total USD': datos['diff_total_usd']
+                }])
+                
+                from io import BytesIO
+                import base64
+                
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    reporte_df.to_excel(writer, index=False, sheet_name='Cierre')
+                excel_data = output.getvalue()
+                b64 = base64.b64encode(excel_data).decode()
+                href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="cierre_turno_{datos["id_turno"]}.xlsx">📥 Descargar Reporte Excel</a>'
+                st.markdown(href, unsafe_allow_html=True)
+                
+                if st.button("🔄 Volver al inicio"):
+                    del st.session_state.cierre_exitoso
+                    st.rerun()
         
         # ============================================
         # TAB 2: HISTORIAL DE CIERRES
