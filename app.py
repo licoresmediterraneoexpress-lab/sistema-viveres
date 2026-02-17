@@ -356,3 +356,356 @@ def exportar_excel(df, nombre_archivo):
     b64 = base64.b64encode(excel_data).decode()
     href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="{nombre_archivo}.xlsx">📥 Descargar Excel</a>'
     return href
+
+# ============================================
+# MÓDULO 1: INVENTARIO MEJORADO
+# ============================================
+if opcion == "📦 INVENTARIO":
+    st.markdown("<h1 class='main-header'>📦 Gestión de Inventario</h1>", unsafe_allow_html=True)
+    
+    # Categorías predefinidas
+    CATEGORIAS = [
+        "Licores", "Cervezas", "Vinos", "Refrescos", "Aguas",
+        "Víveres", "Confitería", "Snacks", "Lácteos", "Otros"
+    ]
+    
+    try:
+        # Cargar datos (con soporte offline)
+        if st.session_state.online_mode:
+            response = db.table("inventario").select("*").order("nombre").execute()
+            df = pd.DataFrame(response.data) if response.data else pd.DataFrame()
+            OfflineManager.guardar_datos_local('inventario', df.to_dict('records'))
+        else:
+            datos_local = OfflineManager.obtener_datos_local('inventario')
+            df = pd.DataFrame(datos_local) if datos_local else pd.DataFrame()
+        
+        # Verificar si existe columna categoria, si no, agregarla
+        if not df.empty and 'categoria' not in df.columns:
+            df['categoria'] = 'Otros'
+        
+        # Pestañas principales
+        tab1, tab2, tab3, tab4 = st.tabs(["📋 Ver Inventario", "➕ Agregar Producto", "📊 Estadísticas", "📥 Respaldos"])
+        
+        # ============================================
+        # TAB 1: VER INVENTARIO (MEJORADO)
+        # ============================================
+        with tab1:
+            # Filtros avanzados
+            col_f1, col_f2, col_f3, col_f4 = st.columns([2, 1, 1, 1])
+            
+            with col_f1:
+                busqueda = st.text_input("🔍 Buscar producto", placeholder="Nombre o código...")
+            
+            with col_f2:
+                categoria_filtro = st.selectbox("Categoría", ["Todas"] + CATEGORIAS)
+            
+            with col_f3:
+                ver_bajo_stock = st.checkbox("⚠️ Solo stock bajo")
+            
+            with col_f4:
+                if st.button("📤 Exportar a Excel", use_container_width=True):
+                    if not df.empty:
+                        export_df = df[['nombre', 'categoria', 'stock', 'costo', 'precio_detal', 'precio_mayor', 'min_mayor']].copy()
+                        export_df.columns = ['Producto', 'Categoría', 'Stock', 'Costo $', 'Precio Detal $', 'Precio Mayor $', 'Min. Mayor']
+                        href = exportar_excel(export_df, f"inventario_{datetime.now().strftime('%Y%m%d')}")
+                        st.markdown(href, unsafe_allow_html=True)
+            
+            if not df.empty:
+                # Aplicar filtros
+                df_filtrado = df.copy()
+                
+                if busqueda:
+                    df_filtrado = df_filtrado[
+                        df_filtrado['nombre'].str.contains(busqueda, case=False, na=False) |
+                        df_filtrado.get('codigo_barras', '').astype(str).str.contains(busqueda, case=False, na=False)
+                    ]
+                
+                if categoria_filtro != "Todas":
+                    df_filtrado = df_filtrado[df_filtrado['categoria'] == categoria_filtro]
+                
+                if ver_bajo_stock:
+                    df_filtrado = df_filtrado[df_filtrado['stock'] < 5]
+                    st.warning(f"⚠️ Hay {len(df_filtrado)} productos con stock bajo")
+                
+                # Mostrar tabla con colores según stock
+                def colorear_stock(val):
+                    if val < 5:
+                        return 'color: red; font-weight: bold; background-color: #ffe6e6'
+                    elif val < 10:
+                        return 'color: orange; font-weight: bold;'
+                    return 'color: green; font-weight: bold;'
+                
+                # Preparar DataFrame para mostrar
+                df_mostrar = df_filtrado[['nombre', 'categoria', 'stock', 'costo', 'precio_detal', 'precio_mayor', 'min_mayor']].copy()
+                df_mostrar.columns = ['Producto', 'Categoría', 'Stock', 'Costo $', 'Detal $', 'Mayor $', 'Mín. Mayor']
+                
+                # Aplicar estilo
+                styled_df = df_mostrar.style.applymap(colorear_stock, subset=['Stock'])
+                
+                st.dataframe(
+                    styled_df,
+                    use_container_width=True,
+                    hide_index=True
+                )
+                
+                # Mostrar total de productos
+                st.caption(f"Mostrando {len(df_filtrado)} de {len(df)} productos")
+                
+                # ============================================
+                # EDITAR PRODUCTO
+                # ============================================
+                st.divider()
+                st.subheader("✏️ Editar producto")
+                
+                if not df_filtrado.empty:
+                    producto_editar = st.selectbox("Seleccionar producto", df_filtrado['nombre'].tolist(), key="editar")
+                    if producto_editar:
+                        prod = df[df['nombre'] == producto_editar].iloc[0]
+                        with st.form("form_editar"):
+                            col_e1, col_e2 = st.columns(2)
+                            with col_e1:
+                                nuevo_nombre = st.text_input("Nombre", value=prod['nombre'])
+                                nueva_categoria = st.selectbox("Categoría", CATEGORIAS, 
+                                                              index=CATEGORIAS.index(prod.get('categoria', 'Otros')) if prod.get('categoria', 'Otros') in CATEGORIAS else 9)
+                                nuevo_stock = st.number_input("Stock", value=float(prod['stock']), min_value=0.0, step=1.0)
+                                nuevo_costo = st.number_input("Costo $", value=float(prod['costo']), min_value=0.0, step=0.01)
+                                nuevo_codigo = st.text_input("Código de barras", value=prod.get('codigo_barras', ''))
+                            with col_e2:
+                                nuevo_detal = st.number_input("Precio Detal $", value=float(prod['precio_detal']), min_value=0.0, step=0.01)
+                                nuevo_mayor = st.number_input("Precio Mayor $", value=float(prod['precio_mayor']), min_value=0.0, step=0.01)
+                                nuevo_min = st.number_input("Mín. Mayor", value=int(prod['min_mayor']), min_value=1, step=1)
+                            
+                            if st.form_submit_button("💾 Guardar Cambios", use_container_width=True):
+                                try:
+                                    datos_actualizados = {
+                                        "nombre": nuevo_nombre,
+                                        "categoria": nueva_categoria,
+                                        "stock": nuevo_stock,
+                                        "costo": nuevo_costo,
+                                        "precio_detal": nuevo_detal,
+                                        "precio_mayor": nuevo_mayor,
+                                        "min_mayor": nuevo_min
+                                    }
+                                    if nuevo_codigo:
+                                        datos_actualizados["codigo_barras"] = nuevo_codigo
+                                    
+                                    if st.session_state.online_mode:
+                                        db.table("inventario").update(datos_actualizados).eq("id", prod['id']).execute()
+                                    else:
+                                        # Modo offline: guardar operación pendiente
+                                        if 'operaciones_pendientes' not in st.session_state:
+                                            st.session_state.operaciones_pendientes = []
+                                        st.session_state.operaciones_pendientes.append({
+                                            'tipo': 'update',
+                                            'tabla': 'inventario',
+                                            'datos': datos_actualizados,
+                                            'id_field': 'id',
+                                            'id_value': prod['id']
+                                        })
+                                    
+                                    st.success("✅ Producto actualizado")
+                                    time.sleep(1)
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Error: {e}")
+                
+                # ============================================
+                # ELIMINAR PRODUCTO
+                # ============================================
+                st.divider()
+                st.subheader("🗑️ Eliminar producto")
+                col_d1, col_d2 = st.columns(2)
+                with col_d1:
+                    producto_eliminar = st.selectbox("Seleccionar producto", [""] + df['nombre'].tolist(), key="eliminar")
+                with col_d2:
+                    clave = st.text_input("Clave Admin", type="password", key="clave_eliminar")
+                
+                if producto_eliminar and st.button("❌ Eliminar", type="primary", use_container_width=True):
+                    if clave == CLAVE_ADMIN:
+                        try:
+                            if st.session_state.online_mode:
+                                db.table("inventario").delete().eq("nombre", producto_eliminar).execute()
+                            else:
+                                # Modo offline: marcar para eliminar
+                                if 'operaciones_pendientes' not in st.session_state:
+                                    st.session_state.operaciones_pendientes = []
+                                st.session_state.operaciones_pendientes.append({
+                                    'tipo': 'delete',
+                                    'tabla': 'inventario',
+                                    'id_field': 'nombre',
+                                    'id_value': producto_eliminar
+                                })
+                            
+                            st.success(f"Producto '{producto_eliminar}' eliminado")
+                            time.sleep(1)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error: {e}")
+                    else:
+                        st.error("Clave incorrecta")
+            else:
+                st.info("No hay productos en el inventario")
+        
+        # ============================================
+        # TAB 2: AGREGAR PRODUCTO (MEJORADO)
+        # ============================================
+        with tab2:
+            with st.form("nuevo_producto", clear_on_submit=True):
+                st.markdown("### 📝 Datos del nuevo producto")
+                
+                col_a1, col_a2 = st.columns(2)
+                with col_a1:
+                    nombre = st.text_input("Nombre del producto *").upper()
+                    categoria = st.selectbox("Categoría", CATEGORIAS)
+                    stock = st.number_input("Stock inicial *", min_value=0.0, step=1.0, format="%.2f")
+                    costo = st.number_input("Costo $ *", min_value=0.0, step=0.01, format="%.2f")
+                    codigo_barras = st.text_input("Código de barras (opcional)")
+                
+                with col_a2:
+                    precio_detal = st.number_input("Precio Detal $ *", min_value=0.0, step=0.01, format="%.2f")
+                    precio_mayor = st.number_input("Precio Mayor $ *", min_value=0.0, step=0.01, format="%.2f")
+                    min_mayor = st.number_input("Mínimo para Mayor *", min_value=1, value=6, step=1)
+                
+                st.markdown("---")
+                
+                if st.form_submit_button("📦 Registrar Producto", use_container_width=True):
+                    if not nombre:
+                        st.error("El nombre es obligatorio")
+                    elif stock < 0 or costo < 0 or precio_detal <= 0:
+                        st.error("Verifique los valores ingresados")
+                    else:
+                        try:
+                            # Verificar si ya existe
+                            if st.session_state.online_mode:
+                                existe = db.table("inventario").select("*").eq("nombre", nombre).execute()
+                                if existe.data:
+                                    st.error(f"Ya existe un producto con el nombre '{nombre}'")
+                                    st.stop()
+                            
+                            datos_nuevos = {
+                                "nombre": nombre,
+                                "categoria": categoria,
+                                "stock": stock,
+                                "costo": costo,
+                                "precio_detal": precio_detal,
+                                "precio_mayor": precio_mayor,
+                                "min_mayor": min_mayor
+                            }
+                            if codigo_barras:
+                                datos_nuevos["codigo_barras"] = codigo_barras
+                            
+                            if st.session_state.online_mode:
+                                db.table("inventario").insert(datos_nuevos).execute()
+                            else:
+                                # Modo offline: guardar operación pendiente
+                                if 'operaciones_pendientes' not in st.session_state:
+                                    st.session_state.operaciones_pendientes = []
+                                st.session_state.operaciones_pendientes.append({
+                                    'tipo': 'insert',
+                                    'tabla': 'inventario',
+                                    'datos': datos_nuevos
+                                })
+                            
+                            st.success(f"✅ Producto '{nombre}' registrado exitosamente")
+                            time.sleep(1)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error al registrar: {e}")
+        
+        # ============================================
+        # TAB 3: ESTADÍSTICAS (MEJORADAS)
+        # ============================================
+        with tab3:
+            if not df.empty:
+                # Métricas generales
+                valor_inv = (df['stock'] * df['costo']).sum()
+                valor_venta = (df['stock'] * df['precio_detal']).sum()
+                bajo_stock = len(df[df['stock'] < 5])
+                total_productos = len(df)
+                
+                col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+                col_m1.metric("Total productos", total_productos)
+                col_m2.metric("Valor inventario (costo)", formatear_usd(valor_inv))
+                col_m3.metric("Valor venta potencial", formatear_usd(valor_venta))
+                col_m4.metric("Stock bajo", bajo_stock, delta_color="inverse")
+                
+                # Ganancia potencial
+                ganancia_potencial = valor_venta - valor_inv
+                st.metric("💰 Ganancia potencial total", formatear_usd(ganancia_potencial),
+                         delta=f"{(ganancia_potencial/valor_inv*100):.1f}%" if valor_inv else "")
+                
+                # Estadísticas por categoría
+                st.subheader("📊 Productos por categoría")
+                if 'categoria' in df.columns:
+                    cat_stats = df.groupby('categoria').agg({
+                        'nombre': 'count',
+                        'stock': 'sum',
+                        'costo': lambda x: (x * df.loc[x.index, 'stock']).sum()
+                    }).round(2)
+                    cat_stats.columns = ['Cantidad', 'Stock total', 'Valor total $']
+                    st.dataframe(cat_stats, use_container_width=True)
+                
+                # Top 10 productos más valiosos
+                st.subheader("💰 Top 10 productos por valor en inventario")
+                df['valor_total'] = df['stock'] * df['costo']
+                df_top = df.nlargest(10, 'valor_total')[['nombre', 'categoria', 'stock', 'costo', 'valor_total']]
+                df_top.columns = ['Producto', 'Categoría', 'Stock', 'Costo unitario', 'Valor total']
+                st.dataframe(df_top, use_container_width=True, hide_index=True)
+                
+                # Productos con stock bajo
+                st.subheader("⚠️ Productos con stock bajo (<5)")
+                df_bajo = df[df['stock'] < 5][['nombre', 'categoria', 'stock', 'costo']]
+                if not df_bajo.empty:
+                    df_bajo.columns = ['Producto', 'Categoría', 'Stock', 'Costo unitario']
+                    st.dataframe(df_bajo, use_container_width=True, hide_index=True)
+                else:
+                    st.success("No hay productos con stock bajo")
+            else:
+                st.info("No hay datos para mostrar estadísticas")
+        
+        # ============================================
+        # TAB 4: RESPALDOS
+        # ============================================
+        with tab4:
+            st.subheader("📥 Respaldo de inventario")
+            st.markdown("""
+                <div style='background-color: #e7f3ff; padding: 1rem; border-radius: 8px; margin-bottom: 1rem;'>
+                    <p>Desde aquí puedes exportar todo tu inventario para tener un respaldo físico.</p>
+                    <p>Recomendación: Haz un respaldo diario antes de cerrar.</p>
+                </div>
+            """, unsafe_allow_html=True)
+            
+            if not df.empty:
+                col_r1, col_r2 = st.columns(2)
+                
+                with col_r1:
+                    st.markdown("**📊 Respaldo completo**")
+                    if st.button("📥 Exportar inventario completo", use_container_width=True):
+                        export_df = df[['nombre', 'categoria', 'stock', 'costo', 'precio_detal', 'precio_mayor', 'min_mayor']].copy()
+                        export_df.columns = ['Producto', 'Categoría', 'Stock', 'Costo $', 'Precio Detal $', 'Precio Mayor $', 'Min. Mayor']
+                        export_df = export_df.sort_values('Producto')
+                        href = exportar_excel(export_df, f"inventario_completo_{datetime.now().strftime('%Y%m%d_%H%M')}")
+                        st.markdown(href, unsafe_allow_html=True)
+                
+                with col_r2:
+                    st.markdown("**📋 Lista de precios**")
+                    if st.button("📥 Exportar lista de precios", use_container_width=True):
+                        precio_df = df[['nombre', 'categoria', 'precio_detal', 'precio_mayor', 'min_mayor']].copy()
+                        precio_df.columns = ['Producto', 'Categoría', 'Precio Detal $', 'Precio Mayor $', 'Mín. Mayor']
+                        precio_df = precio_df.sort_values('Categoría')
+                        href = exportar_excel(precio_df, f"lista_precios_{datetime.now().strftime('%Y%m%d')}")
+                        st.markdown(href, unsafe_allow_html=True)
+                
+                # Información del respaldo
+                st.divider()
+                st.markdown(f"""
+                    **📌 Última actualización:** {datetime.now().strftime('%d/%m/%Y %H:%M')}  
+                    **📦 Total de productos:** {len(df)}  
+                    **🏷️ Categorías:** {df['categoria'].nunique() if 'categoria' in df.columns else 0}
+                """)
+            else:
+                st.info("No hay productos para respaldar")
+                
+    except Exception as e:
+        st.error(f"Error en inventario: {e}")
+        st.exception(e)
