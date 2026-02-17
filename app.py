@@ -1582,309 +1582,226 @@ elif opcion == "📜 HISTORIAL":
     except Exception as e:
         st.error(f"Error cargando historial: {e}")
         st.exception(e)
-# ============================================
-# MÓDULO 5: CIERRE DE CAJA
+
+    # ============================================
+# MÓDULO 5: CIERRE DE CAJA (SENCILLO Y FUNCIONAL)
 # ============================================
 elif opcion == "📊 CIERRE DE CAJA":
     st.markdown("<h1 class='main-header'>📊 Cierre de Caja</h1>", unsafe_allow_html=True)
     
     # ============================================
-    # VERIFICAR SI HAY UN CIERRE RECIÉN REALIZADO
+    # VERIFICAR SI HAY UN TURNO ACTIVO
     # ============================================
-    if 'cierre_realizado' in st.session_state and st.session_state.cierre_realizado:
-        datos = st.session_state.cierre_realizado
+    if not st.session_state.id_turno:
+        st.warning("🔓 No hay turno activo. Complete para abrir caja:")
         
-        st.balloons()
-        st.success("✅ ¡Turno cerrado exitosamente!")
-        
-        with st.expander("📄 VER REPORTE DE CIERRE", expanded=True):
-            st.markdown(f"""
-            <div style="background:white; padding:20px; border-radius:10px; border:2px solid #1e3c72;">
-                <h3 style="text-align:center;">BODEGÓN Y LICORERÍA MEDITERRANEO</h3>
-                <h4 style="text-align:center;">REPORTE DE CIERRE DE CAJA</h4>
-                <p style="text-align:center;">{datetime.now().strftime('%d/%m/%Y %H:%M')}</p>
-                <hr>
-                <p><b>Turno:</b> #{datos['turno']}</p>
-                <p><b>Abrió:</b> {datos['abrio']}</p>
-                <p><b>Cerró:</b> {datos['cerro']}</p>
-                <p><b>Tasa:</b> {datos['tasa']:.2f} Bs/$</p>
-                <hr>
-                <p><b>Ventas totales:</b> ${datos['ventas']:,.2f}</p>
-                <p><b>Costo de ventas:</b> ${datos['costos']:,.2f}</p>
-                <p><b>Gastos:</b> ${datos['gastos']:,.2f}</p>
-                <p><b>Ganancia neta:</b> ${datos['ganancia']:,.2f}</p>
-                <hr>
-                <p><b>Esperado Bs:</b> {datos['esp_bs']:,.2f} Bs</p>
-                <p><b>Físico Bs:</b> {datos['fis_bs']:,.2f} Bs</p>
-                <p><b>Diferencia Bs:</b> {datos['dif_bs']:+,.2f} Bs</p>
-                <p><b>Esperado USD:</b> ${datos['esp_usd']:,.2f}</p>
-                <p><b>Físico USD:</b> ${datos['fis_usd']:,.2f}</p>
-                <p><b>Diferencia USD:</b> ${datos['dif_usd']:+,.2f}</p>
-                <p><b>Diferencia total USD:</b> ${datos['dif_total']:+,.2f}</p>
-                <hr>
-                <p style="text-align:center;">¡Gracias por su trabajo!</p>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        # Botón para volver al inicio
-        if st.button("🔄 Volver al inicio", use_container_width=True):
-            del st.session_state.cierre_realizado
-            st.rerun()
-        
-        st.stop()  # Detener ejecución aquí
-    
-    # ============================================
-    # PESTAÑAS
-    # ============================================
-    tab_c1, tab_c2, tab_c3 = st.tabs([
-        "🔓 Apertura / Cierre Actual", 
-        "📋 Historial de Cierres",
-        "📈 Reportes y Estadísticas"
-    ])
-    
-    # ============================================
-    # TAB 1: APERTURA Y CIERRE ACTUAL
-    # ============================================
-    with tab_c1:
-        if not st.session_state.id_turno:
-            st.warning("🔓 No hay turno activo. Complete los datos para abrir caja:")
+        with st.form("form_apertura"):
+            st.subheader("📝 Datos de apertura")
             
-            with st.form("form_apertura"):
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    nueva_tasa = st.number_input("💱 Tasa del día (Bs/$)", min_value=1.0, value=60.0, step=0.5, format="%.2f")
-                    nuevo_fondo_bs = st.number_input("💰 Fondo inicial Bs", min_value=0.0, value=0.0, step=10.0, format="%.2f")
-                
-                with col2:
-                    nuevo_fondo_usd = st.number_input("💰 Fondo inicial USD", min_value=0.0, value=0.0, step=5.0, format="%.2f")
-                    st.info(f"👤 Abre: {st.session_state.usuario_actual['nombre'] if st.session_state.usuario_actual else 'Anónimo'}")
-                
-                if st.form_submit_button("🚀 ABRIR CAJA", type="primary", use_container_width=True):
-                    try:
-                        data = {
-                            "tasa_apertura": nueva_tasa,
-                            "fondo_bs": nuevo_fondo_bs,
-                            "fondo_usd": nuevo_fondo_usd,
-                            "monto_apertura": nuevo_fondo_usd,
-                            "estado": "abierto",
-                            "fecha_apertura": datetime.now().isoformat(),
-                            "usuario_apertura": st.session_state.usuario_actual['nombre'] if st.session_state.usuario_actual else 'Anónimo'
-                        }
-                        
-                        res = db.table("cierres").insert(data).execute()
-                        if res.data:
-                            st.session_state.id_turno = res.data[0]['id']
-                            st.session_state.tasa_dia = nueva_tasa
-                            st.session_state.fondo_bs = nuevo_fondo_bs
-                            st.session_state.fondo_usd = nuevo_fondo_usd
-                            st.success(f"✅ Turno #{res.data[0]['id']} abierto")
-                            time.sleep(1)
-                            st.rerun()
-                            
-                    except Exception as e:
-                        st.error(f"Error: {e}")
-        else:
-            id_turno = st.session_state.id_turno
-            tasa = st.session_state.tasa_dia
-            fondo_bs_ini = st.session_state.get('fondo_bs', 0)
-            fondo_usd_ini = st.session_state.get('fondo_usd', 0)
+            col1, col2 = st.columns(2)
+            with col1:
+                tasa_apertura = st.number_input("Tasa BCV (Bs/$)", min_value=1.0, value=60.0, step=0.5, format="%.2f")
+                fondo_bs = st.number_input("Fondo inicial Bs", min_value=0.0, value=0.0, step=10.0, format="%.2f")
+            with col2:
+                fondo_usd = st.number_input("Fondo inicial USD", min_value=0.0, value=0.0, step=5.0, format="%.2f")
+                st.info(f"Abrirá: {st.session_state.usuario_actual['nombre'] if st.session_state.usuario_actual else 'Anónimo'}")
             
-            # Obtener datos del turno
-            turno_info = db.table("cierres").select("*").eq("id", id_turno).execute()
-            usuario_apertura = turno_info.data[0].get('usuario_apertura', 'N/A') if turno_info.data else 'N/A'
-            
-            # Mostrar info
-            col_i1, col_i2, col_i3 = st.columns(3)
-            col_i1.success(f"📍 Turno #{id_turno}")
-            col_i2.info(f"👤 Abrió: {usuario_apertura}")
-            col_i3.info(f"💱 Tasa: {tasa:.2f} Bs/$")
-            
-            # ============================================
-            # OBTENER VENTAS Y GASTOS
-            # ============================================
-            ventas = db.table("ventas").select("*").eq("id_cierre", id_turno).eq("estado", "Finalizado").execute().data or []
-            gastos = db.table("gastos").select("*").eq("id_cierre", id_turno).execute().data or []
-            
-            # Calcular totales
-            total_ventas = sum(float(v.get('total_usd', 0)) for v in ventas)
-            total_costos = sum(float(v.get('costo_venta', 0)) for v in ventas)
-            total_gastos = sum(float(g.get('monto_usd', 0)) for g in gastos)
-            ganancia_neta = total_ventas - total_costos - total_gastos
-            
-            # ============================================
-            # RESUMEN
-            # ============================================
-            st.subheader("📈 Resumen del turno")
-            col_r1, col_r2, col_r3, col_r4 = st.columns(4)
-            col_r1.metric("Ventas", f"${total_ventas:,.2f}")
-            col_r2.metric("Costos", f"${total_costos:,.2f}")
-            col_r3.metric("Gastos", f"${total_gastos:,.2f}")
-            col_r4.metric("Ganancia", f"${ganancia_neta:,.2f}")
-            
-            st.divider()
-            
-            # ============================================
-            # CONTEO FÍSICO
-            # ============================================
-            st.subheader("🧮 Conteo físico para cierre")
-            
-            with st.form("form_cierre"):
-                col_f1, col_f2 = st.columns(2)
-                
-                with col_f1:
-                    st.markdown("**💰 Bolívares (Bs)**")
-                    efec_bs = st.number_input("Efectivo Bs", min_value=0.0, value=0.0, step=100.0, format="%.2f", key="bs_ef")
-                    pmovil = st.number_input("Pago Móvil Bs", min_value=0.0, value=0.0, step=100.0, format="%.2f", key="bs_pm")
-                    punto = st.number_input("Punto Venta Bs", min_value=0.0, value=0.0, step=100.0, format="%.2f", key="bs_pv")
-                
-                with col_f2:
-                    st.markdown("**💰 Dólares (USD)**")
-                    efec_usd = st.number_input("Efectivo USD", min_value=0.0, value=0.0, step=5.0, format="%.2f", key="usd_ef")
-                    zelle = st.number_input("Zelle USD", min_value=0.0, value=0.0, step=5.0, format="%.2f", key="usd_zelle")
-                    otros = st.number_input("Otros USD", min_value=0.0, value=0.0, step=5.0, format="%.2f", key="usd_otros")
-                
-                observaciones = st.text_area("📝 Observaciones", placeholder="Ej: Todo en orden...")
-                
-                st.markdown("---")
-                
-                # Calcular esperados
-                esperado_bs = fondo_bs_ini + (total_ventas * tasa) - (total_gastos * tasa)
-                esperado_usd = fondo_usd_ini + total_ventas - total_gastos
-                
-                # Calcular físicos
-                total_bs = efec_bs + pmovil + punto
-                total_usd = efec_usd + zelle + otros
-                
-                # Diferencias
-                dif_bs = total_bs - esperado_bs
-                dif_usd = total_usd - esperado_usd
-                dif_total = dif_usd + (dif_bs / tasa if tasa > 0 else 0)
-                
-                # Mostrar resultados
-                st.subheader("📊 Resultado")
-                
-                col_x1, col_x2 = st.columns(2)
-                col_x1.metric("Esperado Bs", f"{esperado_bs:,.2f} Bs")
-                col_x1.metric("Físico Bs", f"{total_bs:,.2f} Bs")
-                col_x1.metric("Diferencia Bs", f"{dif_bs:+,.2f} Bs")
-                
-                col_x2.metric("Esperado USD", f"${esperado_usd:,.2f}")
-                col_x2.metric("Físico USD", f"${total_usd:,.2f}")
-                col_x2.metric("Diferencia USD", f"${dif_usd:+,.2f}")
-                
-                if abs(dif_total) < 0.1:
-                    st.success("✅ **CAJA CUADRADA**")
-                elif dif_total > 0:
-                    st.info(f"🟢 **SOBRANTE:** +${dif_total:,.2f} USD")
-                else:
-                    st.error(f"🔴 **FALTANTE:** -${abs(dif_total):,.2f} USD")
-                
-                st.warning("⚠️ Una vez cerrado, no podrá modificar ventas de este turno.")
-                confirmar = st.checkbox("✅ Confirmo que los datos son correctos")
-                
-                if st.form_submit_button("🔒 CERRAR TURNO", type="primary", use_container_width=True, disabled=not confirmar):
-                    try:
-                        # Preparar datos para guardar
-                        update_data = {
-                            "fecha_cierre": datetime.now().isoformat(),
-                            "total_ventas": total_ventas,
-                            "total_costos": total_costos,
-                            "total_ganancias": ganancia_neta,
-                            "diferencia": dif_total,
-                            "tasa_cierre": tasa,
-                            "estado": "cerrado",
-                            "usuario_cierre": st.session_state.usuario_actual['nombre'] if st.session_state.usuario_actual else 'Anónimo',
-                            "observaciones": observaciones if observaciones else None,
-                            "fondo_bs_final": total_bs,
-                            "fondo_usd_final": total_usd,
-                            "efectivo_bs_fisico": efec_bs,
-                            "efectivo_usd_fisico": efec_usd,
-                            "pmovil_fisico": pmovil,
-                            "punto_fisico": punto,
-                            "zelle_fisico": zelle,
-                            "otros_fisico": otros
-                        }
-                        
-                        # Guardar en Supabase
-                        db.table("cierres").update(update_data).eq("id", id_turno).execute()
-                        db.table("gastos").update({"estado": "cerrado"}).eq("id_cierre", id_turno).execute()
-                        
-                        # Guardar datos para el reporte
-                        st.session_state.cierre_realizado = {
-                            'turno': id_turno,
-                            'abrio': usuario_apertura,
-                            'cerro': st.session_state.usuario_actual['nombre'] if st.session_state.usuario_actual else 'Anónimo',
-                            'tasa': tasa,
-                            'ventas': total_ventas,
-                            'costos': total_costos,
-                            'gastos': total_gastos,
-                            'ganancia': ganancia_neta,
-                            'esp_bs': esperado_bs,
-                            'fis_bs': total_bs,
-                            'dif_bs': dif_bs,
-                            'esp_usd': esperado_usd,
-                            'fis_usd': total_usd,
-                            'dif_usd': dif_usd,
-                            'dif_total': dif_total
-                        }
-                        
-                        # Limpiar sesión del turno
-                        st.session_state.id_turno = None
-                        st.session_state.carrito = []
-                        
+            if st.form_submit_button("🚀 ABRIR CAJA", type="primary", use_container_width=True):
+                try:
+                    data = {
+                        "tasa_apertura": tasa_apertura,
+                        "fondo_bs": fondo_bs,
+                        "fondo_usd": fondo_usd,
+                        "monto_apertura": fondo_usd,
+                        "estado": "abierto",
+                        "fecha_apertura": datetime.now().isoformat(),
+                        "usuario_apertura": st.session_state.usuario_actual['nombre'] if st.session_state.usuario_actual else 'Anónimo'
+                    }
+                    
+                    res = db.table("cierres").insert(data).execute()
+                    if res.data:
+                        st.session_state.id_turno = res.data[0]['id']
+                        st.session_state.tasa_dia = tasa_apertura
+                        st.session_state.fondo_bs = fondo_bs
+                        st.session_state.fondo_usd = fondo_usd
+                        st.success(f"✅ Turno #{res.data[0]['id']} abierto")
+                        time.sleep(1)
                         st.rerun()
-                        
-                    except Exception as e:
-                        st.error(f"Error al cerrar: {e}")
+                except Exception as e:
+                    st.error(f"Error: {e}")
+        
+        st.stop()
+    
+    # ============================================
+    # SI HAY TURNO ACTIVO, MOSTRAR CIERRE
+    # ============================================
+    id_turno = st.session_state.id_turno
+    tasa = st.session_state.tasa_dia
+    fondo_bs_ini = st.session_state.get('fondo_bs', 0)
+    fondo_usd_ini = st.session_state.get('fondo_usd', 0)
+    
+    # Mostrar información del turno
+    st.success(f"📍 Turno activo: #{id_turno}")
+    st.info(f"💱 Tasa: {tasa:.2f} Bs/$ | Fondo inicial: {fondo_bs_ini:,.2f} Bs / ${fondo_usd_ini:,.2f}")
+    
+    # ============================================
+    # OBTENER VENTAS Y GASTOS DEL TURNO
+    # ============================================
+    try:
+        ventas = db.table("ventas").select("*").eq("id_cierre", id_turno).eq("estado", "Finalizado").execute().data or []
+        gastos = db.table("gastos").select("*").eq("id_cierre", id_turno).execute().data or []
+    except Exception as e:
+        st.error(f"Error cargando datos: {e}")
+        ventas = []
+        gastos = []
+    
+    # Calcular totales
+    total_ventas_usd = sum(float(v.get('total_usd', 0)) for v in ventas)
+    total_costos = sum(float(v.get('costo_venta', 0)) for v in ventas)
+    total_gastos = sum(float(g.get('monto_usd', 0)) for g in gastos)
+    
+    ganancia_bruta = total_ventas_usd - total_costos
+    ganancia_neta = ganancia_bruta - total_gastos
+    reposicion = total_costos  # Dinero para reponer inventario
+    
+    # ============================================
+    # RESUMEN (SENCILLO)
+    # ============================================
+    st.subheader("📈 Resumen del turno")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("💰 Ventas", f"${total_ventas_usd:,.2f}")
+    col2.metric("📦 Reposición", f"${reposicion:,.2f}")
+    col3.metric("💸 Gastos", f"${total_gastos:,.2f}")
+    col4.metric("📊 Ganancia neta", f"${ganancia_neta:,.2f}")
+    
+    st.divider()
+    
+    # ============================================
+    # CONTEO FÍSICO (VERSIÓN MUY SIMPLE)
+    # ============================================
+    st.subheader("🧮 Conteo físico")
+    
+    with st.form("form_cierre"):
+        st.markdown("**Ingresa el dinero que tienes en caja:**")
+        
+        col_a, col_b = st.columns(2)
+        
+        with col_a:
+            st.markdown("💰 **Bolívares**")
+            efectivo_bs = st.number_input("Efectivo Bs", min_value=0.0, value=0.0, step=100.0, format="%.2f", key="bs_efectivo")
+            pmovil_bs = st.number_input("Pago Móvil Bs", min_value=0.0, value=0.0, step=100.0, format="%.2f", key="bs_pmovil")
+            punto_bs = st.number_input("Punto Venta Bs", min_value=0.0, value=0.0, step=100.0, format="%.2f", key="bs_punto")
+        
+        with col_b:
+            st.markdown("💰 **Dólares**")
+            efectivo_usd = st.number_input("Efectivo USD", min_value=0.0, value=0.0, step=5.0, format="%.2f", key="usd_efectivo")
+            zelle_usd = st.number_input("Zelle USD", min_value=0.0, value=0.0, step=5.0, format="%.2f", key="usd_zelle")
+            otros_usd = st.number_input("Otros USD", min_value=0.0, value=0.0, step=5.0, format="%.2f", key="usd_otros")
+        
+        observaciones = st.text_area("📝 Observaciones (opcional)", placeholder="Ej: Todo en orden...")
+        
+        st.markdown("---")
         
         # ============================================
-        # TAB 2: HISTORIAL DE CIERRES
+        # CÁLCULOS (AQUÍ SE HACE LA MAGIA)
         # ============================================
-        with tab_c2:
-            st.subheader("📋 Historial de cierres")
-            
-            cierres = db.table("cierres").select("*").eq("estado", "cerrado").order("fecha_cierre", desc=True).limit(50).execute()
-            df = pd.DataFrame(cierres.data) if cierres.data else pd.DataFrame()
-            
-            if not df.empty:
-                df['fecha'] = pd.to_datetime(df['fecha_cierre']).dt.strftime('%d/%m/%Y %H:%M')
-                st.dataframe(
-                    df[['id', 'fecha', 'usuario_apertura', 'usuario_cierre', 'total_ventas', 'total_ganancias', 'diferencia']],
-                    column_config={
-                        "id": "Turno",
-                        "fecha": "Fecha cierre",
-                        "usuario_apertura": "Abrió",
-                        "usuario_cierre": "Cerró",
-                        "total_ventas": st.column_config.NumberColumn("Ventas USD", format="$%.2f"),
-                        "total_ganancias": st.column_config.NumberColumn("Ganancias USD", format="$%.2f"),
-                        "diferencia": st.column_config.NumberColumn("Diferencia USD", format="$%.2f")
-                    },
-                    use_container_width=True,
-                    hide_index=True
-                )
-            else:
-                st.info("No hay cierres registrados")
+        total_bs_fisico = efectivo_bs + pmovil_bs + punto_bs
+        total_usd_fisico = efectivo_usd + zelle_usd + otros_usd
+        
+        esperado_bs = fondo_bs_ini + (total_ventas_usd * tasa) - (total_gastos * tasa)
+        esperado_usd = fondo_usd_ini + total_ventas_usd - total_gastos
+        
+        diff_bs = total_bs_fisico - esperado_bs
+        diff_usd = total_usd_fisico - esperado_usd
+        diff_total = diff_usd + (diff_bs / tasa if tasa > 0 else 0)
         
         # ============================================
-        # TAB 3: REPORTES
+        # MOSTRAR RESULTADOS EN TIEMPO REAL
         # ============================================
-        with tab_c3:
-            st.subheader("📈 Estadísticas")
-            
-            cierres = db.table("cierres").select("*").eq("estado", "cerrado").execute()
-            df = pd.DataFrame(cierres.data) if cierres.data else pd.DataFrame()
-            
-            if not df.empty and len(df) >= 3:
-                total_ventas = df['total_ventas'].sum()
-                total_ganancias = df['total_ganancias'].sum()
-                promedio = df['total_ventas'].mean()
-                mejor_dia = df['total_ventas'].max()
+        st.subheader("📊 Comparación Caja vs Sistema")
+        
+        col_r1, col_r2 = st.columns(2)
+        
+        with col_r1:
+            st.markdown("**🇻🇪 Bolívares**")
+            st.metric("Esperado", f"{esperado_bs:,.2f} Bs")
+            st.metric("Físico", f"{total_bs_fisico:,.2f} Bs")
+            st.metric("Diferencia", f"{diff_bs:+,.2f} Bs")
+        
+        with col_r2:
+            st.markdown("**🇺🇸 Dólares**")
+            st.metric("Esperado", f"${esperado_usd:,.2f}")
+            st.metric("Físico", f"${total_usd_fisico:,.2f}")
+            st.metric("Diferencia", f"${diff_usd:+,.2f}")
+        
+        st.metric("DIFERENCIA TOTAL", f"${diff_total:+,.2f}")
+        
+        # Mensaje claro
+        if abs(diff_total) < 0.1:
+            st.success("✅ **¡CAJA CUADRADA!** Todo coincide.")
+        elif diff_total > 0:
+            st.info(f"🟢 **SOBRANTE:** +${diff_total:,.2f} USD a favor")
+        else:
+            st.error(f"🔴 **FALTANTE:** -${abs(diff_total):,.2f} USD en caja")
+        
+        st.warning("⚠️ Una vez cerrado, no podrá modificar este turno.")
+        confirmar = st.checkbox("✅ Confirmo que los datos son correctos")
+        
+        # ============================================
+        # BOTÓN DE CIERRE
+        # ============================================
+        if st.form_submit_button("🔒 CERRAR TURNO", type="primary", use_container_width=True, disabled=not confirmar):
+            try:
+                # Preparar datos para guardar
+                datos_cierre = {
+                    "fecha_cierre": datetime.now().isoformat(),
+                    "total_ventas": total_ventas_usd,
+                    "total_costos": total_costos,
+                    "total_ganancias": ganancia_neta,
+                    "diferencia": diff_total,
+                    "tasa_cierre": tasa,
+                    "estado": "cerrado",
+                    "usuario_cierre": st.session_state.usuario_actual['nombre'] if st.session_state.usuario_actual else 'Anónimo',
+                    "observaciones": observaciones,
+                    "fondo_bs_final": total_bs_fisico,
+                    "fondo_usd_final": total_usd_fisico,
+                    "efectivo_bs_fisico": efectivo_bs,
+                    "pmovil_fisico": pmovil_bs,
+                    "punto_fisico": punto_bs,
+                    "efectivo_usd_fisico": efectivo_usd,
+                    "zelle_fisico": zelle_usd,
+                    "otros_fisico": otros_usd
+                }
                 
-                col_e1, col_e2, col_e3, col_e4 = st.columns(4)
-                col_e1.metric("Total ventas", f"${total_ventas:,.2f}")
-                col_e2.metric("Total ganancias", f"${total_ganancias:,.2f}")
-                col_e3.metric("Promedio/turno", f"${promedio:,.2f}")
-                col_e4.metric("Mejor día", f"${mejor_dia:,.2f}")
-            else:
-                st.info("Se necesitan al menos 3 cierres para mostrar estadísticas")
+                # Guardar en Supabase
+                db.table("cierres").update(datos_cierre).eq("id", id_turno).execute()
+                db.table("gastos").update({"estado": "cerrado"}).eq("id_cierre", id_turno).execute()
+                
+                # Limpiar sesión
+                st.session_state.id_turno = None
+                st.session_state.carrito = []
+                
+                st.balloons()
+                st.success("✅ Turno cerrado exitosamente!")
+                
+                # Mostrar resumen final
+                st.markdown("---")
+                st.subheader("📄 Resumen final")
+                
+                col_f1, col_f2 = st.columns(2)
+                with col_f1:
+                    st.markdown(f"**Ventas:** ${total_ventas_usd:,.2f}")
+                    st.markdown(f"**Reposición:** ${reposicion:,.2f}")
+                    st.markdown(f"**Gastos:** ${total_gastos:,.2f}")
+                with col_f2:
+                    st.markdown(f"**Ganancia neta:** ${ganancia_neta:,.2f}")
+                    st.markdown(f"**Diferencia:** ${diff_total:+,.2f}")
+                
+                st.info("Puede ver este turno en el historial.")
+                
+                if st.button("🔄 Volver al inicio"):
+                    st.rerun()
+                    
+            except Exception as e:
+                st.error(f"Error al cerrar: {e}")
