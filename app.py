@@ -380,14 +380,17 @@ if opcion == "📦 INVENTARIO":
             df = pd.DataFrame(datos_local) if datos_local else pd.DataFrame()
         
         # Verificar si existe columna categoria, si no, agregarla
-        if not df.empty and 'categoria' not in df.columns:
-            df['categoria'] = 'Otros'
+        if not df.empty:
+            if 'categoria' not in df.columns:
+                df['categoria'] = 'Otros'
+            if 'codigo_barras' not in df.columns:
+                df['codigo_barras'] = ''
         
         # Pestañas principales
         tab1, tab2, tab3, tab4 = st.tabs(["📋 Ver Inventario", "➕ Agregar Producto", "📊 Estadísticas", "📥 Respaldos"])
         
         # ============================================
-        # TAB 1: VER INVENTARIO (MEJORADO)
+        # TAB 1: VER INVENTARIO (CORREGIDO)
         # ============================================
         with tab1:
             # Filtros avanzados
@@ -414,18 +417,29 @@ if opcion == "📦 INVENTARIO":
                 # Aplicar filtros
                 df_filtrado = df.copy()
                 
+                # FILTRO CORREGIDO - SIN ERRORES
                 if busqueda:
-                    df_filtrado = df_filtrado[
-                        df_filtrado['nombre'].str.contains(busqueda, case=False, na=False) |
-                        df_filtrado.get('codigo_barras', '').astype(str).str.contains(busqueda, case=False, na=False)
-                    ]
+                    # Filtro por nombre
+                    mask_nombre = df_filtrado['nombre'].str.contains(busqueda, case=False, na=False)
+                    
+                    # Filtro por código de barras (manejo seguro)
+                    if 'codigo_barras' in df_filtrado.columns:
+                        # Convertir a string de manera segura
+                        codigos_str = df_filtrado['codigo_barras'].fillna('').astype(str)
+                        mask_codigo = codigos_str.str.contains(busqueda, case=False, na=False)
+                        df_filtrado = df_filtrado[mask_nombre | mask_codigo]
+                    else:
+                        df_filtrado = df_filtrado[mask_nombre]
                 
-                if categoria_filtro != "Todas":
+                if categoria_filtro != "Todas" and 'categoria' in df_filtrado.columns:
                     df_filtrado = df_filtrado[df_filtrado['categoria'] == categoria_filtro]
                 
                 if ver_bajo_stock:
                     df_filtrado = df_filtrado[df_filtrado['stock'] < 5]
-                    st.warning(f"⚠️ Hay {len(df_filtrado)} productos con stock bajo")
+                    if len(df_filtrado) > 0:
+                        st.warning(f"⚠️ Hay {len(df_filtrado)} productos con stock bajo")
+                    else:
+                        st.success("✅ No hay productos con stock bajo")
                 
                 # Mostrar tabla con colores según stock
                 def colorear_stock(val):
@@ -436,11 +450,14 @@ if opcion == "📦 INVENTARIO":
                     return 'color: green; font-weight: bold;'
                 
                 # Preparar DataFrame para mostrar
-                df_mostrar = df_filtrado[['nombre', 'categoria', 'stock', 'costo', 'precio_detal', 'precio_mayor', 'min_mayor']].copy()
+                columnas_mostrar = ['nombre', 'categoria', 'stock', 'costo', 'precio_detal', 'precio_mayor', 'min_mayor']
+                columnas_mostrar = [col for col in columnas_mostrar if col in df_filtrado.columns]
+                
+                df_mostrar = df_filtrado[columnas_mostrar].copy()
                 df_mostrar.columns = ['Producto', 'Categoría', 'Stock', 'Costo $', 'Detal $', 'Mayor $', 'Mín. Mayor']
                 
                 # Aplicar estilo
-                styled_df = df_mostrar.style.applymap(colorear_stock, subset=['Stock'])
+                styled_df = df_mostrar.style.map(colorear_stock, subset=['Stock'])
                 
                 st.dataframe(
                     styled_df,
@@ -647,8 +664,9 @@ if opcion == "📦 INVENTARIO":
                 
                 # Top 10 productos más valiosos
                 st.subheader("💰 Top 10 productos por valor en inventario")
-                df['valor_total'] = df['stock'] * df['costo']
-                df_top = df.nlargest(10, 'valor_total')[['nombre', 'categoria', 'stock', 'costo', 'valor_total']]
+                df_temp = df.copy()
+                df_temp['valor_total'] = df_temp['stock'] * df_temp['costo']
+                df_top = df_temp.nlargest(10, 'valor_total')[['nombre', 'categoria', 'stock', 'costo', 'valor_total']]
                 df_top.columns = ['Producto', 'Categoría', 'Stock', 'Costo unitario', 'Valor total']
                 st.dataframe(df_top, use_container_width=True, hide_index=True)
                 
