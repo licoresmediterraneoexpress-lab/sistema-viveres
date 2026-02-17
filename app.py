@@ -565,81 +565,291 @@ elif opcion == "💸 GASTOS":
                 st.warning("Complete los campos obligatorios")
 
 # ============================================
-# MÓDULO 4: HISTORIAL
+# MÓDULO 4: HISTORIAL (VERSIÓN PROFESIONAL)
 # ============================================
 elif opcion == "📜 HISTORIAL":
     requiere_turno()
     
     id_turno = st.session_state.id_turno
+    tasa = st.session_state.get('tasa_dia', 1.0)
+    
     st.markdown("<h1 class='main-header'>📜 Historial de Ventas</h1>", unsafe_allow_html=True)
-    st.info(f"Turno #{id_turno}")
+    st.markdown(f"""
+        <div style='background-color: #e7f3ff; padding: 0.8rem; border-radius: 8px; margin-bottom: 1.5rem;'>
+            <span style='font-weight:600;'>📍 Turno #{id_turno}</span> | 
+            <span>💱 Tasa: {tasa:.2f} Bs/$</span>
+        </div>
+    """, unsafe_allow_html=True)
     
     try:
         response = db.table("ventas").select("*").eq("id_cierre", id_turno).order("fecha", desc=True).execute()
         df = pd.DataFrame(response.data) if response.data else pd.DataFrame()
         
         if not df.empty:
+            # Procesar fechas
             df['fecha_dt'] = pd.to_datetime(df['fecha'])
             df['hora'] = df['fecha_dt'].dt.strftime('%H:%M')
             df['fecha_corta'] = df['fecha_dt'].dt.strftime('%d/%m/%Y')
+            df['fecha_display'] = df['fecha_dt'].dt.strftime('%d/%m/%Y %H:%M')
             
-            col_f1, col_f2 = st.columns(2)
-            with col_f1:
-                fecha_filtro = st.text_input("📅 Filtrar por fecha (DD/MM/AAAA)", placeholder="Ej: 16/02/2026")
-            with col_f2:
-                estado_filtro = st.selectbox("Estado", ["Todos", "Finalizado", "Anulado"])
+            # ============================================
+            # FILTROS MEJORADOS
+            # ============================================
+            col_filtro1, col_filtro2, col_filtro3, col_filtro4 = st.columns([1.5, 1, 1, 1])
             
+            with col_filtro1:
+                fecha_filtro = st.text_input("📅 Filtrar por fecha", placeholder="DD/MM/AAAA", key="filtro_fecha")
+            
+            with col_filtro2:
+                estado_filtro = st.selectbox(
+                    "Estado",
+                    ["Todos", "Finalizado", "Anulado"],
+                    key="filtro_estado"
+                )
+            
+            with col_filtro3:
+                buscar_texto = st.text_input("🔍 Buscar producto", placeholder="Ej: Ron...", key="filtro_buscar")
+            
+            with col_filtro4:
+                st.markdown("<br>", unsafe_allow_html=True)  # Espaciado para alinear
+                ver_solo_activas = st.checkbox("Solo ventas activas", value=False, key="filtro_activas")
+            
+            # Aplicar filtros
             df_filtrado = df.copy()
+            
             if fecha_filtro:
                 df_filtrado = df_filtrado[df_filtrado['fecha_corta'].str.contains(fecha_filtro, na=False)]
+            
             if estado_filtro != "Todos":
                 df_filtrado = df_filtrado[df_filtrado['estado'] == estado_filtro]
             
-            for _, venta in df_filtrado.iterrows():
-                es_anulado = venta['estado'] == 'Anulado'
-                color = "#888" if es_anulado else "inherit"
-                tachado = "line-through" if es_anulado else "none"
+            if buscar_texto:
+                df_filtrado = df_filtrado[df_filtrado['producto'].str.contains(buscar_texto, case=False, na=False)]
+            
+            if ver_solo_activas:
+                df_filtrado = df_filtrado[df_filtrado['estado'] != 'Anulado']
+            
+            # ============================================
+            # MÉTRICAS SUPERIORES
+            # ============================================
+            if not df_filtrado.empty:
+                # Calcular métricas
+                total_usd = df_filtrado[df_filtrado['estado'] != 'Anulado']['total_usd'].sum() if any(df_filtrado['estado'] != 'Anulado') else 0
+                total_bs = df_filtrado[df_filtrado['estado'] != 'Anulado']['monto_cobrado_bs'].sum() if any(df_filtrado['estado'] != 'Anulado') else 0
+                cantidad_ventas = len(df_filtrado[df_filtrado['estado'] != 'Anulado'])
+                promedio_usd = total_usd / cantidad_ventas if cantidad_ventas > 0 else 0
                 
-                with st.container(border=True):
-                    cols = st.columns([1, 1, 3, 1.5, 1.5, 1])
-                    cols[0].markdown(f"<span style='color:{color};text-decoration:{tachado};'>#{venta['id']}</span>", unsafe_allow_html=True)
-                    cols[1].markdown(f"<span style='color:{color};text-decoration:{tachado};'>{venta['hora']}</span>", unsafe_allow_html=True)
-                    cols[2].markdown(f"<span style='color:{color};text-decoration:{tachado};'>{venta['producto'][:50]}...</span>", unsafe_allow_html=True)
-                    cols[3].markdown(f"<span style='color:{color};text-decoration:{tachado};'>${venta['total_usd']:,.2f}</span>", unsafe_allow_html=True)
-                    cols[4].markdown(f"<span style='color:{color};text-decoration:{tachado};'>{venta['monto_cobrado_bs']:,.2f} Bs</span>", unsafe_allow_html=True)
+                # Mostrar métricas en tarjetas
+                col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+                
+                with col_m1:
+                    st.markdown("""
+                        <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                                padding: 1rem; border-radius: 10px; color: white; text-align: center;'>
+                            <span style='font-size: 0.9rem; opacity: 0.9;'>💰 TOTAL USD</span><br>
+                            <span style='font-size: 1.8rem; font-weight: 700;'>${:,.2f}</span>
+                        </div>
+                    """.format(total_usd), unsafe_allow_html=True)
+                
+                with col_m2:
+                    st.markdown("""
+                        <div style='background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); 
+                                padding: 1rem; border-radius: 10px; color: white; text-align: center;'>
+                            <span style='font-size: 0.9rem; opacity: 0.9;'>💵 TOTAL BS</span><br>
+                            <span style='font-size: 1.8rem; font-weight: 700;'>{:,.0f}</span>
+                        </div>
+                    """.format(total_bs), unsafe_allow_html=True)
+                
+                with col_m3:
+                    st.markdown("""
+                        <div style='background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); 
+                                padding: 1rem; border-radius: 10px; color: white; text-align: center;'>
+                            <span style='font-size: 0.9rem; opacity: 0.9;'>📊 VENTAS</span><br>
+                            <span style='font-size: 1.8rem; font-weight: 700;'>{}</span>
+                        </div>
+                    """.format(cantidad_ventas), unsafe_allow_html=True)
+                
+                with col_m4:
+                    st.markdown("""
+                        <div style='background: linear-gradient(135deg, #5f2c82 0%, #49a09d 100%); 
+                                padding: 1rem; border-radius: 10px; color: white; text-align: center;'>
+                            <span style='font-size: 0.9rem; opacity: 0.9;'>📈 PROMEDIO</span><br>
+                            <span style='font-size: 1.8rem; font-weight: 700;'>${:,.2f}</span>
+                        </div>
+                    """.format(promedio_usd), unsafe_allow_html=True)
+                
+                st.markdown("<br>", unsafe_allow_html=True)
+                
+                # ============================================
+                # TABLA DE VENTAS (DISEÑO PROFESIONAL)
+                # ============================================
+                st.markdown("""
+                    <style>
+                    .venta-row {
+                        display: flex;
+                        align-items: center;
+                        padding: 0.8rem;
+                        margin: 0.2rem 0;
+                        border-radius: 8px;
+                        transition: all 0.2s;
+                    }
+                    .venta-row:hover {
+                        transform: translateX(5px);
+                        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                    }
+                    .venta-finalizada {
+                        background-color: #ffffff;
+                        border-left: 4px solid #28a745;
+                    }
+                    .venta-anulada {
+                        background-color: #f8f9fa;
+                        border-left: 4px solid #dc3545;
+                        opacity: 0.7;
+                    }
+                    .badge-finalizada {
+                        background-color: #28a745;
+                        color: white;
+                        padding: 0.2rem 0.6rem;
+                        border-radius: 12px;
+                        font-size: 0.7rem;
+                        font-weight: 600;
+                    }
+                    .badge-anulada {
+                        background-color: #dc3545;
+                        color: white;
+                        padding: 0.2rem 0.6rem;
+                        border-radius: 12px;
+                        font-size: 0.7rem;
+                        font-weight: 600;
+                    }
+                    </style>
+                """, unsafe_allow_html=True)
+                
+                # Cabecera de la tabla
+                col_h1, col_h2, col_h3, col_h4, col_h5, col_h6, col_h7 = st.columns([0.8, 0.8, 2.5, 1.2, 1.2, 0.8, 0.8])
+                with col_h1:
+                    st.markdown("**ID**")
+                with col_h2:
+                    st.markdown("**Hora**")
+                with col_h3:
+                    st.markdown("**Productos**")
+                with col_h4:
+                    st.markdown("**Total USD**")
+                with col_h5:
+                    st.markdown("**Total Bs**")
+                with col_h6:
+                    st.markdown("**Estado**")
+                with col_h7:
+                    st.markdown("**Acción**")
+                
+                st.markdown("<hr style='margin:0; margin-bottom:0.5rem;'>", unsafe_allow_html=True)
+                
+                # Mostrar cada venta
+                for idx, venta in df_filtrado.iterrows():
+                    es_anulado = venta['estado'] == 'Anulado'
                     
-                    if not es_anulado:
-                        if cols[5].button("🚫 Anular", key=f"anular_{venta['id']}"):
-                            try:
-                                items = venta.get('items')
-                                if items:
+                    # Determinar clase CSS
+                    row_class = "venta-anulada" if es_anulado else "venta-finalizada"
+                    badge = '<span class="badge-anulada">ANULADA</span>' if es_anulado else '<span class="badge-finalizada">FINALIZADA</span>'
+                    
+                    # Limitar longitud de productos
+                    productos = venta['producto']
+                    if len(productos) > 40:
+                        productos = productos[:40] + "..."
+                    
+                    # Crear fila con estilo
+                    cols = st.columns([0.8, 0.8, 2.5, 1.2, 1.2, 0.8, 0.8])
+                    
+                    with cols[0]:
+                        st.markdown(f"<span style='font-weight:500;'>#{venta['id']}</span>", unsafe_allow_html=True)
+                    
+                    with cols[1]:
+                        st.markdown(f"<span>{venta['hora']}</span>", unsafe_allow_html=True)
+                    
+                    with cols[2]:
+                        st.markdown(f"<span title='{venta['producto']}'>{productos}</span>", unsafe_allow_html=True)
+                    
+                    with cols[3]:
+                        st.markdown(f"<span style='font-weight:600;'>${venta['total_usd']:,.2f}</span>", unsafe_allow_html=True)
+                    
+                    with cols[4]:
+                        st.markdown(f"<span>{venta['monto_cobrado_bs']:,.0f}</span>", unsafe_allow_html=True)
+                    
+                    with cols[5]:
+                        st.markdown(badge, unsafe_allow_html=True)
+                    
+                    with cols[6]:
+                        if not es_anulado:
+                            if st.button("🚫", key=f"btn_anular_{venta['id']}", help="Anular venta"):
+                                try:
+                                    # Obtener items de la venta
+                                    items = venta.get('items')
+                                    
+                                    # Convertir string a lista si es necesario
                                     if isinstance(items, str):
                                         items = json.loads(items)
-                                    for item in items:
-                                        stock_actual = db.table("inventario").select("stock").eq("id", item['id']).execute().data[0]['stock']
-                                        db.table("inventario").update({
-                                            "stock": stock_actual + item['cantidad']
-                                        }).eq("id", item['id']).execute()
-                                db.table("ventas").update({"estado": "Anulado"}).eq("id", venta['id']).execute()
-                                st.success(f"Venta #{venta['id']} anulada")
-                                time.sleep(1)
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Error al anular: {e}")
-                    else:
-                        cols[5].markdown("❌")
-            
-            df_activas = df_filtrado[df_filtrado['estado'] != 'Anulado']
-            if not df_activas.empty:
-                st.divider()
-                col_t1, col_t2 = st.columns(2)
-                col_t1.metric("Total USD", f"${df_activas['total_usd'].sum():,.2f}")
-                col_t2.metric("Total Bs", f"{df_activas['monto_cobrado_bs'].sum():,.2f} Bs")
+                                    
+                                    # Verificar que items sea una lista válida
+                                    if items and isinstance(items, list):
+                                        for item in items:
+                                            if 'id' in item and 'cantidad' in item:
+                                                # Obtener stock actual
+                                                stock_res = db.table("inventario").select("stock").eq("id", item['id']).execute()
+                                                if stock_res.data:
+                                                    stock_actual = stock_res.data[0]['stock']
+                                                    # Devolver stock
+                                                    db.table("inventario").update({
+                                                        "stock": stock_actual + item['cantidad']
+                                                    }).eq("id", item['id']).execute()
+                                    
+                                    # Marcar venta como anulada
+                                    db.table("ventas").update({"estado": "Anulado"}).eq("id", venta['id']).execute()
+                                    
+                                    st.success(f"✅ Venta #{venta['id']} anulada correctamente")
+                                    time.sleep(1)
+                                    st.rerun()
+                                    
+                                except Exception as e:
+                                    st.error(f"Error al anular: {e}")
+                        else:
+                            st.markdown("—")
+                    
+                    # Línea separadora sutil
+                    if idx < len(df_filtrado) - 1:
+                        st.markdown("<hr style='margin:0.2rem 0; opacity:0.3;'>", unsafe_allow_html=True)
+                
+                # ============================================
+                # PIE DE TABLA CON TOTALES
+                # ============================================
+                st.markdown("<br>", unsafe_allow_html=True)
+                
+                # Calcular totales de las ventas mostradas (solo activas)
+                df_activas_filtrado = df_filtrado[df_filtrado['estado'] != 'Anulado']
+                
+                if not df_activas_filtrado.empty:
+                    total_usd_filtrado = df_activas_filtrado['total_usd'].sum()
+                    total_bs_filtrado = df_activas_filtrado['monto_cobrado_bs'].sum()
+                    
+                    st.markdown(f"""
+                        <div style='background-color: #f0f2f6; padding: 1rem; border-radius: 8px; margin-top: 1rem;'>
+                            <div style='display: flex; justify-content: space-between; align-items: center;'>
+                                <span style='font-weight:600;'>📊 TOTALES EN PANTALLA (ventas activas):</span>
+                                <span>
+                                    <span style='color: #28a745; font-weight:600;'>${total_usd_filtrado:,.2f}</span> | 
+                                    <span style='color: #007bff; font-weight:600;'>{total_bs_filtrado:,.0f} Bs</span>
+                                </span>
+                            </div>
+                        </div>
+                    """, unsafe_allow_html=True)
+            else:
+                st.info("📭 No hay ventas que coincidan con los filtros seleccionados")
         else:
-            st.info("No hay ventas en este turno")
+            st.info("📭 No hay ventas registradas en este turno")
+            
     except Exception as e:
-        st.error(f"Error: {e}")
-
+        st.error(f"Error cargando historial: {e}")
+        st.exception(e)  # Solo para depuración, puedes quitarlo después
+        
 # ============================================
 # MÓDULO 5: CIERRE DE CAJA
 # ============================================
