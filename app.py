@@ -1172,3 +1172,115 @@ elif opcion == "🛒 PUNTO DE VENTA":
                     if st.button("⏸️ Dejar pendiente", use_container_width=True):
                         st.session_state.mesa_actual = 'mesa_1'  # Volver a mesa 1
                         st.rerun()
+
+# ============================================
+# MÓDULO 3: GASTOS
+# ============================================
+elif opcion == "💸 GASTOS":
+    requiere_turno()
+    requiere_usuario()
+    
+    id_turno = st.session_state.id_turno
+    st.markdown("<h1 class='main-header'>💸 Gestión de Gastos</h1>", unsafe_allow_html=True)
+    
+    try:
+        # Cargar gastos del turno actual
+        if st.session_state.online_mode:
+            response = db.table("gastos").select("*").eq("id_cierre", id_turno).order("fecha", desc=True).execute()
+            df_gastos = pd.DataFrame(response.data) if response.data else pd.DataFrame()
+            OfflineManager.guardar_datos_local(f'gastos_{id_turno}', df_gastos.to_dict('records'))
+        else:
+            datos_local = OfflineManager.obtener_datos_local(f'gastos_{id_turno}')
+            df_gastos = pd.DataFrame(datos_local) if datos_local else pd.DataFrame()
+        
+        # Mostrar gastos existentes
+        if not df_gastos.empty:
+            st.subheader("📋 Gastos del turno")
+            
+            # Formatear fecha si existe
+            if 'fecha' in df_gastos.columns:
+                df_gastos['fecha'] = pd.to_datetime(df_gastos['fecha']).dt.strftime('%d/%m/%Y %H:%M')
+            
+            # Seleccionar columnas disponibles
+            columnas_mostrar = ['fecha', 'descripcion', 'monto_usd']
+            if 'categoria' in df_gastos.columns:
+                columnas_mostrar.append('categoria')
+            if 'estado' in df_gastos.columns:
+                columnas_mostrar.append('estado')
+            
+            st.dataframe(
+                df_gastos[columnas_mostrar],
+                use_container_width=True,
+                hide_index=True
+            )
+            
+            total_gastos = df_gastos['monto_usd'].sum()
+            st.metric("💰 Total gastos USD", f"${total_gastos:,.2f}")
+            
+            # Botón para exportar gastos
+            if st.button("📥 Exportar gastos a Excel", use_container_width=True):
+                export_df = df_gastos[['fecha', 'descripcion', 'monto_usd', 'categoria']].copy()
+                export_df.columns = ['Fecha', 'Descripción', 'Monto USD', 'Categoría']
+                href = exportar_excel(export_df, f"gastos_turno_{id_turno}_{datetime.now().strftime('%Y%m%d')}")
+                st.markdown(href, unsafe_allow_html=True)
+        else:
+            st.info("No hay gastos registrados en este turno")
+    
+    except Exception as e:
+        st.error(f"Error cargando gastos: {e}")
+    
+    st.divider()
+    
+    # ============================================
+    # FORMULARIO PARA NUEVO GASTO
+    # ============================================
+    with st.form("nuevo_gasto"):
+        st.subheader("➕ Registrar nuevo gasto")
+        
+        col_g1, col_g2 = st.columns(2)
+        with col_g1:
+            descripcion = st.text_input("Descripción *", placeholder="Ej: Agua, café, cena empleada...")
+            monto_usd = st.number_input("Monto USD *", min_value=0.01, step=0.01, format="%.2f")
+        
+        with col_g2:
+            categoria = st.selectbox("Categoría", ["", "Servicios", "Insumos", "Personal", "Alimentación", "Otros"])
+            monto_bs_extra = st.number_input("Monto extra Bs (opcional)", min_value=0.0, step=10.0, format="%.2f")
+        
+        submitted = st.form_submit_button("✅ Registrar gasto", use_container_width=True)
+        
+        if submitted:
+            if descripcion and monto_usd > 0:
+                try:
+                    gasto_data = {
+                        "id_cierre": id_turno,
+                        "descripcion": descripcion,
+                        "monto_usd": monto_usd,
+                        "estado": "activo",
+                        "fecha": datetime.now().isoformat()
+                    }
+                    
+                    if categoria:
+                        gasto_data["categoria"] = categoria
+                    if monto_bs_extra > 0:
+                        gasto_data["monto_bs_extra"] = monto_bs_extra
+                    
+                    if st.session_state.online_mode:
+                        db.table("gastos").insert(gasto_data).execute()
+                    else:
+                        # Modo offline
+                        if 'operaciones_pendientes' not in st.session_state:
+                            st.session_state.operaciones_pendientes = []
+                        st.session_state.operaciones_pendientes.append({
+                            'tipo': 'insert',
+                            'tabla': 'gastos',
+                            'datos': gasto_data
+                        })
+                    
+                    st.success("✅ Gasto registrado correctamente")
+                    time.sleep(1)
+                    st.rerun()
+                    
+                except Exception as e:
+                    st.error(f"Error al registrar gasto: {e}")
+            else:
+                st.warning("⚠️ Complete los campos obligatorios (*)")
