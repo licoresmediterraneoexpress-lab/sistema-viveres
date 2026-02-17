@@ -729,7 +729,7 @@ if opcion == "📦 INVENTARIO":
         st.exception(e)
 
 # ============================================
-# MÓDULO 2: PUNTO DE VENTA CON SEPARACIÓN DE CUENTAS
+# MÓDULO 2: PUNTO DE VENTA CON SEPARACIÓN DE CUENTAS (MEJORADO)
 # ============================================
 elif opcion == "🛒 PUNTO DE VENTA":
     requiere_turno()
@@ -828,7 +828,7 @@ elif opcion == "🛒 PUNTO DE VENTA":
     col_busqueda, col_carrito = st.columns([1.2, 1.8])
     
     # ============================================
-    # COLUMNA IZQUIERDA: BÚSQUEDA DE PRODUCTOS
+    # COLUMNA IZQUIERDA: BÚSQUEDA DE PRODUCTOS (MEJORADA)
     # ============================================
     with col_busqueda:
         st.subheader("🔍 Buscar productos")
@@ -863,7 +863,7 @@ elif opcion == "🛒 PUNTO DE VENTA":
                         productos = []
                 
                 if productos:
-                    # Mostrar productos en cuadrícula
+                    # Mostrar productos en cuadrícula (con tarjetas más grandes)
                     for i in range(0, len(productos), 2):
                         cols = st.columns(2)
                         for j in range(2):
@@ -872,21 +872,14 @@ elif opcion == "🛒 PUNTO DE VENTA":
                                 
                                 # Calcular precio base
                                 precio_base = float(prod['precio_detal'])
-                                
-                                # Verificar si aplica precio mayor
-                                # (Esto se verificará al agregar al carrito)
-                                
                                 precio_unitario = precio_base * 1.10 if es_tasca else precio_base
                                 
                                 with cols[j]:
+                                    # Tarjeta de producto ampliada
                                     with st.container(border=True):
-                                        col_prod1, col_prod2 = st.columns([3, 1])
-                                        with col_prod1:
-                                            st.markdown(f"**{prod['nombre']}**")
-                                            st.caption(f"Stock: {prod['stock']:.0f}")
-                                        with col_prod2:
-                                            st.markdown(f"**${precio_unitario:.2f}**")
-                                        
+                                        st.markdown(f"**{prod['nombre']}**", help=prod['nombre'])
+                                        st.caption(f"Stock: {prod['stock']:.0f}")
+                                        st.markdown(f"<h3 style='color:#2a9d8f;'>${precio_unitario:.2f}</h3>", unsafe_allow_html=True)
                                         if st.button("➕ Agregar", key=f"add_{prod['id']}", use_container_width=True):
                                             # Verificar si aplica precio mayor
                                             carrito_actual = mesa_actual['carrito']
@@ -995,17 +988,64 @@ elif opcion == "🛒 PUNTO DE VENTA":
             
             st.divider()
             
-            # Totales
+            # Totales calculados
             col_t1, col_t2 = st.columns(2)
             with col_t1:
-                st.markdown(f"### Total USD: ${total_venta_usd:,.2f}")
+                st.markdown(f"### Total calculado USD: ${total_venta_usd:,.2f}")
             with col_t2:
-                st.markdown(f"### Total Bs: {total_venta_bs:,.2f}")
+                st.markdown(f"### Total calculado Bs: {total_venta_bs:,.2f}")
+            
+            # ============================================
+            # NUEVO: AJUSTE MANUAL DEL MONTO (REDONDEO)
+            # ============================================
+            with st.expander("🔧 Ajustar monto final (redondeo)", expanded=False):
+                st.markdown("Si deseas redondear el total a cobrar, selecciona una opción e ingresa el monto:")
+                
+                opcion_ajuste = st.radio(
+                    "Ajustar en:",
+                    ["No ajustar (usar calculado)", "Bolívares (Bs)", "Dólares (USD)"],
+                    horizontal=True,
+                    key="opcion_ajuste"
+                )
+                
+                if opcion_ajuste == "Bolívares (Bs)":
+                    monto_ajustado_bs = st.number_input(
+                        "Monto final en Bs",
+                        min_value=0.0,
+                        value=float(total_venta_bs),
+                        step=10.0,
+                        format="%.2f",
+                        key="monto_ajustado_bs"
+                    )
+                    monto_ajustado_usd = monto_ajustado_bs / tasa if tasa > 0 else 0
+                    st.info(f"Equivalente en USD: ${monto_ajustado_usd:,.2f}")
+                elif opcion_ajuste == "Dólares (USD)":
+                    monto_ajustado_usd = st.number_input(
+                        "Monto final en USD",
+                        min_value=0.0,
+                        value=float(total_venta_usd),
+                        step=1.0,
+                        format="%.2f",
+                        key="monto_ajustado_usd"
+                    )
+                    monto_ajustado_bs = monto_ajustado_usd * tasa
+                    st.info(f"Equivalente en Bs: {monto_ajustado_bs:,.2f} Bs")
+                else:
+                    monto_ajustado_usd = total_venta_usd
+                    monto_ajustado_bs = total_venta_bs
+                
+                # Actualizar los valores finales
+                total_final_usd = monto_ajustado_usd
+                total_final_bs = monto_ajustado_bs
+            else:
+                # Si no se expande, usar valores calculados
+                total_final_usd = total_venta_usd
+                total_final_bs = total_venta_bs
             
             st.divider()
             
             # ============================================
-            # SECCIÓN DE PAGOS
+            # SECCIÓN DE PAGOS (usando total_final_*)
             # ============================================
             with st.expander("💳 Detalle de pagos", expanded=True):
                 st.markdown("**Ingresa los montos recibidos:**")
@@ -1028,7 +1068,7 @@ elif opcion == "🛒 PUNTO DE VENTA":
                 total_usd_recibido = pago_usd_efectivo + pago_zelle + pago_otros_usd
                 total_bs_recibido = pago_bs_efectivo + pago_movil + pago_punto
                 total_usd_equivalente = total_usd_recibido + (total_bs_recibido / tasa if tasa > 0 else 0)
-                esperado_usd = total_venta_bs / tasa if tasa > 0 else 0
+                esperado_usd = total_final_bs / tasa if tasa > 0 else 0
                 vuelto_usd = total_usd_equivalente - esperado_usd
                 
                 st.divider()
@@ -1101,13 +1141,13 @@ elif opcion == "🛒 PUNTO DE VENTA":
                         if info_cliente:
                             info_cliente = f" - Cliente: {info_cliente}"
                         
-                        # Guardar venta en Supabase
+                        # Guardar venta en Supabase (usando total_final_*)
                         venta_data = {
                             "id_cierre": id_turno,
                             "producto": ", ".join(items_resumen),
                             "cantidad": len(carrito),
-                            "total_usd": round(total_venta_usd, 2),
-                            "monto_cobrado_bs": round(total_venta_bs, 2),
+                            "total_usd": round(total_final_usd, 2),
+                            "monto_cobrado_bs": round(total_final_bs, 2),
                             "tasa_cambio": tasa,
                             "pago_divisas": round(pago_usd_efectivo, 2),
                             "pago_zelle": round(pago_zelle, 2),
@@ -1134,24 +1174,59 @@ elif opcion == "🛒 PUNTO DE VENTA":
                                 'datos': venta_data
                             })
                         
-                        # Mostrar ticket
+                        # Mostrar ticket MEJORADO (más ancho y ordenado)
                         st.balloons()
                         st.success(f"✅ Venta registrada - {mesa_actual['nombre']}{info_cliente}")
                         
                         with st.expander("🧾 Ver Ticket", expanded=True):
+                            # Generar tabla de productos para el ticket
+                            items_ticket = ""
+                            for item in carrito:
+                                items_ticket += f"""
+                                    <tr>
+                                        <td style='padding: 4px 8px;'>{item['cantidad']:.0f}</td>
+                                        <td style='padding: 4px 8px;'>{item['nombre']}</td>
+                                        <td style='padding: 4px 8px; text-align: right;'>${item['precio']:.2f}</td>
+                                        <td style='padding: 4px 8px; text-align: right;'>${item['subtotal']:.2f}</td>
+                                    </tr>
+                                """
+                            
                             st.markdown(f"""
-                            <div style="background:white; padding:20px; border-radius:10px; border:2px solid #1e3c72;">
+                            <div style="background:white; padding:20px; border-radius:10px; border:2px solid #1e3c72; max-width:800px; margin:0 auto;">
                                 <h3 style="text-align:center;">BODEGÓN Y LICORERÍA MEDITERRANEO</h3>
                                 <p style="text-align:center;">{datetime.now().strftime('%d/%m/%Y %H:%M')}</p>
                                 <p style="text-align:center;">Turno #{id_turno} | {mesa_actual['nombre']}{info_cliente}</p>
                                 <p style="text-align:center;">Cajero: {st.session_state.usuario_actual['nombre']}</p>
                                 <hr>
-                                {''.join([f'<p>• {r}</p>' for r in items_resumen])}
+                                <table style="width:100%; border-collapse: collapse;">
+                                    <thead>
+                                        <tr style="border-bottom:1px solid #ccc;">
+                                            <th style="text-align:left;">Cant</th>
+                                            <th style="text-align:left;">Producto</th>
+                                            <th style="text-align:right;">Precio</th>
+                                            <th style="text-align:right;">Subtotal</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {items_ticket}
+                                    </tbody>
+                                </table>
                                 <hr>
-                                <p><b>Total USD:</b> ${total_venta_usd:,.2f}</p>
-                                <p><b>Total Bs:</b> {total_venta_bs:,.2f}</p>
-                                <p><b>Vuelto:</b> ${vuelto_usd:.2f} / {(vuelto_usd * tasa):,.2f} Bs</p>
-                                <p style="text-align:center;">¡Gracias por su compra!</p>
+                                <table style="width:100%;">
+                                    <tr>
+                                        <td style="text-align:right;"><b>Total USD:</b></td>
+                                        <td style="text-align:right;">${total_final_usd:,.2f}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="text-align:right;"><b>Total Bs:</b></td>
+                                        <td style="text-align:right;">{total_final_bs:,.2f} Bs</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="text-align:right;"><b>Vuelto:</b></td>
+                                        <td style="text-align:right;">${vuelto_usd:.2f} / {(vuelto_usd * tasa):,.2f} Bs</td>
+                                    </tr>
+                                </table>
+                                <p style="text-align:center; margin-top:20px;">¡Gracias por su compra!</p>
                             </div>
                             """, unsafe_allow_html=True)
                         
