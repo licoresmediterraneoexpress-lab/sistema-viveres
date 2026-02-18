@@ -996,8 +996,12 @@ elif opcion == "🛒 PUNTO DE VENTA":
                 st.markdown(f"### Total calculado Bs: {total_venta_bs:,.2f}")
             
             # ============================================
-            # NUEVO: AJUSTE MANUAL DEL MONTO (REDONDEO)
+            # NUEVO: AJUSTE MANUAL DEL MONTO (REDONDEO) - CORREGIDO
             # ============================================
+            # Valores por defecto (calculados)
+            total_final_usd = total_venta_usd
+            total_final_bs = total_venta_bs
+            
             with st.expander("🔧 Ajustar monto final (redondeo)", expanded=False):
                 st.markdown("Si deseas redondear el total a cobrar, selecciona una opción e ingresa el monto:")
                 
@@ -1017,8 +1021,9 @@ elif opcion == "🛒 PUNTO DE VENTA":
                         format="%.2f",
                         key="monto_ajustado_bs"
                     )
-                    monto_ajustado_usd = monto_ajustado_bs / tasa if tasa > 0 else 0
-                    st.info(f"Equivalente en USD: ${monto_ajustado_usd:,.2f}")
+                    total_final_bs = monto_ajustado_bs
+                    total_final_usd = monto_ajustado_bs / tasa if tasa > 0 else 0
+                    st.info(f"Equivalente en USD: ${total_final_usd:,.2f}")
                 elif opcion_ajuste == "Dólares (USD)":
                     monto_ajustado_usd = st.number_input(
                         "Monto final en USD",
@@ -1028,19 +1033,10 @@ elif opcion == "🛒 PUNTO DE VENTA":
                         format="%.2f",
                         key="monto_ajustado_usd"
                     )
-                    monto_ajustado_bs = monto_ajustado_usd * tasa
-                    st.info(f"Equivalente en Bs: {monto_ajustado_bs:,.2f} Bs")
-                else:
-                    monto_ajustado_usd = total_venta_usd
-                    monto_ajustado_bs = total_venta_bs
-                
-                # Actualizar los valores finales
-                total_final_usd = monto_ajustado_usd
-                total_final_bs = monto_ajustado_bs
-            else:
-                # Si no se expande, usar valores calculados
-                total_final_usd = total_venta_usd
-                total_final_bs = total_venta_bs
+                    total_final_usd = monto_ajustado_usd
+                    total_final_bs = monto_ajustado_usd * tasa
+                    st.info(f"Equivalente en Bs: {total_final_bs:,.2f} Bs")
+                # Si elige "No ajustar", no hacemos nada porque ya están con los valores calculados
             
             st.divider()
             
