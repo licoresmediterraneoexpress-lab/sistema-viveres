@@ -1655,7 +1655,7 @@ elif opcion == "📜 HISTORIAL":
         st.exception(e)
 
 # ============================================
-# MÓDULO 5: CIERRE DE CAJA (CONFIRMACIÓN VISUAL)
+# MÓDULO 5: CIERRE DE CAJA (CONFIRMACIÓN VISUAL) - CORREGIDO
 # ============================================
 elif opcion == "📊 CIERRE DE CAJA":
     st.markdown("<h1 class='main-header'>📊 Cierre de Caja</h1>", unsafe_allow_html=True)
@@ -1727,17 +1727,30 @@ elif opcion == "📊 CIERRE DE CAJA":
     ventas = db.table("ventas").select("*").eq("id_cierre", id_turno).eq("estado", "Finalizado").execute().data or []
     gastos = db.table("gastos").select("*").eq("id_cierre", id_turno).execute().data or []
     
-    # Calcular totales
+    # Calcular totales de ventas (para informacion)
     total_ventas_usd = sum(float(v.get('total_usd', 0)) for v in ventas)
     total_costos = sum(float(v.get('costo_venta', 0)) for v in ventas)
     total_gastos = sum(float(g.get('monto_usd', 0)) for g in gastos)
     
+    # ===== NUEVO: Calcular pagos reales en cada moneda =====
+    total_pagos_usd = sum(
+        float(v.get('pago_divisas', 0)) +
+        float(v.get('pago_zelle', 0)) +
+        float(v.get('pago_otros', 0)) for v in ventas
+    )
+    total_pagos_bs = sum(
+        float(v.get('pago_efectivo', 0)) +
+        float(v.get('pago_movil', 0)) +
+        float(v.get('pago_punto', 0)) for v in ventas
+    )
+    # ======================================================
+    
     ganancia_bruta = total_ventas_usd - total_costos
     ganancia_neta = ganancia_bruta - total_gastos
-    reposicion = total_costos  # Dinero para reponer inventario
+    reposicion = total_costos
     
     # ============================================
-    # DESGLOSE POR MÉTODO DE PAGO
+    # DESGLOSE POR MÉTODO DE PAGO (se mantiene igual)
     # ============================================
     total_efectivo_usd = sum(float(v.get('pago_divisas', 0)) for v in ventas)
     total_zelle = sum(float(v.get('pago_zelle', 0)) for v in ventas)
@@ -1823,9 +1836,10 @@ elif opcion == "📊 CIERRE DE CAJA":
         total_bs_fisico = montos['efec_bs'] + montos['pmovil_bs'] + montos['punto_bs']
         total_usd_fisico = montos['efec_usd'] + montos['zelle_usd'] + montos['otros_usd']
         
-        # Calcular esperados
-        esperado_bs = fondo_bs_ini + (total_ventas_usd * tasa) - (total_gastos * tasa)
-        esperado_usd = fondo_usd_ini + total_ventas_usd - total_gastos
+        # ===== CÁLCULO CORREGIDO: Usar pagos reales, no ventas totales =====
+        esperado_bs = fondo_bs_ini + total_pagos_bs - (total_gastos * tasa)
+        esperado_usd = fondo_usd_ini + total_pagos_usd - total_gastos
+        # ===================================================================
         
         # Diferencias
         diff_bs = total_bs_fisico - esperado_bs
@@ -1932,4 +1946,4 @@ elif opcion == "📊 CIERRE DE CAJA":
         # Botón para corregir montos
         if st.button("✏️ CORREGIR MONTOS", use_container_width=True):
             st.session_state.montos_calculados = False
-            st.rerun()
+            st.rerun()       
