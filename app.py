@@ -1357,7 +1357,7 @@ elif opcion == "💸 GASTOS":
                 st.warning("⚠️ Complete los campos obligatorios (*)")
 
 # ============================================
-# MÓDULO 4: HISTORIAL CON EXPORTAR EXCEL
+# MÓDULO 4: HISTORIAL CON FILTROS Y EXPORTACIÓN
 # ============================================
 elif opcion == "📜 HISTORIAL":
     requiere_turno()
@@ -1393,36 +1393,39 @@ elif opcion == "📜 HISTORIAL":
             df['fecha_display'] = df['fecha_dt'].dt.strftime('%d/%m/%Y %H:%M')
             
             # ============================================
-            # FILTROS Y EXPORTACIÓN
+            # FILTROS MEJORADOS
             # ============================================
-            col_filtro1, col_filtro2, col_filtro3, col_filtro4, col_export = st.columns([1.5, 1, 1, 1, 1])
+            st.subheader("🔍 Filtrar ventas")
+            col_filtro1, col_filtro2, col_filtro3, col_filtro4 = st.columns([1.5, 1, 1, 1])
             
             with col_filtro1:
-                fecha_filtro = st.text_input("📅 Filtrar por fecha", placeholder="DD/MM/AAAA", key="filtro_fecha")
+                fecha_filtro = st.text_input("📅 Por fecha", placeholder="DD/MM/AAAA", key="filtro_fecha")
             
             with col_filtro2:
                 estado_filtro = st.selectbox(
-                    "Estado",
+                    "📌 Estado",
                     ["Todos", "Finalizado", "Anulado"],
                     key="filtro_estado"
                 )
             
             with col_filtro3:
-                buscar_texto = st.text_input("🔍 Buscar producto", placeholder="Ej: Ron...", key="filtro_buscar")
+                buscar_texto = st.text_input("🔍 Producto", placeholder="Ej: Ron...", key="filtro_buscar")
             
             with col_filtro4:
-                st.markdown("<br>", unsafe_allow_html=True)
-                ver_solo_activas = st.checkbox("Solo ventas activas", value=False, key="filtro_activas")
+                ver_solo_activas = st.checkbox("✅ Solo activas", value=False, key="filtro_activas")
             
-            with col_export:
-                st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("📥 Exportar Excel", use_container_width=True):
+            # Botón de exportar (visible siempre)
+            col_export1, col_export2 = st.columns([3, 1])
+            with col_export2:
+                if st.button("📥 EXPORTAR A EXCEL", type="primary", use_container_width=True):
                     # Preparar datos para exportar
                     export_df = df[['fecha_display', 'producto', 'total_usd', 'monto_cobrado_bs', 'estado', 'cliente']].copy()
                     export_df.columns = ['Fecha', 'Productos', 'Total USD', 'Total Bs', 'Estado', 'Cliente']
                     export_df = export_df.sort_values('Fecha', ascending=False)
-                    href = exportar_excel(export_df, f"ventas_turno_{id_turno}_{datetime.now().strftime('%Y%m%d')}")
+                    href = exportar_excel(export_df, f"ventas_turno_{id_turno}_{datetime.now().strftime('%Y%m%d_%H%M')}")
                     st.markdown(href, unsafe_allow_html=True)
+            
+            st.markdown("---")
             
             # Aplicar filtros
             df_filtrado = df.copy()
@@ -1491,7 +1494,7 @@ elif opcion == "📜 HISTORIAL":
                 st.markdown("<br>", unsafe_allow_html=True)
                 
                 # ============================================
-                # TABLA DE VENTAS
+                # TABLA DE VENTAS (con diseño mejorado)
                 # ============================================
                 st.markdown("""
                     <style>
@@ -1535,7 +1538,7 @@ elif opcion == "📜 HISTORIAL":
                     </style>
                 """, unsafe_allow_html=True)
                 
-                # Cabecera
+                # Cabecera de la tabla
                 col_h1, col_h2, col_h3, col_h4, col_h5, col_h6, col_h7 = st.columns([0.8, 0.8, 2.5, 1.2, 1.2, 0.8, 0.8])
                 with col_h1:
                     st.markdown("**ID**")
