@@ -7,6 +7,8 @@ import json
 import hashlib
 import base64
 from io import BytesIO
+import threading
+import requests
 
 # ============================================
 # CONFIGURACIÓN INICIAL
@@ -119,7 +121,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ============================================
-# SISTEMA OFFLINE (ALMACENAMIENTO LOCAL)
+# SISTEMA OFFLINE (ALMACENAMIENTO LOCAL) - MEJORADO
 # ============================================
 class OfflineManager:
     """Gestiona el almacenamiento local para modo offline"""
@@ -154,9 +156,40 @@ class OfflineManager:
                     db.table(op['tabla']).insert(op['datos']).execute()
                 elif op['tipo'] == 'update':
                     db.table(op['tabla']).update(op['datos']).eq(op['id_field'], op['id_value']).execute()
+                elif op['tipo'] == 'delete':
+                    db.table(op['tabla']).delete().eq(op['id_field'], op['id_value']).execute()
+                elif op['tipo'] == 'update_stock':
+                    # Actualización de stock específica
+                    db.table("inventario").update({"stock": op['nuevo_stock']}).eq("id", op['id_producto']).execute()
+                elif op['tipo'] == 'insert_venta':
+                    db.table("ventas").insert(op['datos']).execute()
+                # Eliminar la operación de la lista si fue exitosa
                 st.session_state.operaciones_pendientes.remove(op)
-            except:
-                pass  # Si falla, queda pendiente
+            except Exception as e:
+                print(f"Error sincronizando operación {op}: {e}")  # Log para depuración
+                # Si falla, se queda pendiente
+
+# [OFFLINE] Función para verificar conectividad en tiempo real
+def verificar_conexion():
+    """Verifica si hay conexión a internet y actualiza online_mode"""
+    try:
+        # Intentar una consulta rápida a Supabase
+        db.table("inventario").select("*").limit(1).execute()
+        estaba_offline = not st.session_state.get('online_mode', True)
+        st.session_state.online_mode = True
+        st.session_state.db_connected = True
+        # Si recién se reconectó, sincronizar pendientes
+        if estaba_offline and 'operaciones_pendientes' in st.session_state:
+            OfflineManager.sincronizar_pendientes(db)
+            st.success("✅ Conexión restaurada. Datos sincronizados.")
+    except Exception as e:
+        st.session_state.online_mode = False
+        st.session_state.db_connected = False
+
+# [OFFLINE] Ejecutar verificación de conexión al inicio y en cada interacción
+if 'online_mode' not in st.session_state:
+    st.session_state.online_mode = True  # Por defecto asumimos online
+verificar_conexion()  # Verificamos ahora
 
 # ============================================
 # CONEXIÓN A SUPABASE
@@ -165,13 +198,10 @@ URL = "https://orrfldqwpjkkooeuqnmp.supabase.co"
 KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9ycmZsZHF3cGpra29vZXVxbm1wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkzMDg5MDEsImV4cCI6MjA4NDg4NDkwMX0.va4XR7_lDF2QV9SBXTusmAa_bgqV9oKwiIhC23hsC7E"
 CLAVE_ADMIN = "1234"
 
-# Verificar conexión
 try:
     db = create_client(URL, KEY)
-    # Probar conexión
-    db.table("inventario").select("*").limit(1).execute()
-    st.session_state.db_connected = True
-    st.session_state.online_mode = True
+    # Probar conexión (ya lo hicimos en verificar_conexion, pero lo dejamos para mantener consistencia)
+    # No es necesario repetir, pero si la primera falló, aquí podría estar offline.
 except Exception as e:
     st.session_state.db_connected = False
     st.session_state.online_mode = False
@@ -214,7 +244,7 @@ if st.session_state.online_mode:
     except Exception as e:
         st.session_state.id_turno = None
 else:
-    # Modo offline: usar datos locales
+    # Modo offline: usar datos locales si existen (para tasa, etc.)
     if 'id_turno' not in st.session_state:
         st.session_state.id_turno = None
     if 'tasa_dia' not in st.session_state:
@@ -299,7 +329,16 @@ with st.sidebar:
                 try:
                     db.table("cierres").update({"tasa_apertura": nueva_tasa}).eq("id", st.session_state.id_turno).execute()
                 except:
-                    pass
+                    # Si falla, guardar como pendiente
+                    if 'operaciones_pendientes' not in st.session_state:
+                        st.session_state.operaciones_pendientes = []
+                    st.session_state.operaciones_pendientes.append({
+                        'tipo': 'update',
+                        'tabla': 'cierres',
+                        'datos': {"tasa_apertura": nueva_tasa},
+                        'id_field': 'id',
+                        'id_value': st.session_state.id_turno
+                    })
             st.success("Tasa actualizada")
             time.sleep(1)
             st.rerun()
@@ -356,6 +395,52 @@ def exportar_excel(df, nombre_archivo):
     b64 = base64.b64encode(excel_data).decode()
     href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="{nombre_archivo}.xlsx">📥 Descargar Excel</a>'
     return href
+
+# [MAYOR] Función auxiliar para recalcular precios en el carrito
+def recalcular_precio_carrito(mesa_id, producto_id, nueva_cantidad_total, es_tasca):
+    """
+    Recalcula el precio de todos los items de un producto en el carrito de una mesa,
+    basado en la nueva cantidad total y si aplica precio mayor o tasca.
+    """
+    carrito = st.session_state.mesas[mesa_id]['carrito']
+    # Obtener el producto del inventario para conocer min_mayor y precios
+    if st.session_state.online_mode:
+        prod_data = db.table("inventario").select("*").eq("id", producto_id).execute().data
+    else:
+        # En offline, buscar en datos locales
+        inventario_local = OfflineManager.obtener_datos_local('inventario')
+        prod_data = [p for p in inventario_local if p['id'] == producto_id] if inventario_local else []
+    
+    if not prod_data:
+        return
+    prod = prod_data[0]
+    min_mayor = prod['min_mayor']
+    precio_base = float(prod['precio_detal'])
+    precio_mayor = float(prod['precio_mayor'])
+    
+    # Determinar precio unitario final
+    if es_tasca:
+        # Tasca aplica sobre el precio que corresponda (normal o mayor)
+        if nueva_cantidad_total >= min_mayor:
+            precio_unitario = precio_mayor * 1.10
+            tipo = " (Tasca + Mayor)"
+        else:
+            precio_unitario = precio_base * 1.10
+            tipo = " (Tasca)"
+    else:
+        if nueva_cantidad_total >= min_mayor:
+            precio_unitario = precio_mayor
+            tipo = " (Mayor)"
+        else:
+            precio_unitario = precio_base
+            tipo = ""
+    
+    # Actualizar todos los items de ese producto en el carrito
+    for item in carrito:
+        if item['id'] == producto_id:
+            item['precio'] = precio_unitario
+            item['tipo_precio'] = tipo
+            item['subtotal'] = item['cantidad'] * item['precio']
 
 # ============================================
 # MÓDULO 1: INVENTARIO MEJORADO
@@ -508,6 +593,14 @@ if opcion == "📦 INVENTARIO":
                                     
                                     if st.session_state.online_mode:
                                         db.table("inventario").update(datos_actualizados).eq("id", prod['id']).execute()
+                                        # [OFFLINE] Actualizar también la caché local
+                                        inventario_local = OfflineManager.obtener_datos_local('inventario')
+                                        if inventario_local:
+                                            for i, p in enumerate(inventario_local):
+                                                if p['id'] == prod['id']:
+                                                    inventario_local[i].update(datos_actualizados)
+                                                    break
+                                            OfflineManager.guardar_datos_local('inventario', inventario_local)
                                     else:
                                         # Modo offline: guardar operación pendiente
                                         if 'operaciones_pendientes' not in st.session_state:
@@ -519,6 +612,14 @@ if opcion == "📦 INVENTARIO":
                                             'id_field': 'id',
                                             'id_value': prod['id']
                                         })
+                                        # También actualizar caché local inmediatamente
+                                        inventario_local = OfflineManager.obtener_datos_local('inventario')
+                                        if inventario_local:
+                                            for i, p in enumerate(inventario_local):
+                                                if p['id'] == prod['id']:
+                                                    inventario_local[i].update(datos_actualizados)
+                                                    break
+                                            OfflineManager.guardar_datos_local('inventario', inventario_local)
                                     
                                     st.success("✅ Producto actualizado")
                                     time.sleep(1)
@@ -542,6 +643,11 @@ if opcion == "📦 INVENTARIO":
                         try:
                             if st.session_state.online_mode:
                                 db.table("inventario").delete().eq("nombre", producto_eliminar).execute()
+                                # [OFFLINE] Eliminar también de caché local
+                                inventario_local = OfflineManager.obtener_datos_local('inventario')
+                                if inventario_local:
+                                    inventario_local = [p for p in inventario_local if p['nombre'] != producto_eliminar]
+                                    OfflineManager.guardar_datos_local('inventario', inventario_local)
                             else:
                                 # Modo offline: marcar para eliminar
                                 if 'operaciones_pendientes' not in st.session_state:
@@ -552,6 +658,11 @@ if opcion == "📦 INVENTARIO":
                                     'id_field': 'nombre',
                                     'id_value': producto_eliminar
                                 })
+                                # Eliminar de caché local inmediatamente
+                                inventario_local = OfflineManager.obtener_datos_local('inventario')
+                                if inventario_local:
+                                    inventario_local = [p for p in inventario_local if p['nombre'] != producto_eliminar]
+                                    OfflineManager.guardar_datos_local('inventario', inventario_local)
                             
                             st.success(f"Producto '{producto_eliminar}' eliminado")
                             time.sleep(1)
@@ -613,6 +724,12 @@ if opcion == "📦 INVENTARIO":
                             
                             if st.session_state.online_mode:
                                 db.table("inventario").insert(datos_nuevos).execute()
+                                # [OFFLINE] Actualizar caché local
+                                inventario_local = OfflineManager.obtener_datos_local('inventario') or []
+                                # Necesitamos obtener el ID generado; en online podemos obtenerlo de la respuesta
+                                # Como no tenemos el ID en la respuesta fácilmente, mejor no agregamos a caché aquí, se actualizará en la próxima carga.
+                                # En su lugar, podríamos forzar una recarga de inventario
+                                pass
                             else:
                                 # Modo offline: guardar operación pendiente
                                 if 'operaciones_pendientes' not in st.session_state:
@@ -622,6 +739,12 @@ if opcion == "📦 INVENTARIO":
                                     'tabla': 'inventario',
                                     'datos': datos_nuevos
                                 })
+                                # También agregar a caché local con un ID temporal (negativo)
+                                inventario_local = OfflineManager.obtener_datos_local('inventario') or []
+                                nuevo_id = - (len(inventario_local) + 1)  # ID temporal negativo
+                                datos_nuevos['id'] = nuevo_id
+                                inventario_local.append(datos_nuevos)
+                                OfflineManager.guardar_datos_local('inventario', inventario_local)
                             
                             st.success(f"✅ Producto '{nombre}' registrado exitosamente")
                             time.sleep(1)
@@ -870,59 +993,51 @@ elif opcion == "🛒 PUNTO DE VENTA":
                             if i + j < len(productos):
                                 prod = productos[i + j]
                                 
-                                # Calcular precio base
+                                # Calcular precio base (se recalculará al agregar)
                                 precio_base = float(prod['precio_detal'])
-                                precio_unitario = precio_base * 1.10 if es_tasca else precio_base
                                 
                                 with cols[j]:
                                     # Tarjeta de producto ampliada
                                     with st.container(border=True):
                                         st.markdown(f"**{prod['nombre']}**", help=prod['nombre'])
                                         st.caption(f"Stock: {prod['stock']:.0f}")
-                                        st.markdown(f"<h3 style='color:#2a9d8f;'>${precio_unitario:.2f}</h3>", unsafe_allow_html=True)
+                                        st.markdown(f"<h3 style='color:#2a9d8f;'>${precio_base:.2f}</h3>", unsafe_allow_html=True)
                                         if st.button("➕ Agregar", key=f"add_{prod['id']}", use_container_width=True):
-                                            # Verificar si aplica precio mayor
-                                            carrito_actual = mesa_actual['carrito']
+                                            # [MAYOR] Obtener carrito actual
+                                            carrito_actual = st.session_state.mesas[st.session_state.mesa_actual]['carrito']
                                             cantidad_existente = 0
                                             for item in carrito_actual:
                                                 if item['id'] == prod['id']:
                                                     cantidad_existente += item['cantidad']
                                             
-                                            nueva_cantidad = cantidad_existente + 1
+                                            nueva_cantidad_total = cantidad_existente + 1
                                             
-                                            # Determinar precio final
-                                            if nueva_cantidad >= prod['min_mayor'] and not es_tasca:
-                                                precio_final = float(prod['precio_mayor'])
-                                                tipo_precio = " (Mayor)"
-                                            else:
-                                                precio_final = precio_base
-                                                tipo_precio = ""
-                                            
-                                            if es_tasca:
-                                                precio_final = precio_base * 1.10
-                                                tipo_precio = " (Tasca)"
-                                            
-                                            # Agregar al carrito de la mesa actual
+                                            # Agregar el item (inicialmente con precio base, luego recalcularemos todos)
+                                            # Primero agregamos el item con precio base temporal
                                             encontrado = False
-                                            for item in st.session_state.mesas[st.session_state.mesa_actual]['carrito']:
+                                            for item in carrito_actual:
                                                 if item['id'] == prod['id']:
                                                     item['cantidad'] += 1
-                                                    item['precio'] = precio_final
-                                                    item['subtotal'] = item['cantidad'] * item['precio']
                                                     encontrado = True
                                                     break
-                                            
                                             if not encontrado:
                                                 st.session_state.mesas[st.session_state.mesa_actual]['carrito'].append({
                                                     "id": prod['id'],
                                                     "nombre": prod['nombre'],
                                                     "cantidad": 1,
-                                                    "precio": precio_final,
+                                                    "precio": precio_base,  # temporal
                                                     "costo": float(prod['costo']),
-                                                    "subtotal": precio_final,
-                                                    "tipo_precio": tipo_precio
+                                                    "subtotal": precio_base,
+                                                    "tipo_precio": ""
                                                 })
                                             
+                                            # [MAYOR] Recalcular precio para todos los items de este producto
+                                            recalcular_precio_carrito(
+                                                st.session_state.mesa_actual,
+                                                prod['id'],
+                                                nueva_cantidad_total,
+                                                es_tasca
+                                            )
                                             st.rerun()
                 else:
                     st.info("No se encontraron productos")
@@ -966,11 +1081,27 @@ elif opcion == "🛒 PUNTO DE VENTA":
                         )
                         
                         if nueva_cant != item['cantidad']:
+                            # [MAYOR] Calcular nueva cantidad total para este producto
+                            producto_id = item['id']
+                            cantidad_actual = item['cantidad']
+                            diferencia = nueva_cant - cantidad_actual
+                            
+                            # Actualizar cantidad del item actual
                             if nueva_cant == 0:
                                 st.session_state.mesas[st.session_state.mesa_actual]['carrito'].pop(idx)
+                                nueva_cantidad_total = 0
                             else:
                                 item['cantidad'] = nueva_cant
-                                item['subtotal'] = item['cantidad'] * item['precio']
+                                nueva_cantidad_total = sum(i['cantidad'] for i in carrito if i['id'] == producto_id)
+                            
+                            # Recalcular precios para todos los items de ese producto
+                            if nueva_cantidad_total > 0:
+                                recalcular_precio_carrito(
+                                    st.session_state.mesa_actual,
+                                    producto_id,
+                                    nueva_cantidad_total,
+                                    es_tasca
+                                )
                             st.rerun()
                     
                     with col3:
@@ -978,7 +1109,18 @@ elif opcion == "🛒 PUNTO DE VENTA":
                     
                     with col4:
                         if st.button("❌", key=f"del_mesa_{idx}"):
+                            # Eliminar item y recalcular precios si quedan más de ese producto
+                            producto_id = item['id']
                             st.session_state.mesas[st.session_state.mesa_actual]['carrito'].pop(idx)
+                            # Recalcular cantidad total restante
+                            cantidad_restante = sum(i['cantidad'] for i in carrito if i['id'] == producto_id)
+                            if cantidad_restante > 0:
+                                recalcular_precio_carrito(
+                                    st.session_state.mesa_actual,
+                                    producto_id,
+                                    cantidad_restante,
+                                    es_tasca
+                                )
                             st.rerun()
                     
                     total_venta_usd += item['subtotal']
@@ -1106,30 +1248,51 @@ elif opcion == "🛒 PUNTO DE VENTA":
                         for item in carrito:
                             items_resumen.append(f"{item['cantidad']:.0f}x {item['nombre']}")
                             
-                            # Actualizar stock (solo si hay conexión)
+                            # Actualizar stock
                             if st.session_state.online_mode:
                                 try:
                                     stock_actual = db.table("inventario").select("stock").eq("id", item['id']).execute().data[0]['stock']
+                                    nuevo_stock = stock_actual - item['cantidad']
                                     db.table("inventario").update({
-                                        "stock": stock_actual - item['cantidad']
+                                        "stock": nuevo_stock
                                     }).eq("id", item['id']).execute()
-                                except:
+                                    # [OFFLINE] Actualizar caché local
+                                    inventario_local = OfflineManager.obtener_datos_local('inventario')
+                                    if inventario_local:
+                                        for i, p in enumerate(inventario_local):
+                                            if p['id'] == item['id']:
+                                                inventario_local[i]['stock'] = nuevo_stock
+                                                break
+                                        OfflineManager.guardar_datos_local('inventario', inventario_local)
+                                except Exception as e:
                                     # Si falla, guardar operación pendiente
                                     if 'operaciones_pendientes' not in st.session_state:
                                         st.session_state.operaciones_pendientes = []
                                     st.session_state.operaciones_pendientes.append({
                                         'tipo': 'update_stock',
                                         'id_producto': item['id'],
-                                        'cantidad': item['cantidad']
+                                        'nuevo_stock': stock_actual - item['cantidad']  # Nota: necesitamos el stock actual, podría ser inexacto
                                     })
                             else:
                                 # Modo offline: guardar operación pendiente
+                                # Necesitamos obtener el stock actual de la caché local
+                                inventario_local = OfflineManager.obtener_datos_local('inventario')
+                                stock_actual = next((p['stock'] for p in inventario_local if p['id'] == item['id']), 0) if inventario_local else 0
+                                nuevo_stock = stock_actual - item['cantidad']
+                                # Actualizar caché local inmediatamente
+                                if inventario_local:
+                                    for i, p in enumerate(inventario_local):
+                                        if p['id'] == item['id']:
+                                            inventario_local[i]['stock'] = nuevo_stock
+                                            break
+                                    OfflineManager.guardar_datos_local('inventario', inventario_local)
+                                # Guardar operación pendiente
                                 if 'operaciones_pendientes' not in st.session_state:
                                     st.session_state.operaciones_pendientes = []
                                 st.session_state.operaciones_pendientes.append({
                                     'tipo': 'update_stock',
                                     'id_producto': item['id'],
-                                    'cantidad': item['cantidad']
+                                    'nuevo_stock': nuevo_stock
                                 })
                         
                         # Información del cliente
@@ -1337,6 +1500,10 @@ elif opcion == "💸 GASTOS":
                     
                     if st.session_state.online_mode:
                         db.table("gastos").insert(gasto_data).execute()
+                        # [OFFLINE] Actualizar caché local
+                        gastos_local = OfflineManager.obtener_datos_local(f'gastos_{id_turno}') or []
+                        gastos_local.append(gasto_data)
+                        OfflineManager.guardar_datos_local(f'gastos_{id_turno}', gastos_local)
                     else:
                         # Modo offline
                         if 'operaciones_pendientes' not in st.session_state:
@@ -1346,6 +1513,10 @@ elif opcion == "💸 GASTOS":
                             'tabla': 'gastos',
                             'datos': gasto_data
                         })
+                        # Actualizar caché local inmediatamente
+                        gastos_local = OfflineManager.obtener_datos_local(f'gastos_{id_turno}') or []
+                        gastos_local.append(gasto_data)
+                        OfflineManager.guardar_datos_local(f'gastos_{id_turno}', gastos_local)
                     
                     st.success("✅ Gasto registrado correctamente")
                     time.sleep(1)
@@ -1376,9 +1547,12 @@ elif opcion == "📜 HISTORIAL":
         if st.session_state.online_mode:
             response = db.table("ventas").select("*").order("fecha", desc=True).execute()
             df = pd.DataFrame(response.data) if response.data else pd.DataFrame()
+            # [OFFLINE] Guardar en caché local para modo offline
+            OfflineManager.guardar_datos_local('ventas_historial', df.to_dict('records'))
         else:
             st.warning("Modo offline: mostrando datos locales")
-            df = pd.DataFrame()  # En modo offline habría que implementar caché, pero por ahora vacío
+            datos_local = OfflineManager.obtener_datos_local('ventas_historial')
+            df = pd.DataFrame(datos_local) if datos_local else pd.DataFrame()
         
         if not df.empty:
             # Procesar fechas
@@ -1596,6 +1770,14 @@ elif opcion == "📜 HISTORIAL":
                                                         db.table("inventario").update({
                                                             "stock": stock_actual + item['cantidad']
                                                         }).eq("id", item['id']).execute()
+                                                        # [OFFLINE] Actualizar caché local
+                                                        inventario_local = OfflineManager.obtener_datos_local('inventario')
+                                                        if inventario_local:
+                                                            for i, p in enumerate(inventario_local):
+                                                                if p['id'] == item['id']:
+                                                                    inventario_local[i]['stock'] = stock_actual + item['cantidad']
+                                                                    break
+                                                            OfflineManager.guardar_datos_local('inventario', inventario_local)
                                                 else:
                                                     if 'operaciones_pendientes' not in st.session_state:
                                                         st.session_state.operaciones_pendientes = []
@@ -1607,6 +1789,14 @@ elif opcion == "📜 HISTORIAL":
                                     
                                     if st.session_state.online_mode:
                                         db.table("ventas").update({"estado": "Anulado"}).eq("id", venta['id']).execute()
+                                        # [OFFLINE] Actualizar caché local de ventas
+                                        ventas_local = OfflineManager.obtener_datos_local('ventas_historial')
+                                        if ventas_local:
+                                            for i, v in enumerate(ventas_local):
+                                                if v['id'] == venta['id']:
+                                                    ventas_local[i]['estado'] = 'Anulado'
+                                                    break
+                                            OfflineManager.guardar_datos_local('ventas_historial', ventas_local)
                                     
                                     st.success(f"✅ Venta #{venta['id']} anulada")
                                     time.sleep(1)
@@ -1892,6 +2082,9 @@ elif opcion == "📊 CIERRE DE CAJA":
                     db.table("cierres").update(datos_cierre).eq("id", id_turno).execute()
                     db.table("gastos").update({"estado": "cerrado"}).eq("id_cierre", id_turno).execute()
 
+                    # [OFFLINE] Actualizar caché local de cierres si es necesario
+                    # (opcional, para historial offline)
+
                     # Limpiar sesión
                     st.session_state.id_turno = None
                     st.session_state.carrito = []
@@ -1937,8 +2130,15 @@ elif opcion == "📊 CIERRE DE CAJA":
 
         try:
             # Obtener todos los cierres con estado "cerrado"
-            cierres = db.table("cierres").select("*").eq("estado", "cerrado").order("fecha_cierre", desc=True).execute()
-            df_cierres = pd.DataFrame(cierres.data) if cierres.data else pd.DataFrame()
+            if st.session_state.online_mode:
+                cierres = db.table("cierres").select("*").eq("estado", "cerrado").order("fecha_cierre", desc=True).execute()
+                df_cierres = pd.DataFrame(cierres.data) if cierres.data else pd.DataFrame()
+                # Guardar en caché local
+                OfflineManager.guardar_datos_local('cierres_historial', df_cierres.to_dict('records'))
+            else:
+                datos_local = OfflineManager.obtener_datos_local('cierres_historial')
+                df_cierres = pd.DataFrame(datos_local) if datos_local else pd.DataFrame()
+                st.warning("Modo offline: mostrando datos locales de cierres")
 
             if not df_cierres.empty:
                 # Formatear fechas
