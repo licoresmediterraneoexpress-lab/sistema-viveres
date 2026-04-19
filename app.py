@@ -7,8 +7,6 @@ import json
 import hashlib
 import base64
 from io import BytesIO
-import threading  # <<< NUEVO: para verificar conexión en segundo plano
-import requests  # <<< NUEVO
 
 # ============================================
 # CONFIGURACIÓN INICIAL
@@ -121,136 +119,26 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ============================================
-# SISTEMA OFFLINE (ALMACENAMIENTO LOCAL) - MEJORADO
-# ============================================
-class OfflineManager:
-    """Gestiona el almacenamiento local para modo offline"""
-    
-    @staticmethod
-    def guardar_datos_local(tabla, datos):
-        """Guarda datos en session_state como caché local"""
-        if 'offline_data' not in st.session_state:
-            st.session_state.offline_data = {}
-        st.session_state.offline_data[tabla] = {
-            'datos': datos,
-            'timestamp': datetime.now().isoformat()
-        }
-    
-    @staticmethod
-    def obtener_datos_local(tabla):
-        """Obtiene datos de la caché local"""
-        if 'offline_data' in st.session_state and tabla in st.session_state.offline_data:
-            return st.session_state.offline_data[tabla]['datos']
-        return None
-    
-    @staticmethod
-    def sincronizar_pendientes(db):
-        """Sincroniza operaciones pendientes con Supabase"""
-        if 'operaciones_pendientes' not in st.session_state:
-            return
-        
-        pendientes = st.session_state.operaciones_pendientes.copy()
-        exitosas = []
-        for op in pendientes:
-            try:
-                if op['tipo'] == 'insert':
-                    db.table(op['tabla']).insert(op['datos']).execute()
-                elif op['tipo'] == 'update':
-                    db.table(op['tabla']).update(op['datos']).eq(op['id_field'], op['id_value']).execute()
-                elif op['tipo'] == 'delete':
-                    db.table(op['tabla']).delete().eq(op['id_field'], op['id_value']).execute()
-                elif op['tipo'] == 'update_stock':
-                    # Caso especial para actualización de stock en punto de venta
-                    db.table("inventario").update({"stock": db.raw(f"stock - {op['cantidad']}")}).eq("id", op['id_producto']).execute()
-                elif op['tipo'] == 'insert_venta':
-                    db.table("ventas").insert(op['datos']).execute()
-                elif op['tipo'] == 'anular_venta':
-                    # Primero restaurar stock
-                    for item in op['items']:
-                        db.table("inventario").update({"stock": db.raw(f"stock + {item['cantidad']}")}).eq("id", item['id']).execute()
-                    # Luego anular venta
-                    db.table("ventas").update({"estado": "Anulado"}).eq("id", op['id_venta']).execute()
-                exitosas.append(op)
-            except Exception as e:
-                print(f"Error sincronizando operación {op}: {e}")
-                continue
-        
-        # Eliminar las operaciones exitosas de la lista de pendientes
-        for op in exitosas:
-            st.session_state.operaciones_pendientes.remove(op)
-        
-        return len(exitosas) > 0
-
-# ============================================
-# CONEXIÓN A SUPABASE Y DETECCIÓN DE CONEXIÓN (MEJORADO)
+# CONEXIÓN A SUPABASE (SIEMPRE ONLINE)
 # ============================================
 URL = "https://orrfldqwpjkkooeuqnmp.supabase.co"
 KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9ycmZsZHF3cGpra29vZXVxbm1wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkzMDg5MDEsImV4cCI6MjA4NDg4NDkwMX0.va4XR7_lDF2QV9SBXTusmAa_bgqV9oKwiIhC23hsC7E"
 CLAVE_ADMIN = "1234"
 
-# Función para verificar conexión a internet (nueva)
-def verificar_conexion():
-    try:
-        requests.get("https://www.google.com", timeout=3)
-        return True
-    except:
-        return False
-
-# Variable de sesión para control de conexión
-if 'online_mode' not in st.session_state:
-    st.session_state.online_mode = verificar_conexion()
-
-if 'ultima_verificacion' not in st.session_state:
-    st.session_state.ultima_verificacion = datetime.now()
-
-# Verificar conexión cada 30 segundos o al recargar
-ahora = datetime.now()
-if (ahora - st.session_state.ultima_verificacion).seconds > 30:
-    estaba_online = st.session_state.online_mode
-    st.session_state.online_mode = verificar_conexion()
-    st.session_state.ultima_verificacion = ahora
-    
-    # Si se recuperó la conexión, sincronizar pendientes
-    if not estaba_online and st.session_state.online_mode:
-        try:
-            db = create_client(URL, KEY)
-            if OfflineManager.sincronizar_pendientes(db):
-                st.success("✅ Sincronización completada. Los datos pendientes se han subido.")
-                time.sleep(2)
-                st.rerun()
-        except Exception as e:
-            st.error(f"Error al sincronizar: {e}")
-
-# Inicializar cliente de Supabase solo si hay conexión
-if st.session_state.online_mode:
-    try:
-        db = create_client(URL, KEY)
-        # Probar conexión
-        db.table("inventario").select("*").limit(1).execute()
-        st.session_state.db_connected = True
-    except Exception as e:
-        st.session_state.db_connected = False
-        st.session_state.online_mode = False
-        st.warning("⚠️ Modo offline activado. Los cambios se guardarán localmente.")
-else:
-    st.session_state.db_connected = False
+db = create_client(URL, KEY)
 
 # ============================================
 # SISTEMA DE USUARIOS (PERSISTENTE CON LOCALSTORAGE)
 # ============================================
-# Inyectar JavaScript para manejar localStorage
 st.markdown("""
     <script>
-    // Función para guardar usuario en localStorage
     function guardarUsuario(usuario) {
         localStorage.setItem('usuario_actual', JSON.stringify(usuario));
     }
-    // Función para obtener usuario de localStorage
     function obtenerUsuario() {
         const user = localStorage.getItem('usuario_actual');
         return user ? JSON.parse(user) : null;
     }
-    // Función para eliminar usuario de localStorage
     function eliminarUsuario() {
         localStorage.removeItem('usuario_actual');
     }
@@ -262,39 +150,31 @@ USUARIOS = {
     'empleada': {'nombre': 'Empleada', 'clave': '5678', 'rol': 'empleado'}
 }
 
-# Inicializar usuario_actual: primero desde session_state, si no, desde localStorage
+# Inicializar usuario_actual desde localStorage (sin botón de cierre)
 if 'usuario_actual' not in st.session_state or st.session_state.usuario_actual is None:
-    # Intentar recuperar de localStorage mediante JavaScript (solo en el navegador)
-    # Usamos st.query_params como un puente para pasar datos de JS a Python
     if 'usuario_local' not in st.query_params:
-        # Si no hay usuario en los parámetros, inyectamos un script que lo recupere y recargue
         st.markdown("""
             <script>
             const user = localStorage.getItem('usuario_actual');
             if (user) {
                 const usuario = JSON.parse(user);
-                // Redirigir con query param
                 window.location.href = window.location.pathname + '?usuario_local=' + encodeURIComponent(user);
             }
             </script>
         """, unsafe_allow_html=True)
         st.session_state.usuario_actual = None
     else:
-        # Tenemos usuario en query_params, lo cargamos y limpiamos la URL
         usuario_json = st.query_params.get('usuario_local')
         if usuario_json:
             try:
                 st.session_state.usuario_actual = json.loads(usuario_json)
-                # Limpiar query_params para que la URL quede limpia
                 st.query_params.clear()
             except:
                 st.session_state.usuario_actual = None
         else:
             st.session_state.usuario_actual = None
 else:
-    # Ya existe en session_state, aseguramos que también esté en localStorage
     if st.session_state.usuario_actual:
-        # Sincronizar con localStorage vía script (solo si el usuario no está guardado)
         st.markdown(f"""
             <script>
             const current = localStorage.getItem('usuario_actual');
@@ -308,7 +188,6 @@ def login(usuario, clave):
     if usuario in USUARIOS and USUARIOS[usuario]['clave'] == clave:
         user_data = USUARIOS[usuario]
         st.session_state.usuario_actual = user_data
-        # Guardar en localStorage mediante JavaScript
         st.markdown(f"""
             <script>
             localStorage.setItem('usuario_actual', JSON.stringify({json.dumps(user_data)}));
@@ -317,46 +196,28 @@ def login(usuario, clave):
         return True
     return False
 
-def logout():
-    st.session_state.usuario_actual = None
-    # Eliminar de localStorage
-    st.markdown("""
-        <script>
-        localStorage.removeItem('usuario_actual');
-        </script>
-    """, unsafe_allow_html=True)
-    # Limpiar también query_params por si acaso
-    st.query_params.clear()
-    st.rerun()
+# (Ya no hay función logout)
 
 # ============================================
-# VERIFICAR TURNO ACTIVO (MEJORADO)
+# VERIFICAR TURNO ACTIVO
 # ============================================
-if st.session_state.online_mode:
-    try:
-        response = db.table("cierres").select("*").eq("estado", "abierto").order("fecha_apertura", desc=True).limit(1).execute()
-        turno_activo = response.data[0] if response.data else None
-        if turno_activo:
-            st.session_state.id_turno = turno_activo['id']
-            st.session_state.tasa_dia = turno_activo.get('tasa_apertura', 1.0)
-            st.session_state.fondo_bs = turno_activo.get('fondo_bs', 0)
-            st.session_state.fondo_usd = turno_activo.get('fondo_usd', 0)
-        else:
-            st.session_state.id_turno = None
-    except Exception as e:
+try:
+    response = db.table("cierres").select("*").eq("estado", "abierto").order("fecha_apertura", desc=True).limit(1).execute()
+    turno_activo = response.data[0] if response.data else None
+    if turno_activo:
+        st.session_state.id_turno = turno_activo['id']
+        st.session_state.tasa_dia = turno_activo.get('tasa_apertura', 1.0)
+        st.session_state.fondo_bs = turno_activo.get('fondo_bs', 0)
+        st.session_state.fondo_usd = turno_activo.get('fondo_usd', 0)
+    else:
         st.session_state.id_turno = None
-else:
-    # Modo offline: usar datos locales
-    if 'id_turno' not in st.session_state:
-        st.session_state.id_turno = None
-    if 'tasa_dia' not in st.session_state:
-        st.session_state.tasa_dia = 60.0
+except Exception as e:
+    st.session_state.id_turno = None
 
 # ============================================
 # MENÚ LATERAL (REDISEÑADO)
 # ============================================
 with st.sidebar:
-    # Logo y nombre
     st.markdown("""
         <div style="background: linear-gradient(135deg, #0a1929 0%, #1a2b3c 100%); 
                     padding: 2rem 1rem; 
@@ -389,7 +250,7 @@ with st.sidebar:
     
     st.divider()
     
-    # Login rápido
+    # Login rápido (si no hay usuario)
     if not st.session_state.usuario_actual:
         with st.expander("🔐 Acceso al sistema", expanded=True):
             col_user1, col_user2 = st.columns(2)
@@ -407,50 +268,15 @@ with st.sidebar:
                     st.error("Clave incorrecta")
     else:
         st.success(f"👤 Usuario: {st.session_state.usuario_actual['nombre']}")
-        if st.button("🚪 Cerrar sesión", use_container_width=True):
-            logout()
-            st.rerun()
+        # Ya no hay botón de cerrar sesión
     
     st.divider()
     
-    # Tasa del día (EDITABLE)
+    # Tasa del día (SOLO INFORMATIVA)
     with st.container(border=True):
         st.markdown("**💱 TASA BCV**")
-        nueva_tasa = st.number_input(
-            "Bs/USD",
-            min_value=1.0,
-            max_value=999.0,
-            value=float(st.session_state.get('tasa_dia', 60.0)),
-            step=0.5,
-            format="%.2f",
-            key="tasa_input"
-        )
-        if st.button("Actualizar tasa", use_container_width=True):
-            st.session_state.tasa_dia = nueva_tasa
-            if st.session_state.online_mode and st.session_state.id_turno:
-                try:
-                    db.table("cierres").update({"tasa_apertura": nueva_tasa}).eq("id", st.session_state.id_turno).execute()
-                except:
-                    pass
-            st.success("Tasa actualizada")
-            time.sleep(1)
-            st.rerun()
-    
-    # Botón manual de sincronización (nuevo)
-    if not st.session_state.online_mode:
-        if st.button("🔄 Intentar sincronizar", use_container_width=True):
-            if verificar_conexion():
-                try:
-                    db = create_client(URL, KEY)
-                    if OfflineManager.sincronizar_pendientes(db):
-                        st.session_state.online_mode = True
-                        st.success("✅ Conexión restaurada y datos sincronizados.")
-                        time.sleep(2)
-                        st.rerun()
-                except:
-                    st.error("No se pudo conectar a Supabase.")
-            else:
-                st.error("No hay conexión a internet.")
+        st.metric("Bs/USD", f"{st.session_state.get('tasa_dia', 60.0):.2f}")
+        st.caption("Tasa fijada al abrir el turno")
     
     st.divider()
     
@@ -464,27 +290,21 @@ with st.sidebar:
     st.divider()
     
     # Estado del sistema
-    if st.session_state.online_mode:
-        st.success("✅ Conectado a Internet")
-    else:
-        st.warning("⚠️ Modo offline")
-    
+    st.success("✅ Conectado a Internet")
     if st.session_state.id_turno:
         st.info(f"📍 Turno activo: #{st.session_state.id_turno}")
     else:
         st.error("🔴 Caja cerrada")
 
 # ============================================
-# FUNCIONES AUXILIARES MEJORADAS
+# FUNCIONES AUXILIARES
 # ============================================
 def requiere_turno():
-    """Verifica si hay turno activo"""
     if not st.session_state.id_turno:
         st.warning("⚠️ No hay un turno activo. Debe abrir caja en el módulo 'Cierre de Caja'.")
         st.stop()
 
 def requiere_usuario():
-    """Verifica si hay usuario logueado"""
     if not st.session_state.usuario_actual:
         st.warning("⚠️ Debe iniciar sesión para acceder a este módulo.")
         st.stop()
@@ -496,7 +316,6 @@ def formatear_bs(valor):
     return f"{valor:,.2f} Bs"
 
 def exportar_excel(df, nombre_archivo):
-    """Convierte DataFrame a Excel para descargar"""
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Datos')
@@ -506,53 +325,36 @@ def exportar_excel(df, nombre_archivo):
     return href
 
 # ============================================
-# MÓDULO 1: INVENTARIO MEJORADO (sin cambios)
+# MÓDULO 1: INVENTARIO (SIN CAMBIOS SIGNIFICATIVOS, SOLO SE ELIMINÓ OFFLINE)
 # ============================================
 if opcion == "📦 INVENTARIO":
     st.markdown("<h1 class='main-header'>📦 Gestión de Inventario</h1>", unsafe_allow_html=True)
     
-    # Categorías predefinidas
     CATEGORIAS = [
         "Licores", "Cervezas", "Vinos", "Refrescos", "Aguas",
         "Víveres", "Confitería", "Snacks", "Lácteos", "Otros"
     ]
     
     try:
-        # Cargar datos (con soporte offline)
-        if st.session_state.online_mode:
-            response = db.table("inventario").select("*").order("nombre").execute()
-            df = pd.DataFrame(response.data) if response.data else pd.DataFrame()
-            OfflineManager.guardar_datos_local('inventario', df.to_dict('records'))
-        else:
-            datos_local = OfflineManager.obtener_datos_local('inventario')
-            df = pd.DataFrame(datos_local) if datos_local else pd.DataFrame()
+        response = db.table("inventario").select("*").order("nombre").execute()
+        df = pd.DataFrame(response.data) if response.data else pd.DataFrame()
         
-        # Verificar si existe columna categoria, si no, agregarla
         if not df.empty:
             if 'categoria' not in df.columns:
                 df['categoria'] = 'Otros'
             if 'codigo_barras' not in df.columns:
                 df['codigo_barras'] = ''
         
-        # Pestañas principales
         tab1, tab2, tab3, tab4 = st.tabs(["📋 Ver Inventario", "➕ Agregar Producto", "📊 Estadísticas", "📥 Respaldos"])
         
-        # ============================================
-        # TAB 1: VER INVENTARIO (CORREGIDO)
-        # ============================================
         with tab1:
-            # Filtros avanzados
             col_f1, col_f2, col_f3, col_f4 = st.columns([2, 1, 1, 1])
-            
             with col_f1:
                 busqueda = st.text_input("🔍 Buscar producto", placeholder="Nombre o código...")
-            
             with col_f2:
                 categoria_filtro = st.selectbox("Categoría", ["Todas"] + CATEGORIAS)
-            
             with col_f3:
                 ver_bajo_stock = st.checkbox("⚠️ Solo stock bajo")
-            
             with col_f4:
                 if st.button("📤 Exportar a Excel", use_container_width=True):
                     if not df.empty:
@@ -562,10 +364,7 @@ if opcion == "📦 INVENTARIO":
                         st.markdown(href, unsafe_allow_html=True)
             
             if not df.empty:
-                # Aplicar filtros
                 df_filtrado = df.copy()
-                
-                # FILTRO CORREGIDO
                 if busqueda:
                     mask_nombre = df_filtrado['nombre'].str.contains(busqueda, case=False, na=False)
                     if 'codigo_barras' in df_filtrado.columns:
@@ -574,10 +373,8 @@ if opcion == "📦 INVENTARIO":
                         df_filtrado = df_filtrado[mask_nombre | mask_codigo]
                     else:
                         df_filtrado = df_filtrado[mask_nombre]
-                
                 if categoria_filtro != "Todas" and 'categoria' in df_filtrado.columns:
                     df_filtrado = df_filtrado[df_filtrado['categoria'] == categoria_filtro]
-                
                 if ver_bajo_stock:
                     df_filtrado = df_filtrado[df_filtrado['stock'] < 5]
                     if len(df_filtrado) > 0:
@@ -585,7 +382,6 @@ if opcion == "📦 INVENTARIO":
                     else:
                         st.success("✅ No hay productos con stock bajo")
                 
-                # Mostrar tabla con colores según stock
                 def colorear_stock(val):
                     if val < 5:
                         return 'color: red; font-weight: bold; background-color: #ffe6e6'
@@ -595,24 +391,14 @@ if opcion == "📦 INVENTARIO":
                 
                 columnas_mostrar = ['nombre', 'categoria', 'stock', 'costo', 'precio_detal', 'precio_mayor', 'min_mayor']
                 columnas_mostrar = [col for col in columnas_mostrar if col in df_filtrado.columns]
-                
                 df_mostrar = df_filtrado[columnas_mostrar].copy()
                 df_mostrar.columns = ['Producto', 'Categoría', 'Stock', 'Costo $', 'Detal $', 'Mayor $', 'Mín. Mayor']
-                
                 styled_df = df_mostrar.style.map(colorear_stock, subset=['Stock'])
-                
-                st.dataframe(
-                    styled_df,
-                    use_container_width=True,
-                    hide_index=True
-                )
-                
+                st.dataframe(styled_df, use_container_width=True, hide_index=True)
                 st.caption(f"Mostrando {len(df_filtrado)} de {len(df)} productos")
                 
-                # EDITAR PRODUCTO
                 st.divider()
                 st.subheader("✏️ Editar producto")
-                
                 if not df_filtrado.empty:
                     producto_editar = st.selectbox("Seleccionar producto", df_filtrado['nombre'].tolist(), key="editar")
                     if producto_editar:
@@ -630,7 +416,6 @@ if opcion == "📦 INVENTARIO":
                                 nuevo_detal = st.number_input("Precio Detal $", value=float(prod['precio_detal']), min_value=0.0, step=0.01)
                                 nuevo_mayor = st.number_input("Precio Mayor $", value=float(prod['precio_mayor']), min_value=0.0, step=0.01)
                                 nuevo_min = st.number_input("Mín. Mayor", value=int(prod['min_mayor']), min_value=1, step=1)
-                            
                             if st.form_submit_button("💾 Guardar Cambios", use_container_width=True):
                                 try:
                                     datos_actualizados = {
@@ -644,27 +429,13 @@ if opcion == "📦 INVENTARIO":
                                     }
                                     if nuevo_codigo:
                                         datos_actualizados["codigo_barras"] = nuevo_codigo
-                                    
-                                    if st.session_state.online_mode:
-                                        db.table("inventario").update(datos_actualizados).eq("id", prod['id']).execute()
-                                    else:
-                                        if 'operaciones_pendientes' not in st.session_state:
-                                            st.session_state.operaciones_pendientes = []
-                                        st.session_state.operaciones_pendientes.append({
-                                            'tipo': 'update',
-                                            'tabla': 'inventario',
-                                            'datos': datos_actualizados,
-                                            'id_field': 'id',
-                                            'id_value': prod['id']
-                                        })
-                                    
+                                    db.table("inventario").update(datos_actualizados).eq("id", prod['id']).execute()
                                     st.success("✅ Producto actualizado")
                                     time.sleep(1)
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"Error: {e}")
                 
-                # ELIMINAR PRODUCTO
                 st.divider()
                 st.subheader("🗑️ Eliminar producto")
                 col_d1, col_d2 = st.columns(2)
@@ -672,22 +443,10 @@ if opcion == "📦 INVENTARIO":
                     producto_eliminar = st.selectbox("Seleccionar producto", [""] + df['nombre'].tolist(), key="eliminar")
                 with col_d2:
                     clave = st.text_input("Clave Admin", type="password", key="clave_eliminar")
-                
                 if producto_eliminar and st.button("❌ Eliminar", type="primary", use_container_width=True):
                     if clave == CLAVE_ADMIN:
                         try:
-                            if st.session_state.online_mode:
-                                db.table("inventario").delete().eq("nombre", producto_eliminar).execute()
-                            else:
-                                if 'operaciones_pendientes' not in st.session_state:
-                                    st.session_state.operaciones_pendientes = []
-                                st.session_state.operaciones_pendientes.append({
-                                    'tipo': 'delete',
-                                    'tabla': 'inventario',
-                                    'id_field': 'nombre',
-                                    'id_value': producto_eliminar
-                                })
-                            
+                            db.table("inventario").delete().eq("nombre", producto_eliminar).execute()
                             st.success(f"Producto '{producto_eliminar}' eliminado")
                             time.sleep(1)
                             st.rerun()
@@ -698,13 +457,9 @@ if opcion == "📦 INVENTARIO":
             else:
                 st.info("No hay productos en el inventario")
         
-        # ============================================
-        # TAB 2: AGREGAR PRODUCTO (MEJORADO)
-        # ============================================
         with tab2:
             with st.form("nuevo_producto", clear_on_submit=True):
                 st.markdown("### 📝 Datos del nuevo producto")
-                
                 col_a1, col_a2 = st.columns(2)
                 with col_a1:
                     nombre = st.text_input("Nombre del producto *").upper()
@@ -712,14 +467,10 @@ if opcion == "📦 INVENTARIO":
                     stock = st.number_input("Stock inicial *", min_value=0.0, step=1.0, format="%.2f")
                     costo = st.number_input("Costo $ *", min_value=0.0, step=0.01, format="%.2f")
                     codigo_barras = st.text_input("Código de barras (opcional)")
-                
                 with col_a2:
                     precio_detal = st.number_input("Precio Detal $ *", min_value=0.0, step=0.01, format="%.2f")
                     precio_mayor = st.number_input("Precio Mayor $ *", min_value=0.0, step=0.01, format="%.2f")
                     min_mayor = st.number_input("Mínimo para Mayor *", min_value=1, value=6, step=1)
-                
-                st.markdown("---")
-                
                 if st.form_submit_button("📦 Registrar Producto", use_container_width=True):
                     if not nombre:
                         st.error("El nombre es obligatorio")
@@ -727,12 +478,10 @@ if opcion == "📦 INVENTARIO":
                         st.error("Verifique los valores ingresados")
                     else:
                         try:
-                            if st.session_state.online_mode:
-                                existe = db.table("inventario").select("*").eq("nombre", nombre).execute()
-                                if existe.data:
-                                    st.error(f"Ya existe un producto con el nombre '{nombre}'")
-                                    st.stop()
-                            
+                            existe = db.table("inventario").select("*").eq("nombre", nombre).execute()
+                            if existe.data:
+                                st.error(f"Ya existe un producto con el nombre '{nombre}'")
+                                st.stop()
                             datos_nuevos = {
                                 "nombre": nombre,
                                 "categoria": categoria,
@@ -744,44 +493,27 @@ if opcion == "📦 INVENTARIO":
                             }
                             if codigo_barras:
                                 datos_nuevos["codigo_barras"] = codigo_barras
-                            
-                            if st.session_state.online_mode:
-                                db.table("inventario").insert(datos_nuevos).execute()
-                            else:
-                                if 'operaciones_pendientes' not in st.session_state:
-                                    st.session_state.operaciones_pendientes = []
-                                st.session_state.operaciones_pendientes.append({
-                                    'tipo': 'insert',
-                                    'tabla': 'inventario',
-                                    'datos': datos_nuevos
-                                })
-                            
+                            db.table("inventario").insert(datos_nuevos).execute()
                             st.success(f"✅ Producto '{nombre}' registrado exitosamente")
                             time.sleep(1)
                             st.rerun()
                         except Exception as e:
                             st.error(f"Error al registrar: {e}")
         
-        # ============================================
-        # TAB 3: ESTADÍSTICAS (MEJORADAS)
-        # ============================================
         with tab3:
             if not df.empty:
                 valor_inv = (df['stock'] * df['costo']).sum()
                 valor_venta = (df['stock'] * df['precio_detal']).sum()
                 bajo_stock = len(df[df['stock'] < 5])
                 total_productos = len(df)
-                
                 col_m1, col_m2, col_m3, col_m4 = st.columns(4)
                 col_m1.metric("Total productos", total_productos)
                 col_m2.metric("Valor inventario (costo)", formatear_usd(valor_inv))
                 col_m3.metric("Valor venta potencial", formatear_usd(valor_venta))
                 col_m4.metric("Stock bajo", bajo_stock, delta_color="inverse")
-                
                 ganancia_potencial = valor_venta - valor_inv
                 st.metric("💰 Ganancia potencial total", formatear_usd(ganancia_potencial),
                          delta=f"{(ganancia_potencial/valor_inv*100):.1f}%" if valor_inv else "")
-                
                 st.subheader("📊 Productos por categoría")
                 if 'categoria' in df.columns:
                     cat_stats = df.groupby('categoria').agg({
@@ -791,14 +523,12 @@ if opcion == "📦 INVENTARIO":
                     }).round(2)
                     cat_stats.columns = ['Cantidad', 'Stock total', 'Valor total $']
                     st.dataframe(cat_stats, use_container_width=True)
-                
                 st.subheader("💰 Top 10 productos por valor en inventario")
                 df_temp = df.copy()
                 df_temp['valor_total'] = df_temp['stock'] * df_temp['costo']
                 df_top = df_temp.nlargest(10, 'valor_total')[['nombre', 'categoria', 'stock', 'costo', 'valor_total']]
                 df_top.columns = ['Producto', 'Categoría', 'Stock', 'Costo unitario', 'Valor total']
                 st.dataframe(df_top, use_container_width=True, hide_index=True)
-                
                 st.subheader("⚠️ Productos con stock bajo (<5)")
                 df_bajo = df[df['stock'] < 5][['nombre', 'categoria', 'stock', 'costo']]
                 if not df_bajo.empty:
@@ -809,9 +539,6 @@ if opcion == "📦 INVENTARIO":
             else:
                 st.info("No hay datos para mostrar estadísticas")
         
-        # ============================================
-        # TAB 4: RESPALDOS
-        # ============================================
         with tab4:
             st.subheader("📥 Respaldo de inventario")
             st.markdown("""
@@ -820,10 +547,8 @@ if opcion == "📦 INVENTARIO":
                     <p>Recomendación: Haz un respaldo diario antes de cerrar.</p>
                 </div>
             """, unsafe_allow_html=True)
-            
             if not df.empty:
                 col_r1, col_r2 = st.columns(2)
-                
                 with col_r1:
                     st.markdown("**📊 Respaldo completo**")
                     if st.button("📥 Exportar inventario completo", use_container_width=True):
@@ -832,7 +557,6 @@ if opcion == "📦 INVENTARIO":
                         export_df = export_df.sort_values('Producto')
                         href = exportar_excel(export_df, f"inventario_completo_{datetime.now().strftime('%Y%m%d_%H%M')}")
                         st.markdown(href, unsafe_allow_html=True)
-                
                 with col_r2:
                     st.markdown("**📋 Lista de precios**")
                     if st.button("📥 Exportar lista de precios", use_container_width=True):
@@ -841,7 +565,6 @@ if opcion == "📦 INVENTARIO":
                         precio_df = precio_df.sort_values('Categoría')
                         href = exportar_excel(precio_df, f"lista_precios_{datetime.now().strftime('%Y%m%d')}")
                         st.markdown(href, unsafe_allow_html=True)
-                
                 st.divider()
                 st.markdown(f"""
                     **📌 Última actualización:** {datetime.now().strftime('%d/%m/%Y %H:%M')}  
@@ -850,13 +573,12 @@ if opcion == "📦 INVENTARIO":
                 """)
             else:
                 st.info("No hay productos para respaldar")
-                
     except Exception as e:
         st.error(f"Error en inventario: {e}")
         st.exception(e)
 
 # ============================================
-# MÓDULO 2: PUNTO DE VENTA CON BUSCADOR POPOVER Y CARRITO EN LISTA
+# MÓDULO 2: PUNTO DE VENTA (CON POPOVER PARA FACTURA Y MEJORAS)
 # ============================================
 elif opcion == "🛒 PUNTO DE VENTA":
     requiere_turno()
@@ -874,7 +596,6 @@ elif opcion == "🛒 PUNTO DE VENTA":
         </div>
     """, unsafe_allow_html=True)
     
-    # SISTEMA DE MESAS / CUENTAS
     if 'mesas' not in st.session_state:
         st.session_state.mesas = {
             'mesa_1': {'nombre': 'Mesa 1', 'carrito': [], 'activa': True, 'cliente': ''},
@@ -888,9 +609,7 @@ elif opcion == "🛒 PUNTO DE VENTA":
     if 'mesa_actual' not in st.session_state:
         st.session_state.mesa_actual = 'mesa_1'
     
-    # SELECTOR DE MESAS
     st.subheader("🍽️ Seleccionar Mesa / Cuenta")
-    
     col_mesas = st.columns(6)
     idx_mesa = 0
     for mesa_id, mesa_data in st.session_state.mesas.items():
@@ -901,7 +620,6 @@ elif opcion == "🛒 PUNTO DE VENTA":
                 bg_color = "#ffc107"
             else:
                 bg_color = "#6c757d"
-            
             if st.button(
                 f"{mesa_data['nombre']}\n({len(mesa_data['carrito'])} items)",
                 key=f"mesa_{mesa_id}",
@@ -915,7 +633,6 @@ elif opcion == "🛒 PUNTO DE VENTA":
     mesa_actual = st.session_state.mesas[st.session_state.mesa_actual]
     st.divider()
     
-    # CABECERA DE LA MESA ACTUAL
     col_mesa_info1, col_mesa_info2, col_mesa_info3 = st.columns([2, 2, 1])
     with col_mesa_info1:
         st.markdown(f"### 🍽️ {mesa_actual['nombre']}")
@@ -937,36 +654,21 @@ elif opcion == "🛒 PUNTO DE VENTA":
     
     st.divider()
     
-    # ============================================
-    # BOTÓN BUSCADOR CON POPOVER
-    # ============================================
     es_tasca = st.checkbox("🍷 Venta en tasca (+10%)", help="Los precios aumentan un 10% para consumo en el local")
     
     with st.popover("🔍 Buscar productos", use_container_width=True):
         busqueda = st.text_input("", placeholder="Escribe nombre del producto...", key="buscar_venta_popover")
         if busqueda:
             try:
-                if st.session_state.online_mode:
-                    response = db.table("inventario")\
-                        .select("*")\
-                        .ilike("nombre", f"%{busqueda}%")\
-                        .gt("stock", 0)\
-                        .order("nombre")\
-                        .limit(30)\
-                        .execute()
-                    productos = response.data
-                else:
-                    datos_local = OfflineManager.obtener_datos_local('inventario')
-                    if datos_local:
-                        df_local = pd.DataFrame(datos_local)
-                        df_local = df_local[df_local['stock'] > 0]
-                        df_local = df_local[df_local['nombre'].str.contains(busqueda, case=False, na=False)]
-                        productos = df_local.to_dict('records')
-                    else:
-                        productos = []
-                
+                response = db.table("inventario")\
+                    .select("*")\
+                    .ilike("nombre", f"%{busqueda}%")\
+                    .gt("stock", 0)\
+                    .order("nombre")\
+                    .limit(30)\
+                    .execute()
+                productos = response.data
                 if productos:
-                    # Encabezado de la lista de productos
                     st.markdown("---")
                     cols_header = st.columns([3, 1, 1, 1])
                     cols_header[0].write("**Producto**")
@@ -974,18 +676,15 @@ elif opcion == "🛒 PUNTO DE VENTA":
                     cols_header[2].write("**Precio USD**")
                     cols_header[3].write("**Precio Bs**")
                     st.markdown("---")
-                    
                     for prod in productos:
                         precio_base = float(prod['precio_detal'])
                         precio_unitario = precio_base * 1.10 if es_tasca else precio_base
                         precio_bs = precio_unitario * tasa
-                        
                         col1, col2, col3, col4, col5 = st.columns([3, 1, 1, 1, 0.5])
                         col1.write(prod['nombre'])
                         col2.write(f"{prod['stock']:.0f}")
                         col3.write(f"${precio_unitario:.2f}")
                         col4.write(f"{precio_bs:,.2f} Bs")
-                        
                         if col5.button("➕", key=f"add_pop_{prod['id']}", help="Agregar"):
                             carrito_actual = mesa_actual['carrito']
                             cantidad_existente = 0
@@ -993,8 +692,6 @@ elif opcion == "🛒 PUNTO DE VENTA":
                                 if item['id'] == prod['id']:
                                     cantidad_existente += item['cantidad']
                             nueva_cantidad = cantidad_existente + 1
-                            
-                            # Determinar precio final (considerando tasca y mayor)
                             if nueva_cantidad >= prod['min_mayor'] and not es_tasca:
                                 precio_final = float(prod['precio_mayor'])
                                 tipo_precio = " (Mayor)"
@@ -1004,7 +701,6 @@ elif opcion == "🛒 PUNTO DE VENTA":
                             if es_tasca:
                                 precio_final = precio_base * 1.10
                                 tipo_precio = " (Tasca)"
-                            
                             encontrado = False
                             for item in st.session_state.mesas[st.session_state.mesa_actual]['carrito']:
                                 if item['id'] == prod['id']:
@@ -1033,16 +729,12 @@ elif opcion == "🛒 PUNTO DE VENTA":
     
     st.divider()
     
-    # ============================================
-    # CARRITO EN LISTA COMPACTA
-    # ============================================
     st.subheader(f"🛒 Carrito - {mesa_actual['nombre']}")
     carrito = mesa_actual['carrito']
     
     if not carrito:
         st.info("Carrito vacío")
     else:
-        # Contenedor con scroll
         with st.container():
             st.markdown("""
                 <style>
@@ -1054,8 +746,6 @@ elif opcion == "🛒 PUNTO DE VENTA":
                 </style>
             """, unsafe_allow_html=True)
             st.markdown('<div class="carrito-scroll">', unsafe_allow_html=True)
-            
-            # Encabezado de la tabla del carrito
             cols_head = st.columns([2.5, 1, 1, 1, 0.5])
             cols_head[0].write("**Producto**")
             cols_head[1].write("**Precio USD**")
@@ -1063,16 +753,13 @@ elif opcion == "🛒 PUNTO DE VENTA":
             cols_head[3].write("**Cantidad**")
             cols_head[4].write("**Eliminar**")
             st.markdown("---")
-            
             total_venta_usd = 0
             total_costo = 0
-            
             for idx, item in enumerate(carrito):
                 cols = st.columns([2.5, 1, 1, 1, 0.5])
                 cols[0].write(item['nombre'])
                 cols[1].write(f"${item['precio']:.2f}")
                 cols[2].write(f"{(item['precio'] * tasa):,.2f} Bs")
-                
                 nueva_cant = cols[3].number_input(
                     "",
                     min_value=0.0,
@@ -1087,22 +774,13 @@ elif opcion == "🛒 PUNTO DE VENTA":
                         st.session_state.mesas[st.session_state.mesa_actual]['carrito'].pop(idx)
                         st.rerun()
                     else:
-                        # Recalcular precio mayor si cambia la cantidad
                         prod_data = None
-                        if st.session_state.online_mode:
-                            try:
-                                prod_resp = db.table("inventario").select("precio_detal, precio_mayor, min_mayor").eq("id", item['id']).execute()
-                                if prod_resp.data:
-                                    prod_data = prod_resp.data[0]
-                            except:
-                                pass
-                        if not prod_data:
-                            inventario_local = OfflineManager.obtener_datos_local('inventario')
-                            if inventario_local:
-                                for p in inventario_local:
-                                    if p['id'] == item['id']:
-                                        prod_data = p
-                                        break
+                        try:
+                            prod_resp = db.table("inventario").select("precio_detal, precio_mayor, min_mayor").eq("id", item['id']).execute()
+                            if prod_resp.data:
+                                prod_data = prod_resp.data[0]
+                        except:
+                            pass
                         if prod_data:
                             if nueva_cant >= prod_data['min_mayor'] and not es_tasca:
                                 nuevo_precio = float(prod_data['precio_mayor'])
@@ -1118,26 +796,21 @@ elif opcion == "🛒 PUNTO DE VENTA":
                         item['cantidad'] = nueva_cant
                         item['subtotal'] = item['cantidad'] * item['precio']
                         st.rerun()
-                
                 if cols[4].button("❌", key=f"del_lista_{idx}"):
                     st.session_state.mesas[st.session_state.mesa_actual]['carrito'].pop(idx)
                     st.rerun()
-                
                 total_venta_usd += item['subtotal']
                 total_costo += item['cantidad'] * item['costo']
-            
             st.markdown('</div>', unsafe_allow_html=True)
         
         total_venta_bs = total_venta_usd * tasa
         st.divider()
-        
         col_t1, col_t2 = st.columns(2)
         with col_t1:
             st.markdown(f"### Total calculado USD: ${total_venta_usd:,.2f}")
         with col_t2:
             st.markdown(f"### Total calculado Bs: {total_venta_bs:,.2f}")
         
-        # AJUSTE MANUAL DEL MONTO (REDONDEO) - igual
         total_final_usd = total_venta_usd
         total_final_bs = total_venta_bs
         
@@ -1149,7 +822,6 @@ elif opcion == "🛒 PUNTO DE VENTA":
                 horizontal=True,
                 key="opcion_ajuste"
             )
-            
             if opcion_ajuste == "Bolívares (Bs)":
                 monto_ajustado_bs = st.number_input(
                     "Monto final en Bs",
@@ -1177,7 +849,6 @@ elif opcion == "🛒 PUNTO DE VENTA":
         
         st.divider()
         
-        # SECCIÓN DE PAGOS (sin cambios)
         with st.expander("💳 Detalle de pagos", expanded=True):
             st.markdown("**Ingresa los montos recibidos:**")
             col_p1, col_p2 = st.columns(2)
@@ -1215,45 +886,22 @@ elif opcion == "🛒 PUNTO DE VENTA":
             else:
                 st.error(f"❌ Faltante: ${abs(vuelto_usd):,.2f} / {(abs(vuelto_usd) * tasa):,.2f} Bs")
         
-        # BOTONES DE ACCIÓN
         col_btn1, col_btn2, col_btn3 = st.columns(3)
-        
         with col_btn1:
             if st.button("🔄 Limpiar carrito", use_container_width=True):
                 st.session_state.mesas[st.session_state.mesa_actual]['carrito'] = []
                 st.rerun()
-        
         with col_btn2:
             venta_valida = vuelto_usd >= -0.01 and len(carrito) > 0
-            
             if st.button("✅ Cobrar y cerrar cuenta", type="primary", use_container_width=True, disabled=not venta_valida):
                 try:
                     items_resumen = []
                     for item in carrito:
                         items_resumen.append(f"{item['cantidad']:.0f}x {item['nombre']}")
-                        
-                        if st.session_state.online_mode:
-                            try:
-                                stock_actual = db.table("inventario").select("stock").eq("id", item['id']).execute().data[0]['stock']
-                                db.table("inventario").update({
-                                    "stock": stock_actual - item['cantidad']
-                                }).eq("id", item['id']).execute()
-                            except:
-                                if 'operaciones_pendientes' not in st.session_state:
-                                    st.session_state.operaciones_pendientes = []
-                                st.session_state.operaciones_pendientes.append({
-                                    'tipo': 'update_stock',
-                                    'id_producto': item['id'],
-                                    'cantidad': item['cantidad']
-                                })
-                        else:
-                            if 'operaciones_pendientes' not in st.session_state:
-                                st.session_state.operaciones_pendientes = []
-                            st.session_state.operaciones_pendientes.append({
-                                'tipo': 'update_stock',
-                                'id_producto': item['id'],
-                                'cantidad': item['cantidad']
-                            })
+                        stock_actual = db.table("inventario").select("stock").eq("id", item['id']).execute().data[0]['stock']
+                        db.table("inventario").update({
+                            "stock": stock_actual - item['cantidad']
+                        }).eq("id", item['id']).execute()
                     
                     info_cliente = mesa_actual.get('cliente', '')
                     if info_cliente:
@@ -1279,32 +927,23 @@ elif opcion == "🛒 PUNTO DE VENTA":
                         "fecha": datetime.now().isoformat(),
                         "cliente": mesa_actual.get('cliente', '') or f"Mesa: {mesa_actual['nombre']}"
                     }
-                    
-                    if st.session_state.online_mode:
-                        db.table("ventas").insert(venta_data).execute()
-                    else:
-                        if 'operaciones_pendientes' not in st.session_state:
-                            st.session_state.operaciones_pendientes = []
-                        st.session_state.operaciones_pendientes.append({
-                            'tipo': 'insert_venta',
-                            'datos': venta_data
-                        })
+                    db.table("ventas").insert(venta_data).execute()
                     
                     st.balloons()
                     st.success(f"✅ Venta registrada - {mesa_actual['nombre']}{info_cliente}")
                     
-                    with st.expander("🧾 Ver Ticket", expanded=True):
+                    # Ticket en popover (nuevo)
+                    with st.popover("🧾 VER TICKET", use_container_width=True):
                         items_ticket = ""
                         for item in carrito:
                             items_ticket += f"""
                                 <tr>
-                                    <td style='padding: 4px 8px;'>{item['cantidad']:.0f}</td>
-                                    <td style='padding: 4px 8px;'>{item['nombre']}</td>
-                                    <td style='padding: 4px 8px; text-align: right;'>${item['precio']:.2f}</td>
-                                    <td style='padding: 4px 8px; text-align: right;'>${item['subtotal']:.2f}</td>
+                                    <td style='padding: 6px 8px;'>{item['cantidad']:.0f}</td>
+                                    <td style='padding: 6px 8px;'>{item['nombre']}</td>
+                                    <td style='padding: 6px 8px; text-align: right;'>${item['precio']:.2f}</td>
+                                    <td style='padding: 6px 8px; text-align: right;'>${item['subtotal']:.2f}</td>
                                 </tr>
                             """
-                        
                         st.markdown(f"""
                         <div style="background:white; padding:20px; border-radius:10px; border:2px solid #1e3c72; max-width:800px; margin:0 auto;">
                             <h3 style="text-align:center;">BODEGÓN Y LICORERÍA MEDITERRANEO</h3>
@@ -1337,7 +976,7 @@ elif opcion == "🛒 PUNTO DE VENTA":
                                 </tr>
                                 <tr>
                                     <td style="text-align:right;"><b>Vuelto:</b></td>
-                                    <td style="text-align:right;">${vuelto_usd:.2f} / {(vuelto_usd * tasa):,.2f} Bs</td>
+                                    <td style="text-align:right;">${vuelto_usd:.2f} / {(vuelto_usd * tasa):,.2f} Bs</p></td>
                                 </tr>
                             </table>
                             <p style="text-align:center; margin-top:20px;">¡Gracias por su compra!</p>
@@ -1350,10 +989,8 @@ elif opcion == "🛒 PUNTO DE VENTA":
                     
                     if st.button("🔄 Cerrar y continuar"):
                         st.rerun()
-                        
                 except Exception as e:
                     st.error(f"Error al procesar venta: {e}")
-        
         with col_btn3:
             if len(carrito) > 0 and mesa_actual['nombre'] not in ['Barra', 'Para llevar']:
                 if st.button("⏸️ Dejar pendiente", use_container_width=True):
@@ -1361,7 +998,7 @@ elif opcion == "🛒 PUNTO DE VENTA":
                     st.rerun()
 
 # ============================================
-# MÓDULO 3: GASTOS
+# MÓDULO 3: GASTOS (SIN OFFLINE)
 # ============================================
 elif opcion == "💸 GASTOS":
     requiere_turno()
@@ -1371,34 +1008,21 @@ elif opcion == "💸 GASTOS":
     st.markdown("<h1 class='main-header'>💸 Gestión de Gastos</h1>", unsafe_allow_html=True)
     
     try:
-        if st.session_state.online_mode:
-            response = db.table("gastos").select("*").eq("id_cierre", id_turno).order("fecha", desc=True).execute()
-            df_gastos = pd.DataFrame(response.data) if response.data else pd.DataFrame()
-            OfflineManager.guardar_datos_local(f'gastos_{id_turno}', df_gastos.to_dict('records'))
-        else:
-            datos_local = OfflineManager.obtener_datos_local(f'gastos_{id_turno}')
-            df_gastos = pd.DataFrame(datos_local) if datos_local else pd.DataFrame()
+        response = db.table("gastos").select("*").eq("id_cierre", id_turno).order("fecha", desc=True).execute()
+        df_gastos = pd.DataFrame(response.data) if response.data else pd.DataFrame()
         
         if not df_gastos.empty:
             st.subheader("📋 Gastos del turno")
             if 'fecha' in df_gastos.columns:
                 df_gastos['fecha'] = pd.to_datetime(df_gastos['fecha']).dt.strftime('%d/%m/%Y %H:%M')
-            
             columnas_mostrar = ['fecha', 'descripcion', 'monto_usd']
             if 'categoria' in df_gastos.columns:
                 columnas_mostrar.append('categoria')
             if 'estado' in df_gastos.columns:
                 columnas_mostrar.append('estado')
-            
-            st.dataframe(
-                df_gastos[columnas_mostrar],
-                use_container_width=True,
-                hide_index=True
-            )
-            
+            st.dataframe(df_gastos[columnas_mostrar], use_container_width=True, hide_index=True)
             total_gastos = df_gastos['monto_usd'].sum()
             st.metric("💰 Total gastos USD", f"${total_gastos:,.2f}")
-            
             if st.button("📥 Exportar gastos a Excel", use_container_width=True):
                 export_df = df_gastos[['fecha', 'descripcion', 'monto_usd', 'categoria']].copy()
                 export_df.columns = ['Fecha', 'Descripción', 'Monto USD', 'Categoría']
@@ -1406,12 +1030,10 @@ elif opcion == "💸 GASTOS":
                 st.markdown(href, unsafe_allow_html=True)
         else:
             st.info("No hay gastos registrados en este turno")
-    
     except Exception as e:
         st.error(f"Error cargando gastos: {e}")
     
     st.divider()
-    
     with st.form("nuevo_gasto"):
         st.subheader("➕ Registrar nuevo gasto")
         col_g1, col_g2 = st.columns(2)
@@ -1421,10 +1043,7 @@ elif opcion == "💸 GASTOS":
         with col_g2:
             categoria = st.selectbox("Categoría", ["", "Servicios", "Insumos", "Personal", "Alimentación", "Otros"])
             monto_bs_extra = st.number_input("Monto extra Bs (opcional)", min_value=0.0, step=10.0, format="%.2f")
-        
-        submitted = st.form_submit_button("✅ Registrar gasto", use_container_width=True)
-        
-        if submitted:
+        if st.form_submit_button("✅ Registrar gasto", use_container_width=True):
             if descripcion and monto_usd > 0:
                 try:
                     gasto_data = {
@@ -1434,34 +1053,21 @@ elif opcion == "💸 GASTOS":
                         "estado": "activo",
                         "fecha": datetime.now().isoformat()
                     }
-                    
                     if categoria:
                         gasto_data["categoria"] = categoria
                     if monto_bs_extra > 0:
                         gasto_data["monto_bs_extra"] = monto_bs_extra
-                    
-                    if st.session_state.online_mode:
-                        db.table("gastos").insert(gasto_data).execute()
-                    else:
-                        if 'operaciones_pendientes' not in st.session_state:
-                            st.session_state.operaciones_pendientes = []
-                        st.session_state.operaciones_pendientes.append({
-                            'tipo': 'insert',
-                            'tabla': 'gastos',
-                            'datos': gasto_data
-                        })
-                    
+                    db.table("gastos").insert(gasto_data).execute()
                     st.success("✅ Gasto registrado correctamente")
                     time.sleep(1)
                     st.rerun()
-                    
                 except Exception as e:
                     st.error(f"Error al registrar gasto: {e}")
             else:
                 st.warning("⚠️ Complete los campos obligatorios (*)")
 
 # ============================================
-# MÓDULO 4: HISTORIAL DE VENTAS (TODOS LOS TURNOS) - CON TIPO DE PAGO Y FACTURA
+# MÓDULO 4: HISTORIAL (CON BOTÓN OJITO MÁS PEQUEÑO Y ELEGANTE)
 # ============================================
 elif opcion == "📜 HISTORIAL":
     requiere_usuario()
@@ -1474,12 +1080,8 @@ elif opcion == "📜 HISTORIAL":
     """, unsafe_allow_html=True)
     
     try:
-        if st.session_state.online_mode:
-            response = db.table("ventas").select("*").order("fecha", desc=True).execute()
-            df = pd.DataFrame(response.data) if response.data else pd.DataFrame()
-            OfflineManager.guardar_datos_local('ventas_historial', df.to_dict('records'))
-        else:
-            df = pd.DataFrame(OfflineManager.obtener_datos_local('ventas_historial') or [])
+        response = db.table("ventas").select("*").order("fecha", desc=True).execute()
+        df = pd.DataFrame(response.data) if response.data else pd.DataFrame()
         
         if not df.empty:
             df['fecha_dt'] = pd.to_datetime(df['fecha'])
@@ -1487,7 +1089,6 @@ elif opcion == "📜 HISTORIAL":
             df['fecha_corta'] = df['fecha_dt'].dt.strftime('%d/%m/%Y')
             df['fecha_display'] = df['fecha_dt'].dt.strftime('%d/%m/%Y %H:%M')
             
-            # Función para generar resumen de métodos de pago
             def resumen_pagos(row):
                 metodos = []
                 if row.get('pago_efectivo', 0) > 0:
@@ -1551,7 +1152,6 @@ elif opcion == "📜 HISTORIAL":
                             <span style='font-size: 1.8rem; font-weight: 700;'>${total_usd:,.2f}</span>
                         </div>
                     """, unsafe_allow_html=True)
-                
                 with col_m2:
                     st.markdown(f"""
                         <div style='background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); 
@@ -1560,7 +1160,6 @@ elif opcion == "📜 HISTORIAL":
                             <span style='font-size: 1.8rem; font-weight: 700;'>{total_bs:,.0f}</span>
                         </div>
                     """, unsafe_allow_html=True)
-                
                 with col_m3:
                     st.markdown(f"""
                         <div style='background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); 
@@ -1569,7 +1168,6 @@ elif opcion == "📜 HISTORIAL":
                             <span style='font-size: 1.8rem; font-weight: 700;'>{cantidad_ventas}</span>
                         </div>
                     """, unsafe_allow_html=True)
-                
                 with col_m4:
                     st.markdown(f"""
                         <div style='background: linear-gradient(135deg, #5f2c82 0%, #49a09d 100%); 
@@ -1581,7 +1179,6 @@ elif opcion == "📜 HISTORIAL":
                 
                 st.markdown("<br>", unsafe_allow_html=True)
                 
-                # Estilos
                 st.markdown("""
                     <style>
                     .venta-row {
@@ -1624,8 +1221,7 @@ elif opcion == "📜 HISTORIAL":
                     </style>
                 """, unsafe_allow_html=True)
                 
-                # Ajustar ancho de columnas: agregamos una columna para métodos de pago y otra para factura
-                col_h1, col_h2, col_h3, col_h4, col_h5, col_h6, col_h7, col_h8, col_h9 = st.columns([0.6, 0.8, 0.8, 2.2, 1.0, 1.0, 1.2, 0.8, 0.8])
+                col_h1, col_h2, col_h3, col_h4, col_h5, col_h6, col_h7, col_h8, col_h9 = st.columns([0.6, 0.8, 0.8, 2.2, 1.0, 1.0, 1.2, 0.8, 0.6])
                 with col_h1:
                     st.markdown("**Turno**")
                 with col_h2:
@@ -1650,12 +1246,11 @@ elif opcion == "📜 HISTORIAL":
                 for idx, venta in df_filtrado.iterrows():
                     es_anulado = venta['estado'] == 'Anulado'
                     badge = '<span class="badge-anulada">ANULADA</span>' if es_anulado else '<span class="badge-finalizada">FINALIZADA</span>'
-                    
                     productos = venta['producto']
                     if len(productos) > 35:
                         productos = productos[:35] + "..."
                     
-                    cols = st.columns([0.6, 0.8, 0.8, 2.2, 1.0, 1.0, 1.2, 0.8, 0.8])
+                    cols = st.columns([0.6, 0.8, 0.8, 2.2, 1.0, 1.0, 1.2, 0.8, 0.6])
                     with cols[0]:
                         st.markdown(f"<span style='font-weight:500;'>#{venta['id_cierre']}</span>", unsafe_allow_html=True)
                     with cols[1]:
@@ -1673,44 +1268,29 @@ elif opcion == "📜 HISTORIAL":
                     with cols[7]:
                         st.markdown(badge, unsafe_allow_html=True)
                     with cols[8]:
-                        # Botón de anular (solo si no está anulado)
                         if not es_anulado:
                             if st.button("🚫", key=f"btn_anular_{venta['id']}", help="Anular venta"):
                                 try:
                                     items = venta.get('items')
                                     if isinstance(items, str):
                                         items = json.loads(items)
-                                    
                                     if items and isinstance(items, list):
                                         for item in items:
                                             if 'id' in item and 'cantidad' in item:
-                                                if st.session_state.online_mode:
-                                                    stock_res = db.table("inventario").select("stock").eq("id", item['id']).execute()
-                                                    if stock_res.data:
-                                                        stock_actual = stock_res.data[0]['stock']
-                                                        db.table("inventario").update({
-                                                            "stock": stock_actual + item['cantidad']
-                                                        }).eq("id", item['id']).execute()
-                                                else:
-                                                    if 'operaciones_pendientes' not in st.session_state:
-                                                        st.session_state.operaciones_pendientes = []
-                                                    st.session_state.operaciones_pendientes.append({
-                                                        'tipo': 'anular_venta',
-                                                        'id_venta': venta['id'],
-                                                        'items': items
-                                                    })
-                                    
-                                    if st.session_state.online_mode:
-                                        db.table("ventas").update({"estado": "Anulado"}).eq("id", venta['id']).execute()
-                                    
+                                                stock_res = db.table("inventario").select("stock").eq("id", item['id']).execute()
+                                                if stock_res.data:
+                                                    stock_actual = stock_res.data[0]['stock']
+                                                    db.table("inventario").update({
+                                                        "stock": stock_actual + item['cantidad']
+                                                    }).eq("id", item['id']).execute()
+                                    db.table("ventas").update({"estado": "Anulado"}).eq("id", venta['id']).execute()
                                     st.success(f"✅ Venta #{venta['id']} anulada")
                                     time.sleep(1)
                                     st.rerun()
-                                    
                                 except Exception as e:
                                     st.error(f"Error al anular: {e}")
-                        # Botón para ver factura (siempre visible)
-                        with st.popover("👁️", help="Ver factura"):
+                        # Botón de factura más pequeño y elegante
+                        with st.popover("👁️", help="Ver factura", use_container_width=False):
                             st.markdown("### 🧾 FACTURA DE VENTA")
                             st.markdown(f"""
                                 <div style="background:white; padding:15px; border-radius:10px; border:1px solid #ddd;">
@@ -1730,8 +1310,6 @@ elif opcion == "📜 HISTORIAL":
                                         </thead>
                                         <tbody>
                             """, unsafe_allow_html=True)
-                            
-                            # Obtener items desde JSON
                             items = venta.get('items')
                             if isinstance(items, str):
                                 items = json.loads(items)
@@ -1745,7 +1323,6 @@ elif opcion == "📜 HISTORIAL":
                                             <td style="padding:4px; text-align:right;">${item.get('subtotal', 0):.2f}</td>
                                         </tr>
                                     """, unsafe_allow_html=True)
-                            
                             st.markdown(f"""
                                         </tbody>
                                     </table>
@@ -1756,8 +1333,6 @@ elif opcion == "📜 HISTORIAL":
                                     <p><b>Pagos:</b></p>
                                     <ul>
                             """, unsafe_allow_html=True)
-                            
-                            # Mostrar métodos de pago con montos
                             if venta.get('pago_efectivo', 0) > 0:
                                 st.markdown(f"<li>Efectivo Bs: {venta['pago_efectivo']:,.2f}</li>", unsafe_allow_html=True)
                             if venta.get('pago_movil', 0) > 0:
@@ -1770,8 +1345,6 @@ elif opcion == "📜 HISTORIAL":
                                 st.markdown(f"<li>Zelle USD: ${venta['pago_zelle']:.2f}</li>", unsafe_allow_html=True)
                             if venta.get('pago_otros', 0) > 0:
                                 st.markdown(f"<li>Otros USD: ${venta['pago_otros']:.2f}</li>", unsafe_allow_html=True)
-                            
-                            # Calcular vuelto (aproximado)
                             total_pagado_usd = sum([
                                 venta.get('pago_divisas', 0),
                                 venta.get('pago_zelle', 0),
@@ -1806,13 +1379,12 @@ elif opcion == "📜 HISTORIAL":
                 st.info("📭 No hay ventas que coincidan con los filtros")
         else:
             st.info("📭 No hay ventas registradas en el sistema")
-            
     except Exception as e:
         st.error(f"Error cargando historial: {e}")
         st.exception(e)
 
 # ============================================
-# MÓDULO 5: CIERRE DE CAJA (COMPLETO)
+# MÓDULO 5: CIERRE DE CAJA (SIN OFFLINE)
 # ============================================
 elif opcion == "📊 CIERRE DE CAJA":
     st.markdown("<h1 class='main-header'>📊 Cierre de Caja</h1>", unsafe_allow_html=True)
