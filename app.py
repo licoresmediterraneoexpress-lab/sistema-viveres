@@ -578,7 +578,7 @@ if opcion == "📦 INVENTARIO":
         st.exception(e)
 
 # ============================================
-# MÓDULO 2: PUNTO DE VENTA (CON POPOVER PARA FACTURA Y MEJORAS)
+# MÓDULO 2: PUNTO DE VENTA CON POPOVER PARA FACTURA (CORREGIDO)
 # ============================================
 elif opcion == "🛒 PUNTO DE VENTA":
     requiere_turno()
@@ -596,6 +596,7 @@ elif opcion == "🛒 PUNTO DE VENTA":
         </div>
     """, unsafe_allow_html=True)
     
+    # SISTEMA DE MESAS / CUENTAS
     if 'mesas' not in st.session_state:
         st.session_state.mesas = {
             'mesa_1': {'nombre': 'Mesa 1', 'carrito': [], 'activa': True, 'cliente': ''},
@@ -609,7 +610,9 @@ elif opcion == "🛒 PUNTO DE VENTA":
     if 'mesa_actual' not in st.session_state:
         st.session_state.mesa_actual = 'mesa_1'
     
+    # SELECTOR DE MESAS
     st.subheader("🍽️ Seleccionar Mesa / Cuenta")
+    
     col_mesas = st.columns(6)
     idx_mesa = 0
     for mesa_id, mesa_data in st.session_state.mesas.items():
@@ -620,6 +623,7 @@ elif opcion == "🛒 PUNTO DE VENTA":
                 bg_color = "#ffc107"
             else:
                 bg_color = "#6c757d"
+            
             if st.button(
                 f"{mesa_data['nombre']}\n({len(mesa_data['carrito'])} items)",
                 key=f"mesa_{mesa_id}",
@@ -633,6 +637,7 @@ elif opcion == "🛒 PUNTO DE VENTA":
     mesa_actual = st.session_state.mesas[st.session_state.mesa_actual]
     st.divider()
     
+    # CABECERA DE LA MESA ACTUAL
     col_mesa_info1, col_mesa_info2, col_mesa_info3 = st.columns([2, 2, 1])
     with col_mesa_info1:
         st.markdown(f"### 🍽️ {mesa_actual['nombre']}")
@@ -654,6 +659,9 @@ elif opcion == "🛒 PUNTO DE VENTA":
     
     st.divider()
     
+    # ============================================
+    # BOTÓN BUSCADOR CON POPOVER
+    # ============================================
     es_tasca = st.checkbox("🍷 Venta en tasca (+10%)", help="Los precios aumentan un 10% para consumo en el local")
     
     with st.popover("🔍 Buscar productos", use_container_width=True):
@@ -692,6 +700,7 @@ elif opcion == "🛒 PUNTO DE VENTA":
                                 if item['id'] == prod['id']:
                                     cantidad_existente += item['cantidad']
                             nueva_cantidad = cantidad_existente + 1
+                            
                             if nueva_cantidad >= prod['min_mayor'] and not es_tasca:
                                 precio_final = float(prod['precio_mayor'])
                                 tipo_precio = " (Mayor)"
@@ -701,6 +710,7 @@ elif opcion == "🛒 PUNTO DE VENTA":
                             if es_tasca:
                                 precio_final = precio_base * 1.10
                                 tipo_precio = " (Tasca)"
+                            
                             encontrado = False
                             for item in st.session_state.mesas[st.session_state.mesa_actual]['carrito']:
                                 if item['id'] == prod['id']:
@@ -729,6 +739,9 @@ elif opcion == "🛒 PUNTO DE VENTA":
     
     st.divider()
     
+    # ============================================
+    # CARRITO EN LISTA COMPACTA
+    # ============================================
     st.subheader(f"🛒 Carrito - {mesa_actual['nombre']}")
     carrito = mesa_actual['carrito']
     
@@ -746,6 +759,7 @@ elif opcion == "🛒 PUNTO DE VENTA":
                 </style>
             """, unsafe_allow_html=True)
             st.markdown('<div class="carrito-scroll">', unsafe_allow_html=True)
+            
             cols_head = st.columns([2.5, 1, 1, 1, 0.5])
             cols_head[0].write("**Producto**")
             cols_head[1].write("**Precio USD**")
@@ -753,13 +767,16 @@ elif opcion == "🛒 PUNTO DE VENTA":
             cols_head[3].write("**Cantidad**")
             cols_head[4].write("**Eliminar**")
             st.markdown("---")
+            
             total_venta_usd = 0
             total_costo = 0
+            
             for idx, item in enumerate(carrito):
                 cols = st.columns([2.5, 1, 1, 1, 0.5])
                 cols[0].write(item['nombre'])
                 cols[1].write(f"${item['precio']:.2f}")
                 cols[2].write(f"{(item['precio'] * tasa):,.2f} Bs")
+                
                 nueva_cant = cols[3].number_input(
                     "",
                     min_value=0.0,
@@ -796,15 +813,19 @@ elif opcion == "🛒 PUNTO DE VENTA":
                         item['cantidad'] = nueva_cant
                         item['subtotal'] = item['cantidad'] * item['precio']
                         st.rerun()
+                
                 if cols[4].button("❌", key=f"del_lista_{idx}"):
                     st.session_state.mesas[st.session_state.mesa_actual]['carrito'].pop(idx)
                     st.rerun()
+                
                 total_venta_usd += item['subtotal']
                 total_costo += item['cantidad'] * item['costo']
+            
             st.markdown('</div>', unsafe_allow_html=True)
         
         total_venta_bs = total_venta_usd * tasa
         st.divider()
+        
         col_t1, col_t2 = st.columns(2)
         with col_t1:
             st.markdown(f"### Total calculado USD: ${total_venta_usd:,.2f}")
@@ -886,6 +907,7 @@ elif opcion == "🛒 PUNTO DE VENTA":
             else:
                 st.error(f"❌ Faltante: ${abs(vuelto_usd):,.2f} / {(abs(vuelto_usd) * tasa):,.2f} Bs")
         
+        # BOTONES DE ACCIÓN
         col_btn1, col_btn2, col_btn3 = st.columns(3)
         with col_btn1:
             if st.button("🔄 Limpiar carrito", use_container_width=True):
@@ -932,20 +954,21 @@ elif opcion == "🛒 PUNTO DE VENTA":
                     st.balloons()
                     st.success(f"✅ Venta registrada - {mesa_actual['nombre']}{info_cliente}")
                     
-                    # Ticket en popover (nuevo)
+                    # FACTURA EN POPOVER (CORREGIDA, con HTML renderizado)
                     with st.popover("🧾 VER TICKET", use_container_width=True):
-                        items_ticket = ""
+                        # Construir filas de la tabla de productos
+                        items_html = ""
                         for item in carrito:
-                            items_ticket += f"""
-                                <tr>
-                                    <td style='padding: 6px 8px;'>{item['cantidad']:.0f}</td>
-                                    <td style='padding: 6px 8px;'>{item['nombre']}</td>
-                                    <td style='padding: 6px 8px; text-align: right;'>${item['precio']:.2f}</td>
-                                    <td style='padding: 6px 8px; text-align: right;'>${item['subtotal']:.2f}</td>
-                                </tr>
+                            items_html += f"""
+                            <tr>
+                                <td style="padding: 6px 8px;">{item['cantidad']:.0f}</td>
+                                <td style="padding: 6px 8px;">{item['nombre']}</td>
+                                <td style="padding: 6px 8px; text-align: right;">${item['precio']:.2f}</td>
+                                <td style="padding: 6px 8px; text-align: right;">${item['subtotal']:.2f}</td>
+                            </tr>
                             """
-                        st.markdown(f"""
-                        <div style="background:white; padding:20px; border-radius:10px; border:2px solid #1e3c72; max-width:800px; margin:0 auto;">
+                        factura_html = f"""
+                        <div style="background:white; padding:20px; border-radius:10px; border:2px solid #1e3c72; max-width:800px; margin:0 auto; font-family: sans-serif;">
                             <h3 style="text-align:center;">BODEGÓN Y LICORERÍA MEDITERRANEO</h3>
                             <p style="text-align:center;">{datetime.now().strftime('%d/%m/%Y %H:%M')}</p>
                             <p style="text-align:center;">Turno #{id_turno} | {mesa_actual['nombre']}{info_cliente}</p>
@@ -961,18 +984,18 @@ elif opcion == "🛒 PUNTO DE VENTA":
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {items_ticket}
+                                    {items_html}
                                 </tbody>
                             </table>
                             <hr>
                             <table style="width:100%;">
                                 <tr>
                                     <td style="text-align:right;"><b>Total USD:</b></td>
-                                    <td style="text-align:right;">${total_final_usd:,.2f}</td>
+                                    <td style="text-align:right;">${total_final_usd:.2f}</td>
                                 </tr>
                                 <tr>
                                     <td style="text-align:right;"><b>Total Bs:</b></td>
-                                    <td style="text-align:right;">{total_final_bs:,.2f} Bs</td>
+                                    <td style="text-align:right;">{total_final_bs:,.2f} Bs</p></td>
                                 </tr>
                                 <tr>
                                     <td style="text-align:right;"><b>Vuelto:</b></td>
@@ -981,7 +1004,8 @@ elif opcion == "🛒 PUNTO DE VENTA":
                             </table>
                             <p style="text-align:center; margin-top:20px;">¡Gracias por su compra!</p>
                         </div>
-                        """, unsafe_allow_html=True)
+                        """
+                        st.markdown(factura_html, unsafe_allow_html=True)
                     
                     st.session_state.mesas[st.session_state.mesa_actual]['carrito'] = []
                     if mesa_actual['nombre'] not in ['Barra', 'Para llevar']:
