@@ -1091,7 +1091,7 @@ elif opcion == "💸 GASTOS":
                 st.warning("⚠️ Complete los campos obligatorios (*)")
 
 # ============================================
-# MÓDULO 4: HISTORIAL (CON BOTÓN OJITO MÁS PEQUEÑO Y ELEGANTE)
+# MÓDULO 4: HISTORIAL DE VENTAS (OPTIMIZADO - CARGA POR TURNO O FECHAS)
 # ============================================
 elif opcion == "📜 HISTORIAL":
     requiere_usuario()
@@ -1103,16 +1103,105 @@ elif opcion == "📜 HISTORIAL":
         </div>
     """, unsafe_allow_html=True)
     
-    try:
-        response = db.table("ventas").select("*").order("fecha", desc=True).execute()
-        df = pd.DataFrame(response.data) if response.data else pd.DataFrame()
+    # ============================================
+    # SELECCIÓN DE CARGA (TURNO o RANGO DE FECHAS)
+    # ============================================
+    st.subheader("🔍 Selecciona qué ventas quieres ver")
+    
+    tipo_busqueda = st.radio(
+        "Mostrar ventas por:",
+        ["🔢 Número de turno", "📅 Rango de fechas"],
+        horizontal=True,
+        key="tipo_historial"
+    )
+    
+    # Variables de sesión para paginación
+    if 'historial_offset' not in st.session_state:
+        st.session_state.historial_offset = 0
+    LIMITE = 100  # ventas por página
+    
+    # Función para cargar ventas según el tipo de búsqueda
+    def cargar_ventas(offset, limite):
+        if tipo_busqueda == "🔢 Número de turno":
+            turno = st.session_state.get('turno_especifico', 0)
+            if turno <= 0:
+                return []
+            return db.table("ventas")\
+                .select("*")\
+                .eq("id_cierre", turno)\
+                .order("fecha", desc=True)\
+                .range(offset, offset + limite - 1)\
+                .execute().data or []
+        else:
+            desde = st.session_state.get('fecha_desde', None)
+            hasta = st.session_state.get('fecha_hasta', None)
+            if not desde or not hasta:
+                return []
+            # Convertir a string ISO para consulta
+            desde_str = desde.strftime('%Y-%m-%d')
+            hasta_str = hasta.strftime('%Y-%m-%d')
+            return db.table("ventas")\
+                .select("*")\
+                .gte("fecha", desde_str)\
+                .lte("fecha", hasta_str)\
+                .order("fecha", desc=True)\
+                .range(offset, offset + limite - 1)\
+                .execute().data or []
+    
+    # Controles según el tipo de búsqueda
+    if tipo_busqueda == "🔢 Número de turno":
+        turno_especifico = st.number_input("Ingresa el número de turno", min_value=1, step=1, key="turno_especifico")
+        col_b1, col_b2 = st.columns(2)
+        with col_b1:
+            if st.button("📊 Cargar ventas de este turno", use_container_width=True):
+                st.session_state.historial_offset = 0
+                st.session_state.historial_datos_cargados = True
+                st.rerun()
+        with col_b2:
+            if st.button("🔄 Limpiar y volver", use_container_width=True):
+                st.session_state.historial_datos_cargados = False
+                st.session_state.historial_offset = 0
+                st.rerun()
+    else:
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
+            fecha_desde = st.date_input("📅 Desde", value=None, key="fecha_desde")
+        with col_f2:
+            fecha_hasta = st.date_input("📅 Hasta", value=None, key="fecha_hasta")
+        col_b1, col_b2 = st.columns(2)
+        with col_b1:
+            if st.button("📊 Cargar ventas en este rango", use_container_width=True):
+                if fecha_desde and fecha_hasta:
+                    st.session_state.historial_offset = 0
+                    st.session_state.historial_datos_cargados = True
+                    st.rerun()
+                else:
+                    st.warning("Selecciona ambas fechas.")
+        with col_b2:
+            if st.button("🔄 Limpiar y volver", use_container_width=True):
+                st.session_state.historial_datos_cargados = False
+                st.session_state.historial_offset = 0
+                st.rerun()
+    
+    # Mostrar resultados si se ha cargado algo
+    if st.session_state.get('historial_datos_cargados', False):
+        with st.spinner("Cargando ventas..."):
+            ventas = cargar_ventas(st.session_state.historial_offset, LIMITE)
         
-        if not df.empty:
+        if not ventas:
+            st.info("No hay ventas que coincidan con los criterios.")
+            if st.button("🔍 Nueva búsqueda"):
+                st.session_state.historial_datos_cargados = False
+                st.rerun()
+        else:
+            df = pd.DataFrame(ventas)
+            # Procesar fechas
             df['fecha_dt'] = pd.to_datetime(df['fecha'])
             df['hora'] = df['fecha_dt'].dt.strftime('%H:%M')
             df['fecha_corta'] = df['fecha_dt'].dt.strftime('%d/%m/%Y')
             df['fecha_display'] = df['fecha_dt'].dt.strftime('%d/%m/%Y %H:%M')
             
+            # Función resumen pagos
             def resumen_pagos(row):
                 metodos = []
                 if row.get('pago_efectivo', 0) > 0:
@@ -1131,281 +1220,211 @@ elif opcion == "📜 HISTORIAL":
             
             df['metodos_pago'] = df.apply(resumen_pagos, axis=1)
             
-            st.subheader("🔍 Filtrar ventas")
-            col_f1, col_f2, col_f3, col_f4 = st.columns(4)
-            with col_f1:
-                fecha_desde = st.date_input("📅 Desde", value=None, key="hist_desde")
-            with col_f2:
-                fecha_hasta = st.date_input("📅 Hasta", value=None, key="hist_hasta")
-            with col_f3:
-                turno_filtro = st.number_input("🔢 Número de turno", min_value=0, value=0, step=1, key="filtro_turno")
-            with col_f4:
-                estado_filtro = st.selectbox(
-                    "Estado",
-                    ["Todos", "Finalizado", "Anulado"],
-                    key="filtro_estado"
-                )
+            # Métricas
+            df_activas = df[df['estado'] != 'Anulado']
+            total_usd = df_activas['total_usd'].sum() if not df_activas.empty else 0
+            total_bs = df_activas['monto_cobrado_bs'].sum() if not df_activas.empty else 0
+            cantidad_ventas = len(df_activas)
+            promedio_usd = total_usd / cantidad_ventas if cantidad_ventas > 0 else 0
             
-            buscar_texto = st.text_input("🔍 Buscar producto", placeholder="Ej: Ron...", key="filtro_buscar")
-            
-            df_filtrado = df.copy()
-            if fecha_desde:
-                df_filtrado = df_filtrado[df_filtrado['fecha_dt'].dt.date >= fecha_desde]
-            if fecha_hasta:
-                df_filtrado = df_filtrado[df_filtrado['fecha_dt'].dt.date <= fecha_hasta]
-            if turno_filtro > 0:
-                df_filtrado = df_filtrado[df_filtrado['id_cierre'] == turno_filtro]
-            if estado_filtro != "Todos":
-                df_filtrado = df_filtrado[df_filtrado['estado'] == estado_filtro]
-            if buscar_texto:
-                df_filtrado = df_filtrado[df_filtrado['producto'].str.contains(buscar_texto, case=False, na=False)]
-            
-            if not df_filtrado.empty:
-                df_activas = df_filtrado[df_filtrado['estado'] != 'Anulado']
-                total_usd = df_activas['total_usd'].sum() if not df_activas.empty else 0
-                total_bs = df_activas['monto_cobrado_bs'].sum() if not df_activas.empty else 0
-                cantidad_ventas = len(df_activas)
-                promedio_usd = total_usd / cantidad_ventas if cantidad_ventas > 0 else 0
-                
-                col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-                with col_m1:
-                    st.markdown(f"""
-                        <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                                padding: 1rem; border-radius: 10px; color: white; text-align: center;'>
-                            <span style='font-size: 0.9rem; opacity: 0.9;'>💰 TOTAL USD</span><br>
-                            <span style='font-size: 1.8rem; font-weight: 700;'>${total_usd:,.2f}</span>
-                        </div>
-                    """, unsafe_allow_html=True)
-                with col_m2:
-                    st.markdown(f"""
-                        <div style='background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); 
-                                padding: 1rem; border-radius: 10px; color: white; text-align: center;'>
-                            <span style='font-size: 0.9rem; opacity: 0.9;'>💵 TOTAL BS</span><br>
-                            <span style='font-size: 1.8rem; font-weight: 700;'>{total_bs:,.0f}</span>
-                        </div>
-                    """, unsafe_allow_html=True)
-                with col_m3:
-                    st.markdown(f"""
-                        <div style='background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); 
-                                padding: 1rem; border-radius: 10px; color: white; text-align: center;'>
-                            <span style='font-size: 0.9rem; opacity: 0.9;'>📊 VENTAS</span><br>
-                            <span style='font-size: 1.8rem; font-weight: 700;'>{cantidad_ventas}</span>
-                        </div>
-                    """, unsafe_allow_html=True)
-                with col_m4:
-                    st.markdown(f"""
-                        <div style='background: linear-gradient(135deg, #5f2c82 0%, #49a09d 100%); 
-                                padding: 1rem; border-radius: 10px; color: white; text-align: center;'>
-                            <span style='font-size: 0.9rem; opacity: 0.9;'>📈 PROMEDIO</span><br>
-                            <span style='font-size: 1.8rem; font-weight: 700;'>${promedio_usd:,.2f}</span>
-                        </div>
-                    """, unsafe_allow_html=True)
-                
-                st.markdown("<br>", unsafe_allow_html=True)
-                
-                st.markdown("""
-                    <style>
-                    .venta-row {
-                        display: flex;
-                        align-items: center;
-                        padding: 0.8rem;
-                        margin: 0.2rem 0;
-                        border-radius: 8px;
-                        transition: all 0.2s;
-                    }
-                    .venta-row:hover {
-                        transform: translateX(5px);
-                        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-                    }
-                    .venta-finalizada {
-                        background-color: #ffffff;
-                        border-left: 4px solid #28a745;
-                    }
-                    .venta-anulada {
-                        background-color: #f8f9fa;
-                        border-left: 4px solid #dc3545;
-                        opacity: 0.7;
-                    }
-                    .badge-finalizada {
-                        background-color: #28a745;
-                        color: white;
-                        padding: 0.2rem 0.6rem;
-                        border-radius: 12px;
-                        font-size: 0.7rem;
-                        font-weight: 600;
-                    }
-                    .badge-anulada {
-                        background-color: #dc3545;
-                        color: white;
-                        padding: 0.2rem 0.6rem;
-                        border-radius: 12px;
-                        font-size: 0.7rem;
-                        font-weight: 600;
-                    }
-                    </style>
+            col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+            with col_m1:
+                st.markdown(f"""
+                    <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                            padding: 1rem; border-radius: 10px; color: white; text-align: center;'>
+                        <span style='font-size: 0.9rem; opacity: 0.9;'>💰 TOTAL USD</span><br>
+                        <span style='font-size: 1.8rem; font-weight: 700;'>${total_usd:,.2f}</span>
+                    </div>
                 """, unsafe_allow_html=True)
-                
-                col_h1, col_h2, col_h3, col_h4, col_h5, col_h6, col_h7, col_h8, col_h9 = st.columns([0.6, 0.8, 0.8, 2.2, 1.0, 1.0, 1.2, 0.8, 0.6])
-                with col_h1:
-                    st.markdown("**Turno**")
-                with col_h2:
-                    st.markdown("**ID**")
-                with col_h3:
-                    st.markdown("**Hora**")
-                with col_h4:
-                    st.markdown("**Productos**")
-                with col_h5:
-                    st.markdown("**USD**")
-                with col_h6:
-                    st.markdown("**Bs**")
-                with col_h7:
-                    st.markdown("**Métodos de pago**")
-                with col_h8:
-                    st.markdown("**Estado**")
-                with col_h9:
-                    st.markdown("**Acciones**")
-                
-                st.markdown("<hr style='margin:0; margin-bottom:0.5rem;'>", unsafe_allow_html=True)
-                
-                for idx, venta in df_filtrado.iterrows():
-                    es_anulado = venta['estado'] == 'Anulado'
-                    badge = '<span class="badge-anulada">ANULADA</span>' if es_anulado else '<span class="badge-finalizada">FINALIZADA</span>'
-                    productos = venta['producto']
-                    if len(productos) > 35:
-                        productos = productos[:35] + "..."
-                    
-                    cols = st.columns([0.6, 0.8, 0.8, 2.2, 1.0, 1.0, 1.2, 0.8, 0.6])
-                    with cols[0]:
-                        st.markdown(f"<span style='font-weight:500;'>#{venta['id_cierre']}</span>", unsafe_allow_html=True)
-                    with cols[1]:
-                        st.markdown(f"<span style='font-weight:500;'>#{venta['id']}</span>", unsafe_allow_html=True)
-                    with cols[2]:
-                        st.markdown(f"<span>{venta['hora']}</span>", unsafe_allow_html=True)
-                    with cols[3]:
-                        st.markdown(f"<span title='{venta['producto']}'>{productos}</span>", unsafe_allow_html=True)
-                    with cols[4]:
-                        st.markdown(f"<span style='font-weight:600;'>${venta['total_usd']:,.2f}</span>", unsafe_allow_html=True)
-                    with cols[5]:
-                        st.markdown(f"<span>{venta['monto_cobrado_bs']:,.0f}</span>", unsafe_allow_html=True)
-                    with cols[6]:
-                        st.markdown(f"<span style='font-size:0.8rem;'>{venta['metodos_pago']}</span>", unsafe_allow_html=True)
-                    with cols[7]:
-                        st.markdown(badge, unsafe_allow_html=True)
-                    with cols[8]:
-                        if not es_anulado:
-                            if st.button("🚫", key=f"btn_anular_{venta['id']}", help="Anular venta"):
-                                try:
-                                    items = venta.get('items')
-                                    if isinstance(items, str):
-                                        items = json.loads(items)
-                                    if items and isinstance(items, list):
-                                        for item in items:
-                                            if 'id' in item and 'cantidad' in item:
-                                                stock_res = db.table("inventario").select("stock").eq("id", item['id']).execute()
-                                                if stock_res.data:
-                                                    stock_actual = stock_res.data[0]['stock']
-                                                    db.table("inventario").update({
-                                                        "stock": stock_actual + item['cantidad']
-                                                    }).eq("id", item['id']).execute()
-                                    db.table("ventas").update({"estado": "Anulado"}).eq("id", venta['id']).execute()
-                                    st.success(f"✅ Venta #{venta['id']} anulada")
-                                    time.sleep(1)
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"Error al anular: {e}")
-                        # Botón de factura más pequeño y elegante
-                        with st.popover("👁️", help="Ver factura", use_container_width=False):
-                            st.markdown("### 🧾 FACTURA DE VENTA")
-                            st.markdown(f"""
-                                <div style="background:white; padding:15px; border-radius:10px; border:1px solid #ddd;">
-                                    <p><b>Turno:</b> #{venta['id_cierre']}</p>
-                                    <p><b>Fecha:</b> {venta['fecha_display']}</p>
-                                    <p><b>Cajero:</b> {venta.get('cliente', 'N/A')}</p>
-                                    <p><b>Cliente:</b> {venta.get('cliente', 'General')}</p>
-                                    <hr>
-                                    <table style="width:100%; border-collapse: collapse;">
-                                        <thead>
-                                            <tr style="border-bottom:1px solid #ccc;">
-                                                <th style="text-align:left;">Cant</th>
-                                                <th style="text-align:left;">Producto</th>
-                                                <th style="text-align:right;">Precio</th>
-                                                <th style="text-align:right;">Subtotal</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                            """, unsafe_allow_html=True)
-                            items = venta.get('items')
-                            if isinstance(items, str):
-                                items = json.loads(items)
-                            if items and isinstance(items, list):
-                                for item in items:
-                                    st.markdown(f"""
-                                        <tr>
-                                            <td style="padding:4px;">{item.get('cantidad', 0):.0f}</td>
-                                            <td style="padding:4px;">{item.get('nombre', '')}</td>
-                                            <td style="padding:4px; text-align:right;">${item.get('precio', 0):.2f}</td>
-                                            <td style="padding:4px; text-align:right;">${item.get('subtotal', 0):.2f}</td>
+            with col_m2:
+                st.markdown(f"""
+                    <div style='background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); 
+                            padding: 1rem; border-radius: 10px; color: white; text-align: center;'>
+                        <span style='font-size: 0.9rem; opacity: 0.9;'>💵 TOTAL BS</span><br>
+                        <span style='font-size: 1.8rem; font-weight: 700;'>{total_bs:,.0f}</span>
+                    </div>
+                """, unsafe_allow_html=True)
+            with col_m3:
+                st.markdown(f"""
+                    <div style='background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); 
+                            padding: 1rem; border-radius: 10px; color: white; text-align: center;'>
+                        <span style='font-size: 0.9rem; opacity: 0.9;'>📊 VENTAS</span><br>
+                        <span style='font-size: 1.8rem; font-weight: 700;'>{cantidad_ventas}</span>
+                    </div>
+                """, unsafe_allow_html=True)
+            with col_m4:
+                st.markdown(f"""
+                    <div style='background: linear-gradient(135deg, #5f2c82 0%, #49a09d 100%); 
+                            padding: 1rem; border-radius: 10px; color: white; text-align: center;'>
+                        <span style='font-size: 0.9rem; opacity: 0.9;'>📈 PROMEDIO</span><br>
+                        <span style='font-size: 1.8rem; font-weight: 700;'>${promedio_usd:,.2f}</span>
+                    </div>
+                """, unsafe_allow_html=True)
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+            
+            # Tabla de ventas (usando st.dataframe para mejor rendimiento)
+            # Preparamos el DataFrame para mostrar
+            df_show = df.copy()
+            df_show['Turno'] = df_show['id_cierre'].astype(str)
+            df_show['ID'] = df_show['id'].astype(str)
+            df_show['Hora'] = df_show['hora']
+            df_show['Productos'] = df_show['producto'].apply(lambda x: x[:40] + '...' if len(x) > 40 else x)
+            df_show['USD'] = df_show['total_usd'].apply(lambda x: f"${x:,.2f}")
+            df_show['Bs'] = df_show['monto_cobrado_bs'].apply(lambda x: f"{x:,.0f}")
+            df_show['Métodos'] = df_show['metodos_pago']
+            df_show['Estado'] = df_show['estado'].apply(lambda x: '✅ Finalizado' if x == 'Finalizado' else '❌ Anulado')
+            
+            # Mostrar dataframe interactivo
+            st.dataframe(
+                df_show[['Turno', 'ID', 'Hora', 'Productos', 'USD', 'Bs', 'Métodos', 'Estado']],
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Turno": "Turno",
+                    "ID": "ID Venta",
+                    "Hora": "Hora",
+                    "Productos": "Productos",
+                    "USD": st.column_config.NumberColumn("USD", format="$%.2f"),
+                    "Bs": st.column_config.NumberColumn("Bs", format="%.0f Bs"),
+                    "Métodos": "Métodos de pago",
+                    "Estado": "Estado"
+                }
+            )
+            
+            # Botones de acción (anular y ver factura) - se muestran debajo de cada fila? No, mejor usar columnas adicionales.
+            # Como st.dataframe no permite botones por fila, volvemos a la versión manual con st.columns solo para acciones,
+            # pero limitando a 100 filas (que es lo que cargamos). Para mantener la funcionalidad de anular y factura,
+            # vamos a generar una lista de botones debajo de la tabla, una por venta? No es práctico.
+            # En su lugar, mantendremos la estructura original de filas con st.columns, pero solo para el conjunto cargado (máx 100).
+            # Eso es aceptable porque 100 filas no es pesado.
+            
+            st.markdown("---")
+            st.subheader("Acciones por venta")
+            
+            # Recorrer las ventas y mostrar botones de anular y factura (similar a antes pero más compacto)
+            for idx, venta in df.iterrows():
+                es_anulado = venta['estado'] == 'Anulado'
+                badge = 'ANULADA' if es_anulado else 'FINALIZADA'
+                col_a1, col_a2, col_a3 = st.columns([4, 1, 1])
+                with col_a1:
+                    st.markdown(f"**#{venta['id']}** - {venta['hora']} - {venta['producto'][:50]}... - **${venta['total_usd']:.2f}** / {venta['monto_cobrado_bs']:.0f} Bs - {badge}")
+                with col_a2:
+                    if not es_anulado:
+                        if st.button("🚫 Anular", key=f"anular_{venta['id']}"):
+                            try:
+                                items = venta.get('items')
+                                if isinstance(items, str):
+                                    items = json.loads(items)
+                                if items and isinstance(items, list):
+                                    for item in items:
+                                        if 'id' in item and 'cantidad' in item:
+                                            stock_res = db.table("inventario").select("stock").eq("id", item['id']).execute()
+                                            if stock_res.data:
+                                                stock_actual = stock_res.data[0]['stock']
+                                                db.table("inventario").update({
+                                                    "stock": stock_actual + item['cantidad']
+                                                }).eq("id", item['id']).execute()
+                                db.table("ventas").update({"estado": "Anulado"}).eq("id", venta['id']).execute()
+                                st.success(f"Venta #{venta['id']} anulada")
+                                time.sleep(1)
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+                with col_a3:
+                    with st.popover("👁️", help="Ver factura"):
+                        st.markdown("### 🧾 FACTURA DE VENTA")
+                        st.markdown(f"""
+                            <div style="background:white; padding:15px; border-radius:10px; border:1px solid #ddd;">
+                                <p><b>Turno:</b> #{venta['id_cierre']}</p>
+                                <p><b>Fecha:</b> {venta['fecha_display']}</p>
+                                <p><b>Cajero:</b> {venta.get('cliente', 'N/A')}</p>
+                                <p><b>Cliente:</b> {venta.get('cliente', 'General')}</p>
+                                <hr>
+                                <table style="width:100%; border-collapse: collapse;">
+                                    <thead>
+                                        <tr style="border-bottom:1px solid #ccc;">
+                                            <th style="text-align:left;">Cant</th>
+                                            <th style="text-align:left;">Producto</th>
+                                            <th style="text-align:right;">Precio</th>
+                                            <th style="text-align:right;">Subtotal</th>
                                         </tr>
-                                    """, unsafe_allow_html=True)
-                            st.markdown(f"""
-                                        </tbody>
-                                    </table>
-                                    <hr>
-                                    <p><b>Total USD:</b> ${venta['total_usd']:.2f}</p>
-                                    <p><b>Total Bs:</b> {venta['monto_cobrado_bs']:.2f} Bs</p>
-                                    <hr>
-                                    <p><b>Pagos:</b></p>
-                                    <ul>
-                            """, unsafe_allow_html=True)
-                            if venta.get('pago_efectivo', 0) > 0:
-                                st.markdown(f"<li>Efectivo Bs: {venta['pago_efectivo']:,.2f}</li>", unsafe_allow_html=True)
-                            if venta.get('pago_movil', 0) > 0:
-                                st.markdown(f"<li>Pago Móvil Bs: {venta['pago_movil']:,.2f}</li>", unsafe_allow_html=True)
-                            if venta.get('pago_punto', 0) > 0:
-                                st.markdown(f"<li>Punto Venta Bs: {venta['pago_punto']:,.2f}</li>", unsafe_allow_html=True)
-                            if venta.get('pago_divisas', 0) > 0:
-                                st.markdown(f"<li>Efectivo USD: ${venta['pago_divisas']:.2f}</li>", unsafe_allow_html=True)
-                            if venta.get('pago_zelle', 0) > 0:
-                                st.markdown(f"<li>Zelle USD: ${venta['pago_zelle']:.2f}</li>", unsafe_allow_html=True)
-                            if venta.get('pago_otros', 0) > 0:
-                                st.markdown(f"<li>Otros USD: ${venta['pago_otros']:.2f}</li>", unsafe_allow_html=True)
-                            total_pagado_usd = sum([
-                                venta.get('pago_divisas', 0),
-                                venta.get('pago_zelle', 0),
-                                venta.get('pago_otros', 0),
-                                (venta.get('pago_efectivo', 0) + venta.get('pago_movil', 0) + venta.get('pago_punto', 0)) / venta.get('tasa_cambio', 60)
-                            ])
-                            vuelto = total_pagado_usd - venta['total_usd']
-                            st.markdown(f"""
-                                    </ul>
-                                    <hr>
-                                    <p><b>Vuelto:</b> ${vuelto:.2f} / {(vuelto * venta.get('tasa_cambio', 60)):.2f} Bs</p>
-                                    <p style="text-align:center;">¡Gracias por su compra!</p>
-                                </div>
-                            """, unsafe_allow_html=True)
-                    
-                    if idx < len(df_filtrado) - 1:
-                        st.markdown("<hr style='margin:0.2rem 0; opacity:0.3;'>", unsafe_allow_html=True)
-                
-                if not df_activas.empty:
-                    st.markdown(f"""
-                        <div style='background-color: #f0f2f6; padding: 1rem; border-radius: 8px; margin-top: 1rem;'>
-                            <div style='display: flex; justify-content: space-between; align-items: center;'>
-                                <span style='font-weight:600;'>📊 TOTALES EN PANTALLA (ventas activas):</span>
-                                <span>
-                                    <span style='color: #28a745; font-weight:600;'>${total_usd:,.2f}</span> | 
-                                    <span style='color: #007bff; font-weight:600;'>{total_bs:,.0f} Bs</span>
-                                </span>
+                                    </thead>
+                                    <tbody>
+                        """, unsafe_allow_html=True)
+                        items = venta.get('items')
+                        if isinstance(items, str):
+                            items = json.loads(items)
+                        if items and isinstance(items, list):
+                            for item in items:
+                                st.markdown(f"""
+                                    <tr>
+                                        <td style="padding:4px;">{item.get('cantidad', 0):.0f}</td>
+                                        <td style="padding:4px;">{item.get('nombre', '')}</td>
+                                        <td style="padding:4px; text-align:right;">${item.get('precio', 0):.2f}</td>
+                                        <td style="padding:4px; text-align:right;">${item.get('subtotal', 0):.2f}</td>
+                                    </tr>
+                                """, unsafe_allow_html=True)
+                        st.markdown(f"""
+                                    </tbody>
+                                </table>
+                                <hr>
+                                <p><b>Total USD:</b> ${venta['total_usd']:.2f}</p>
+                                <p><b>Total Bs:</b> {venta['monto_cobrado_bs']:.2f} Bs</p>
+                                <hr>
+                                <p><b>Pagos:</b></p>
+                                <ul>
+                        """, unsafe_allow_html=True)
+                        if venta.get('pago_efectivo', 0) > 0:
+                            st.markdown(f"<li>Efectivo Bs: {venta['pago_efectivo']:,.2f}</li>", unsafe_allow_html=True)
+                        if venta.get('pago_movil', 0) > 0:
+                            st.markdown(f"<li>Pago Móvil Bs: {venta['pago_movil']:,.2f}</li>", unsafe_allow_html=True)
+                        if venta.get('pago_punto', 0) > 0:
+                            st.markdown(f"<li>Punto Venta Bs: {venta['pago_punto']:,.2f}</li>", unsafe_allow_html=True)
+                        if venta.get('pago_divisas', 0) > 0:
+                            st.markdown(f"<li>Efectivo USD: ${venta['pago_divisas']:.2f}</li>", unsafe_allow_html=True)
+                        if venta.get('pago_zelle', 0) > 0:
+                            st.markdown(f"<li>Zelle USD: ${venta['pago_zelle']:.2f}</li>", unsafe_allow_html=True)
+                        if venta.get('pago_otros', 0) > 0:
+                            st.markdown(f"<li>Otros USD: ${venta['pago_otros']:.2f}</li>", unsafe_allow_html=True)
+                        total_pagado_usd = sum([
+                            venta.get('pago_divisas', 0),
+                            venta.get('pago_zelle', 0),
+                            venta.get('pago_otros', 0),
+                            (venta.get('pago_efectivo', 0) + venta.get('pago_movil', 0) + venta.get('pago_punto', 0)) / venta.get('tasa_cambio', 60)
+                        ])
+                        vuelto = total_pagado_usd - venta['total_usd']
+                        st.markdown(f"""
+                                </ul>
+                                <hr>
+                                <p><b>Vuelto:</b> ${vuelto:.2f} / {(vuelto * venta.get('tasa_cambio', 60)):.2f} Bs</p>
+                                <p style="text-align:center;">¡Gracias por su compra!</p>
                             </div>
-                        </div>
-                    """, unsafe_allow_html=True)
-            else:
-                st.info("📭 No hay ventas que coincidan con los filtros")
-        else:
-            st.info("📭 No hay ventas registradas en el sistema")
-    except Exception as e:
-        st.error(f"Error cargando historial: {e}")
-        st.exception(e)
+                        """, unsafe_allow_html=True)
+                st.markdown("<hr style='margin:0.2rem 0;'>", unsafe_allow_html=True)
+            
+            # Botones de paginación
+            if len(ventas) == LIMITE:
+                col_pag1, col_pag2 = st.columns(2)
+                with col_pag1:
+                    if st.button("⬅️ Anteriores", use_container_width=True):
+                        if st.session_state.historial_offset >= LIMITE:
+                            st.session_state.historial_offset -= LIMITE
+                            st.rerun()
+                with col_pag2:
+                    if st.button("Siguientes ➡️", use_container_width=True):
+                        st.session_state.historial_offset += LIMITE
+                        st.rerun()
+            elif st.session_state.historial_offset > 0:
+                if st.button("⬅️ Anteriores", use_container_width=True):
+                    st.session_state.historial_offset -= LIMITE
+                    st.rerun()
+            
+            # Botón para nueva búsqueda
+            if st.button("🔍 Nueva búsqueda", use_container_width=True):
+                st.session_state.historial_datos_cargados = False
+                st.session_state.historial_offset = 0
+                st.rerun()
 
 # ============================================
 # MÓDULO 5: CIERRE DE CAJA (SIN OFFLINE)
