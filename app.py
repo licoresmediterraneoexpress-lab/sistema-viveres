@@ -58,16 +58,16 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ============================================
-# CONEXIÓN A SUPABASE (SIEMPRE ONLINE)
+# CONEXIÓN A SUPABASE
 # ============================================
 URL = "https://orrfldqwpjkkooeuqnmp.supabase.co"
 KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9ycmZsZHF3cGpra29vZXVxbm1wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkzMDg5MDEsImV4cCI6MjA4NDg4NDkwMX0.va4XR7_lDF2QV9SBXTusmAa_bgqV9oKwiIhC23hsC7E"
-CLAVE_ADMIN = "1234"  # Solo para eliminar productos (no login)
+CLAVE_ADMIN = "1234"  # Solo para eliminar productos, no para login
 
 db = create_client(URL, KEY)
 
 # ============================================
-# FUNCIONES DE USUARIOS Y PERMISOS (CON TABLA USUARIOS)
+# FUNCIONES DE USUARIOS Y PERMISOS (ANTES DEL MENÚ)
 # ============================================
 def cargar_usuarios():
     res = db.table("usuarios").select("*").order("id").execute()
@@ -98,12 +98,14 @@ def logout():
     st.rerun()
 
 def es_admin():
-    return st.session_state.get('usuario_actual', {}).get('rol') == 'admin'
+    user = st.session_state.get('usuario_actual')
+    return user is not None and user.get('rol') == 'admin'
 
 def tiene_permiso(modulo):
-    if not st.session_state.usuario_actual:
+    user = st.session_state.get('usuario_actual')
+    if not user:
         return False
-    rol = st.session_state.usuario_actual['rol']
+    rol = user.get('rol')
     if rol == 'admin':
         return True
     modulos_empleado = ["🛒 PUNTO DE VENTA", "💸 GASTOS", "📜 HISTORIAL", "📊 CIERRE DE CAJA"]
@@ -171,7 +173,35 @@ except Exception as e:
     st.session_state.id_turno = None
 
 # ============================================
-# MENÚ LATERAL (CON PERMISOS)
+# FUNCIONES AUXILIARES (requiere turno/usuario)
+# ============================================
+def requiere_turno():
+    if not st.session_state.id_turno:
+        st.warning("⚠️ No hay un turno activo. Debe abrir caja en el módulo 'Cierre de Caja'.")
+        st.stop()
+
+def requiere_usuario():
+    if not st.session_state.usuario_actual:
+        st.warning("⚠️ Debe iniciar sesión para acceder a este módulo.")
+        st.stop()
+
+def formatear_usd(valor):
+    return f"${valor:,.2f}"
+
+def formatear_bs(valor):
+    return f"{valor:,.2f} Bs"
+
+def exportar_excel(df, nombre_archivo):
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Datos')
+    excel_data = output.getvalue()
+    b64 = base64.b64encode(excel_data).decode()
+    href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="{nombre_archivo}.xlsx">📥 Descargar Excel</a>'
+    return href
+
+# ============================================
+# MENÚ LATERAL (CON PERMISOS Y LOGIN)
 # ============================================
 with st.sidebar:
     st.markdown("""
@@ -247,34 +277,6 @@ with st.sidebar:
         st.info(f"📍 Turno activo: #{st.session_state.id_turno}")
     else:
         st.error("🔴 Caja cerrada")
-
-# ============================================
-# FUNCIONES AUXILIARES
-# ============================================
-def requiere_turno():
-    if not st.session_state.id_turno:
-        st.warning("⚠️ No hay un turno activo. Debe abrir caja en el módulo 'Cierre de Caja'.")
-        st.stop()
-
-def requiere_usuario():
-    if not st.session_state.usuario_actual:
-        st.warning("⚠️ Debe iniciar sesión para acceder a este módulo.")
-        st.stop()
-
-def formatear_usd(valor):
-    return f"${valor:,.2f}"
-
-def formatear_bs(valor):
-    return f"{valor:,.2f} Bs"
-
-def exportar_excel(df, nombre_archivo):
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Datos')
-    excel_data = output.getvalue()
-    b64 = base64.b64encode(excel_data).decode()
-    href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="{nombre_archivo}.xlsx">📥 Descargar Excel</a>'
-    return href
 
 # ============================================
 # MÓDULO 1: INVENTARIO (SIN CAMBIOS)
