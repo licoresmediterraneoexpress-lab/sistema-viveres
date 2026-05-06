@@ -544,7 +544,7 @@ if opcion == "📦 INVENTARIO":
         st.exception(e)
 
 # ============================================
-# MÓDULO 2: PUNTO DE VENTA (SIN CAMBIOS)
+# MÓDULO 2: PUNTO DE VENTA (CON TASA DIVISAS)
 # ============================================
 elif opcion == "🛒 PUNTO DE VENTA":
     requiere_turno()
@@ -552,12 +552,25 @@ elif opcion == "🛒 PUNTO DE VENTA":
     
     id_turno = st.session_state.id_turno
     tasa = st.session_state.tasa_dia
+    # Obtener tasa divisas del turno actual
+    if 'tasa_divisas' not in st.session_state:
+        if st.session_state.id_turno:
+            turno_info = db.table("cierres").select("tasa_divisas").eq("id", st.session_state.id_turno).execute()
+            if turno_info.data:
+                st.session_state.tasa_divisas = turno_info.data[0].get('tasa_divisas', tasa)
+            else:
+                st.session_state.tasa_divisas = tasa
+        else:
+            st.session_state.tasa_divisas = tasa
+    
+    tasa_divisas = st.session_state.tasa_divisas
     
     st.markdown("<h1 class='main-header'>🛒 Punto de Venta</h1>", unsafe_allow_html=True)
     st.markdown(f"""
         <div style='background-color: #e7f3ff; padding: 0.8rem; border-radius: 8px; margin-bottom: 1rem;'>
             <span style='font-weight:600;'>📍 Turno #{id_turno}</span> | 
-            <span>💱 Tasa: {tasa:.2f} Bs/$</span> |
+            <span>💱 Tasa BCV: {tasa:.2f} Bs/$</span> |
+            <span>💱 Tasa divisas: {tasa_divisas:.2f} Bs/$</span> |
             <span>👤 Cajero: {st.session_state.usuario_actual['nombre']}</span>
         </div>
     """, unsafe_allow_html=True)
@@ -641,7 +654,7 @@ elif opcion == "🛒 PUNTO DE VENTA":
                     cols_header[0].write("**Producto**")
                     cols_header[1].write("**Stock**")
                     cols_header[2].write("**Precio USD**")
-                    cols_header[3].write("**Precio Bs**")
+                    cols_header[3].write("**Precio Bs (BCV)**")
                     st.markdown("---")
                     for prod in productos:
                         precio_base = float(prod['precio_detal'])
@@ -713,7 +726,7 @@ elif opcion == "🛒 PUNTO DE VENTA":
             cols_head = st.columns([2.5, 1, 1, 1, 0.5])
             cols_head[0].write("**Producto**")
             cols_head[1].write("**Precio USD**")
-            cols_head[2].write("**Precio Bs**")
+            cols_head[2].write("**Precio Bs (BCV)**")
             cols_head[3].write("**Cantidad**")
             cols_head[4].write("**Eliminar**")
             st.markdown("---")
@@ -780,12 +793,13 @@ elif opcion == "🛒 PUNTO DE VENTA":
         with col_t1:
             st.markdown(f"### Total calculado USD: ${total_venta_usd:,.2f}")
         with col_t2:
-            st.markdown(f"### Total calculado Bs: {total_venta_bs:,.2f}")
+            st.markdown(f"### Total calculado Bs (BCV): {total_venta_bs:,.2f}")
         
         total_final_usd = total_venta_usd
         total_final_bs = total_venta_bs
         
         with st.expander("🔧 Ajustar monto final (redondeo)", expanded=False):
+            st.markdown(f"**Tasa de referencia para redondeo:** Puedes usar la tasa divisas ({tasa_divisas:.2f} Bs/$) para calcular el monto final.")
             st.markdown("Si deseas redondear el total a cobrar, selecciona una opción e ingresa el monto:")
             opcion_ajuste = st.radio(
                 "Ajustar en:",
@@ -816,7 +830,7 @@ elif opcion == "🛒 PUNTO DE VENTA":
                 )
                 total_final_usd = monto_ajustado_usd
                 total_final_bs = monto_ajustado_usd * tasa
-                st.info(f"Equivalente en Bs: {total_final_bs:,.2f} Bs")
+                st.info(f"Equivalente en Bs (BCV): {total_final_bs:,.2f} Bs")
         
         st.divider()
         
@@ -853,9 +867,9 @@ elif opcion == "🛒 PUNTO DE VENTA":
                     st.metric("Faltante USD", f"${abs(vuelto_usd):,.2f}", delta_color="inverse")
             
             if vuelto_usd >= -0.01:
-                st.success(f"✅ Pago suficiente. Vuelto: ${vuelto_usd:.2f} / {(vuelto_usd * tasa):,.2f} Bs")
+                st.success(f"✅ Pago suficiente. Vuelto: ${vuelto_usd:.2f} / {(vuelto_usd * tasa):,.2f} Bs (según tasa BCV)")
             else:
-                st.error(f"❌ Faltante: ${abs(vuelto_usd):,.2f} / {(abs(vuelto_usd) * tasa):,.2f} Bs")
+                st.error(f"❌ Faltante: ${abs(vuelto_usd):,.2f} / {(abs(vuelto_usd) * tasa):,.2f} Bs (según tasa BCV)")
         
         col_btn1, col_btn2, col_btn3 = st.columns(3)
         with col_btn1:
