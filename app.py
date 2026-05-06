@@ -201,7 +201,7 @@ def exportar_excel(df, nombre_archivo):
     return href
 
 # ============================================
-# MENÚ LATERAL (CON PERMISOS Y LOGIN)
+# MENÚ LATERAL (CON PERMISOS, TASAS Y FONDOS)
 # ============================================
 with st.sidebar:
     st.markdown("""
@@ -248,11 +248,23 @@ with st.sidebar:
     
     st.divider()
     
-    # Tasa informativa
-    with st.container(border=True):
-        st.markdown("**💱 TASA BCV**")
-        st.metric("Bs/USD", f"{st.session_state.get('tasa_dia', 60.0):.2f}")
-        st.caption("Tasa fijada al abrir el turno")
+    # Información del turno activo (si existe)
+    if st.session_state.id_turno:
+        with st.container(border=True):
+            st.markdown("**📊 INFORMACIÓN DEL TURNO**")
+            st.metric("💱 Tasa BCV", f"{st.session_state.get('tasa_dia', 60.0):.2f} Bs/$")
+            # Mostrar tasa divisas si está disponible
+            tasa_divisas = st.session_state.get('tasa_divisas', st.session_state.tasa_dia)
+            st.metric("💱 Tasa divisas (mercado)", f"{tasa_divisas:.2f} Bs/$")
+            st.metric("💰 Fondo inicial Bs", f"{st.session_state.get('fondo_bs', 0):,.2f} Bs")
+            st.metric("💰 Fondo inicial USD", f"${st.session_state.get('fondo_usd', 0):,.2f}")
+            st.caption("Datos fijados al abrir el turno")
+    else:
+        with st.container(border=True):
+            st.markdown("**💱 TASA BCV**")
+            st.metric("Bs/USD", f"{st.session_state.get('tasa_dia', 60.0):.2f}")
+            st.caption("Tasa por defecto (sin turno activo)")
+    
     st.divider()
     
     # Construir lista de módulos según permisos
