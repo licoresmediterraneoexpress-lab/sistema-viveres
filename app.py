@@ -1367,7 +1367,7 @@ elif opcion == "📜 HISTORIAL":
                 st.rerun()
 
 # ============================================
-# MÓDULO 5: CIERRE DE CAJA (SIN CAMBIOS)
+# MÓDULO 5: CIERRE DE CAJA (CON TASA DIVISAS)
 # ============================================
 elif opcion == "📊 CIERRE DE CAJA":
     st.markdown("<h1 class='main-header'>📊 Cierre de Caja</h1>", unsafe_allow_html=True)
@@ -1385,11 +1385,15 @@ elif opcion == "📊 CIERRE DE CAJA":
                     fondo_bs = st.number_input("💰 Fondo inicial Bs", min_value=0.0, value=0.0, step=10.0, format="%.2f")
                 with col2:
                     fondo_usd = st.number_input("💰 Fondo inicial USD", min_value=0.0, value=0.0, step=5.0, format="%.2f")
+                    tasa_divisas = st.number_input("💱 Tasa de mercado para divisas (Bs/$)", min_value=1.0, value=70.0, step=0.5, format="%.2f",
+                                                   help="Usa esta tasa para calcular el equivalente en Bs de pagos en USD (efectivo, Zelle, Binance). Solo informativo.")
                     st.info(f"👤 Abre: {st.session_state.usuario_actual['nombre'] if st.session_state.usuario_actual else 'Anónimo'}")
+                
                 if st.form_submit_button("🚀 ABRIR CAJA", type="primary", use_container_width=True):
                     try:
                         data = {
                             "tasa_apertura": tasa_apertura,
+                            "tasa_divisas": tasa_divisas,  # Nuevo campo
                             "fondo_bs": fondo_bs,
                             "fondo_usd": fondo_usd,
                             "monto_apertura": fondo_usd,
@@ -1401,6 +1405,7 @@ elif opcion == "📊 CIERRE DE CAJA":
                         if res.data:
                             st.session_state.id_turno = res.data[0]['id']
                             st.session_state.tasa_dia = tasa_apertura
+                            st.session_state.tasa_divisas = tasa_divisas
                             st.session_state.fondo_bs = fondo_bs
                             st.session_state.fondo_usd = fondo_usd
                             st.success(f"✅ Turno #{res.data[0]['id']} abierto")
@@ -1412,16 +1417,18 @@ elif opcion == "📊 CIERRE DE CAJA":
 
         id_turno = st.session_state.id_turno
         tasa = st.session_state.tasa_dia
+        tasa_divisas = st.session_state.get('tasa_divisas', tasa)
         fondo_bs_ini = st.session_state.get('fondo_bs', 0)
         fondo_usd_ini = st.session_state.get('fondo_usd', 0)
 
         turno_info = db.table("cierres").select("*").eq("id", id_turno).execute()
         usuario_apertura = turno_info.data[0].get('usuario_apertura', 'N/A') if turno_info.data else 'N/A'
 
-        col_info1, col_info2, col_info3 = st.columns(3)
+        col_info1, col_info2, col_info3, col_info4 = st.columns(4)
         col_info1.success(f"📍 Turno activo: #{id_turno}")
         col_info2.info(f"👤 Abrió: {usuario_apertura}")
-        col_info3.info(f"💱 Tasa: {tasa:.2f} Bs/$")
+        col_info3.info(f"💱 Tasa BCV: {tasa:.2f} Bs/$")
+        col_info4.info(f"💱 Tasa divisas: {tasa_divisas:.2f} Bs/$")
 
         ventas = db.table("ventas").select("*").eq("id_cierre", id_turno).eq("estado", "Finalizado").execute().data or []
         gastos = db.table("gastos").select("*").eq("id_cierre", id_turno).execute().data or []
