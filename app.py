@@ -544,7 +544,7 @@ if opcion == "📦 INVENTARIO":
         st.exception(e)
 
 # ============================================
-# MÓDULO 2: PUNTO DE VENTA (CON TASA DIVISAS)
+# MÓDULO 2: PUNTO DE VENTA (CON SELECCIÓN DE TASA PARA COBRO)
 # ============================================
 elif opcion == "🛒 PUNTO DE VENTA":
     requiere_turno()
@@ -570,7 +570,7 @@ elif opcion == "🛒 PUNTO DE VENTA":
         <div style='background-color: #e7f3ff; padding: 0.8rem; border-radius: 8px; margin-bottom: 1rem;'>
             <span style='font-weight:600;'>📍 Turno #{id_turno}</span> | 
             <span>💱 Tasa BCV: {tasa:.2f} Bs/$</span> |
-            <span>💱 Tasa divisas: {tasa_divisas:.2f} Bs/$</span> |
+            <span>💱 Tasa Divisas: {tasa_divisas:.2f} Bs/$</span> |
             <span>👤 Cajero: {st.session_state.usuario_actual['nombre']}</span>
         </div>
     """, unsafe_allow_html=True)
@@ -793,13 +793,19 @@ elif opcion == "🛒 PUNTO DE VENTA":
         with col_t1:
             st.markdown(f"### Total calculado USD: ${total_venta_usd:,.2f}")
         with col_t2:
-            st.markdown(f"### Total calculado Bs (BCV): {total_venta_bs:,.2f}")
+            st.markdown(f"### Total calculado Bs (a tasa BCV): {total_venta_bs:,.2f}")
         
-        total_final_usd = total_venta_usd
-        total_final_bs = total_venta_bs
-        
+        # ============================================
+        # AJUSTE DE MONTO FINAL CON SELECCIÓN DE TASA
+        # ============================================
         with st.expander("🔧 Ajustar monto final (redondeo)", expanded=False):
-            st.markdown(f"**Tasa de referencia para redondeo:** Puedes usar la tasa divisas ({tasa_divisas:.2f} Bs/$) para calcular el monto final.")
+            st.markdown(f"**Tasas disponibles:** BCV: {tasa:.2f} Bs/$ | Divisas: {tasa_divisas:.2f} Bs/$")
+            tasa_a_usar = st.radio(
+                "Selecciona la tasa con la que se calculará el monto final si ajustas en Dólares:",
+                ["BCV", "Divisas"],
+                horizontal=True,
+                key="tasa_cobro"
+            )
             st.markdown("Si deseas redondear el total a cobrar, selecciona una opción e ingresa el monto:")
             opcion_ajuste = st.radio(
                 "Ajustar en:",
@@ -807,6 +813,7 @@ elif opcion == "🛒 PUNTO DE VENTA":
                 horizontal=True,
                 key="opcion_ajuste"
             )
+            
             if opcion_ajuste == "Bolívares (Bs)":
                 monto_ajustado_bs = st.number_input(
                     "Monto final en Bs",
@@ -817,8 +824,12 @@ elif opcion == "🛒 PUNTO DE VENTA":
                     key="monto_ajustado_bs"
                 )
                 total_final_bs = monto_ajustado_bs
-                total_final_usd = monto_ajustado_bs / tasa if tasa > 0 else 0
-                st.info(f"Equivalente en USD: ${total_final_usd:.2f}")
+                if tasa_a_usar == "BCV":
+                    total_final_usd = monto_ajustado_bs / tasa if tasa > 0 else 0
+                    st.info(f"Equivalente en USD (a tasa BCV): ${total_final_usd:.2f}")
+                else:
+                    total_final_usd = monto_ajustado_bs / tasa_divisas if tasa_divisas > 0 else 0
+                    st.info(f"Equivalente en USD (a tasa divisas): ${total_final_usd:.2f}")
             elif opcion_ajuste == "Dólares (USD)":
                 monto_ajustado_usd = st.number_input(
                     "Monto final en USD",
@@ -829,12 +840,21 @@ elif opcion == "🛒 PUNTO DE VENTA":
                     key="monto_ajustado_usd"
                 )
                 total_final_usd = monto_ajustado_usd
-                total_final_bs = monto_ajustado_usd * tasa
-                st.info(f"Equivalente en Bs (BCV): {total_final_bs:,.2f} Bs")
+                if tasa_a_usar == "BCV":
+                    total_final_bs = monto_ajustado_usd * tasa
+                    st.info(f"Equivalente en Bs (a tasa BCV): {total_final_bs:,.2f} Bs")
+                else:
+                    total_final_bs = monto_ajustado_usd * tasa_divisas
+                    st.info(f"Equivalente en Bs (a tasa divisas): {total_final_bs:,.2f} Bs")
+            else:
+                total_final_usd = total_venta_usd
+                total_final_bs = total_venta_bs
+                st.info(f"Se usará el total calculado: ${total_final_usd:.2f} / {total_final_bs:,.2f} Bs (tasa BCV)")
         
         st.divider()
         
         with st.expander("💳 Detalle de pagos", expanded=True):
+            st.markdown(f"**Monto final a cobrar:** ${total_final_usd:.2f} / {total_final_bs:,.2f} Bs")
             st.markdown("**Ingresa los montos recibidos:**")
             col_p1, col_p2 = st.columns(2)
             with col_p1:
@@ -954,7 +974,11 @@ elif opcion == "🛒 PUNTO DE VENTA":
                                     <td style="text-align:right;"><b>Total USD:</b></td>
                                     <td style="text-align:right;">${total_final_usd:.2f}</td>
                                 </tr>
-                                </table>
+                                <tr>
+                                    <td style="text-align:right;"><b>Total Bs:</b></td>
+                                    <td style="text-align:right;">{total_final_bs:,.2f} Bs</p></td>
+                                </tr>
+                            </table>
                             <p style="text-align:center; margin-top:20px;">¡Gracias por su compra!</p>
                         </div>
                         """
