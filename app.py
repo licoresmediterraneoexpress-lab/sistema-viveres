@@ -544,7 +544,7 @@ if opcion == "📦 INVENTARIO":
         st.exception(e)
 
 # ============================================
-# MÓDULO 2: PUNTO DE VENTA (CON SELECCIÓN DE TASA PARA COBRO)
+# MÓDULO 2: PUNTO DE VENTA (PAGOS MIXTOS CON DOS TASAS)
 # ============================================
 elif opcion == "🛒 PUNTO DE VENTA":
     requiere_turno()
@@ -853,51 +853,69 @@ elif opcion == "🛒 PUNTO DE VENTA":
         
         st.divider()
         
+        # ============================================
+        # PAGOS MIXTOS CON DOS TASAS (CORREGIDO)
+        # ============================================
         with st.expander("💳 Detalle de pagos", expanded=True):
-            st.markdown(f"**Monto final a cobrar:** ${total_final_usd:.2f} / {total_final_bs:,.2f} Bs")
-            st.markdown("**Ingresa los montos recibidos:**")
+            st.markdown(f"**💰 MONTO FINAL A COBRAR:** ${total_final_usd:.2f} / {total_final_bs:,.2f} Bs")
+            st.markdown("---")
+            st.markdown("**Ingresa los montos recibidos (el sistema los sumará automáticamente):**")
+            
             col_p1, col_p2 = st.columns(2)
             with col_p1:
-                st.markdown("**💵 Pagos en USD**")
-                pago_usd_efectivo = st.number_input("Efectivo USD", min_value=0.0, step=5.0, format="%.2f", key="p_usd_efectivo")
-                pago_zelle = st.number_input("Zelle USD", min_value=0.0, step=5.0, format="%.2f", key="p_zelle")
-                pago_otros_usd = st.number_input("Otros USD (Binance/Transfer)", min_value=0.0, step=5.0, format="%.2f", key="p_otros_usd")
-            with col_p2:
-                st.markdown("**💵 Pagos en Bs**")
+                st.markdown("**💵 Pagos en BOLÍVARES (Bs)**")
                 pago_bs_efectivo = st.number_input("Efectivo Bs", min_value=0.0, step=100.0, format="%.2f", key="p_bs_efectivo")
                 pago_movil = st.number_input("Pago Móvil Bs", min_value=0.0, step=100.0, format="%.2f", key="p_movil")
                 pago_punto = st.number_input("Punto de Venta Bs", min_value=0.0, step=100.0, format="%.2f", key="p_punto")
+                total_bs_recibido = pago_bs_efectivo + pago_movil + pago_punto
             
-            total_usd_recibido = pago_usd_efectivo + pago_zelle + pago_otros_usd
-            total_bs_recibido = pago_bs_efectivo + pago_movil + pago_punto
-            total_usd_equivalente = total_usd_recibido + (total_bs_recibido / tasa if tasa > 0 else 0)
-            esperado_usd = total_final_bs / tasa if tasa > 0 else 0
-            vuelto_usd = total_usd_equivalente - esperado_usd
+            with col_p2:
+                st.markdown("**💵 Pagos en DÓLARES (USD)**")
+                st.caption(f"Se convertirán a Bs usando la **tasa divisas**: {tasa_divisas:.2f} Bs/$")
+                pago_usd_efectivo = st.number_input("Efectivo USD", min_value=0.0, step=5.0, format="%.2f", key="p_usd_efectivo")
+                pago_zelle = st.number_input("Zelle USD", min_value=0.0, step=5.0, format="%.2f", key="p_zelle")
+                pago_otros_usd = st.number_input("Otros USD (Binance/Transfer)", min_value=0.0, step=5.0, format="%.2f", key="p_otros_usd")
+                total_usd_recibido = pago_usd_efectivo + pago_zelle + pago_otros_usd
+                # Convertir USD a Bs con tasa divisas
+                total_bs_por_usd = total_usd_recibido * tasa_divisas
+            
+            st.markdown("---")
+            # Total pagado en Bs
+            total_pagado_bs = total_bs_recibido + total_bs_por_usd
+            # Calcular vuelto o faltante
+            diferencia_bs = total_pagado_bs - total_final_bs
+            
+            # Mostrar resumen
+            col_res1, col_res2 = st.columns(2)
+            with col_res1:
+                st.metric("💰 Total pagado en Bs", f"{total_pagado_bs:,.2f} Bs")
+                if total_usd_recibido > 0:
+                    st.caption(f"(de los cuales USD: ${total_usd_recibido:.2f} → {total_bs_por_usd:,.2f} Bs a tasa divisas)")
+            with col_res2:
+                st.metric("💵 Total a cobrar", f"{total_final_bs:,.2f} Bs")
             
             st.divider()
-            col_r1, col_r2, col_r3 = st.columns(3)
-            with col_r1:
-                st.metric("Pagado USD eq.", f"${total_usd_equivalente:,.2f}")
-            with col_r2:
-                st.metric("Esperado USD", f"${esperado_usd:,.2f}")
-            with col_r3:
-                if vuelto_usd >= 0:
-                    st.metric("Vuelto USD", f"${vuelto_usd:.2f}")
-                else:
-                    st.metric("Faltante USD", f"${abs(vuelto_usd):,.2f}", delta_color="inverse")
             
-            if vuelto_usd >= -0.01:
-                st.success(f"✅ Pago suficiente. Vuelto: ${vuelto_usd:.2f} / {(vuelto_usd * tasa):,.2f} Bs (según tasa BCV)")
+            if diferencia_bs >= -0.01:
+                vuelto_bs = diferencia_bs
+                st.success(f"✅ **Pago suficiente.** Vuelto: **{vuelto_bs:,.2f} Bs**")
+                if vuelto_bs > 0:
+                    st.caption(f"(Equivalente en USD a tasa divisas: ${vuelto_bs / tasa_divisas:.2f} USD)")
+                venta_valida = True
             else:
-                st.error(f"❌ Faltante: ${abs(vuelto_usd):,.2f} / {(abs(vuelto_usd) * tasa):,.2f} Bs (según tasa BCV)")
+                faltante_bs = -diferencia_bs
+                st.error(f"❌ **Faltante:** {faltante_bs:,.2f} Bs. El cliente debe pagar esa cantidad adicional.")
+                venta_valida = False
         
+        # ============================================
+        # BOTONES DE ACCIÓN
+        # ============================================
         col_btn1, col_btn2, col_btn3 = st.columns(3)
         with col_btn1:
             if st.button("🔄 Limpiar carrito", use_container_width=True):
                 st.session_state.mesas[st.session_state.mesa_actual]['carrito'] = []
                 st.rerun()
         with col_btn2:
-            venta_valida = vuelto_usd >= -0.01 and len(carrito) > 0
             if st.button("✅ Cobrar y cerrar cuenta", type="primary", use_container_width=True, disabled=not venta_valida):
                 try:
                     items_resumen = []
