@@ -544,7 +544,7 @@ if opcion == "📦 INVENTARIO":
         st.exception(e)
 
 # ============================================
-# MÓDULO 2: PUNTO DE VENTA (PAGOS MIXTOS CON DOS TASAS)
+# MÓDULO 2: PUNTO DE VENTA (TASCA 20%, COSTO EN BS)
 # ============================================
 elif opcion == "🛒 PUNTO DE VENTA":
     requiere_turno()
@@ -634,7 +634,8 @@ elif opcion == "🛒 PUNTO DE VENTA":
     
     st.divider()
     
-    es_tasca = st.checkbox("🍷 Venta en tasca (+10%)", help="Los precios aumentan un 10% para consumo en el local")
+    # 🔥 TASCA AHORA ES 20% (antes 10%)
+    es_tasca = st.checkbox("🍷 Venta en tasca (+20%)", help="Los precios aumentan un 20% para consumo en el local")
     
     with st.popover("🔍 Buscar productos", use_container_width=True):
         busqueda = st.text_input("", placeholder="Escribe nombre del producto...", key="buscar_venta_popover")
@@ -658,7 +659,8 @@ elif opcion == "🛒 PUNTO DE VENTA":
                     st.markdown("---")
                     for prod in productos:
                         precio_base = float(prod['precio_detal'])
-                        precio_unitario = precio_base * 1.10 if es_tasca else precio_base
+                        # 🔥 Multiplicar por 1.20 para tasca
+                        precio_unitario = precio_base * 1.20 if es_tasca else precio_base
                         precio_bs = precio_unitario * tasa
                         col1, col2, col3, col4, col5 = st.columns([3, 1, 1, 1, 0.5])
                         col1.write(prod['nombre'])
@@ -679,8 +681,8 @@ elif opcion == "🛒 PUNTO DE VENTA":
                                 precio_final = precio_base
                                 tipo_precio = ""
                             if es_tasca:
-                                precio_final = precio_base * 1.10
-                                tipo_precio = " (Tasca)"
+                                precio_final = precio_base * 1.20
+                                tipo_precio = " (Tasca +20%)"
                             encontrado = False
                             for item in st.session_state.mesas[st.session_state.mesa_actual]['carrito']:
                                 if item['id'] == prod['id']:
@@ -769,8 +771,8 @@ elif opcion == "🛒 PUNTO DE VENTA":
                                 nuevo_precio = float(prod_data['precio_detal'])
                                 tipo_precio = ""
                             if es_tasca:
-                                nuevo_precio = nuevo_precio * 1.10
-                                tipo_precio = " (Tasca)"
+                                nuevo_precio = nuevo_precio * 1.20
+                                tipo_precio = " (Tasca +20%)"
                             item['precio'] = nuevo_precio
                             item['tipo_precio'] = tipo_precio
                         item['cantidad'] = nueva_cant
@@ -854,7 +856,7 @@ elif opcion == "🛒 PUNTO DE VENTA":
         st.divider()
         
         # ============================================
-        # PAGOS MIXTOS CON DOS TASAS (CORREGIDO)
+        # PAGOS MIXTOS CON DOS TASAS
         # ============================================
         with st.expander("💳 Detalle de pagos", expanded=True):
             st.markdown(f"**💰 MONTO FINAL A COBRAR:** ${total_final_usd:.2f} / {total_final_bs:,.2f} Bs")
@@ -876,16 +878,12 @@ elif opcion == "🛒 PUNTO DE VENTA":
                 pago_zelle = st.number_input("Zelle USD", min_value=0.0, step=5.0, format="%.2f", key="p_zelle")
                 pago_otros_usd = st.number_input("Otros USD (Binance/Transfer)", min_value=0.0, step=5.0, format="%.2f", key="p_otros_usd")
                 total_usd_recibido = pago_usd_efectivo + pago_zelle + pago_otros_usd
-                # Convertir USD a Bs con tasa divisas
                 total_bs_por_usd = total_usd_recibido * tasa_divisas
             
             st.markdown("---")
-            # Total pagado en Bs
             total_pagado_bs = total_bs_recibido + total_bs_por_usd
-            # Calcular vuelto o faltante
             diferencia_bs = total_pagado_bs - total_final_bs
             
-            # Mostrar resumen
             col_res1, col_res2 = st.columns(2)
             with col_res1:
                 st.metric("💰 Total pagado en Bs", f"{total_pagado_bs:,.2f} Bs")
@@ -930,6 +928,9 @@ elif opcion == "🛒 PUNTO DE VENTA":
                     if info_cliente:
                         info_cliente = f" - Cliente: {info_cliente}"
                     
+                    # 🔥 NUEVO: calcular costo en bolívares usando tasa BCV
+                    costo_venta_bs = total_costo * tasa
+                    
                     venta_data = {
                         "id_cierre": id_turno,
                         "producto": ", ".join(items_resumen),
@@ -944,6 +945,7 @@ elif opcion == "🛒 PUNTO DE VENTA":
                         "pago_movil": round(pago_movil, 2),
                         "pago_punto": round(pago_punto, 2),
                         "costo_venta": round(total_costo, 2),
+                        "costo_venta_bs": round(costo_venta_bs, 2),  # 🔥 NUEVO
                         "estado": "Finalizado",
                         "items": json.dumps(carrito),
                         "id_transaccion": str(int(datetime.now().timestamp())),
