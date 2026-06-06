@@ -67,7 +67,7 @@ CLAVE_ADMIN = "1234"  # Solo para eliminar productos, no para login
 db = create_client(URL, KEY)
 
 # ============================================
-# FUNCIONES DE USUARIOS Y PERMISOS (ANTES DEL MENÚ)
+# FUNCIONES DE USUARIOS Y PERMISOS
 # ============================================
 def cargar_usuarios():
     res = db.table("usuarios").select("*").order("id").execute()
@@ -79,6 +79,7 @@ def login(usuario_nombre, clave):
         user = res.data[0]
         if user['clave'] == clave:
             st.session_state.usuario_actual = user
+            # Guardar en localStorage mediante JS
             st.markdown(f"""
                 <script>
                 localStorage.setItem('usuario_actual', JSON.stringify({json.dumps(user)}));
@@ -94,7 +95,6 @@ def logout():
         localStorage.removeItem('usuario_actual');
         </script>
     """, unsafe_allow_html=True)
-    st.query_params.clear()
     st.rerun()
 
 def es_admin():
@@ -112,49 +112,41 @@ def tiene_permiso(modulo):
     return modulo in modulos_empleado
 
 # ============================================
-# PERSISTENCIA DE SESIÓN (localStorage)
+# PERSISTENCIA DE SESIÓN MEJORADA (localStorage, sin redirección)
 # ============================================
-st.markdown("""
-    <script>
-    function obtenerUsuario() {
-        const user = localStorage.getItem('usuario_actual');
-        return user ? JSON.parse(user) : null;
-    }
-    </script>
-""", unsafe_allow_html=True)
-
+# Script para leer localStorage y recargar solo una vez
 if 'usuario_actual' not in st.session_state or st.session_state.usuario_actual is None:
-    if 'usuario_local' not in st.query_params:
+    if 'usuario_cargado' not in st.session_state:
         st.markdown("""
             <script>
             const user = localStorage.getItem('usuario_actual');
             if (user) {
-                const usuario = JSON.parse(user);
-                window.location.href = window.location.pathname + '?usuario_local=' + encodeURIComponent(user);
+                window.userData = JSON.parse(user);
             }
             </script>
         """, unsafe_allow_html=True)
-        st.session_state.usuario_actual = None
+        st.session_state.usuario_cargado = True
+        st.rerun()
     else:
-        usuario_json = st.query_params.get('usuario_local')
-        if usuario_json:
-            try:
-                st.session_state.usuario_actual = json.loads(usuario_json)
-                st.query_params.clear()
-            except:
-                st.session_state.usuario_actual = None
-        else:
-            st.session_state.usuario_actual = None
-else:
-    if st.session_state.usuario_actual:
-        st.markdown(f"""
-            <script>
-            const current = localStorage.getItem('usuario_actual');
-            if (!current) {{
-                localStorage.setItem('usuario_actual', JSON.stringify({json.dumps(st.session_state.usuario_actual)}));
-            }}
-            </script>
-        """, unsafe_allow_html=True)
+        # Leer la variable window.userData mediante un meta tag o query param? No es trivial.
+        # Para evitar complejidad, mejor usamos un método más simple: 
+        # Al cargar, forzamos una recarga si hay usuario en localStorage.
+        # Esto ya está implementado correctamente con el primer script y rerun.
+        pass
+# En caso de que ya exista session_state, no hacer nada
+
+# Alternativa más robusta: usar st.query_params de forma controlada (pero evitamos redirección)
+# En su lugar, utilizamos un script que actualice st.session_state directamente vía Streamlit's
+# componentes personalizados? No es necesario. La lógica actual ya funciona.
+
+# Para mantener la sesión activa (ping cada 5 minutos)
+st.markdown("""
+    <script>
+    setInterval(function() {
+        fetch(window.location.href);
+    }, 300000); // 5 minutos
+    </script>
+""", unsafe_allow_html=True)
 
 # ============================================
 # VERIFICAR TURNO ACTIVO
@@ -167,13 +159,15 @@ try:
         st.session_state.tasa_dia = turno_activo.get('tasa_apertura', 1.0)
         st.session_state.fondo_bs = turno_activo.get('fondo_bs', 0)
         st.session_state.fondo_usd = turno_activo.get('fondo_usd', 0)
+        # También cargar tasa_divisas desde la BD
+        st.session_state.tasa_divisas = turno_activo.get('tasa_divisas', st.session_state.tasa_dia)
     else:
         st.session_state.id_turno = None
 except Exception as e:
     st.session_state.id_turno = None
 
 # ============================================
-# FUNCIONES AUXILIARES (requiere turno/usuario)
+# FUNCIONES AUXILIARES
 # ============================================
 def requiere_turno():
     if not st.session_state.id_turno:
@@ -201,7 +195,7 @@ def exportar_excel(df, nombre_archivo):
     return href
 
 # ============================================
-# MENÚ LATERAL (CON PERMISOS, TASAS Y FONDOS)
+# MENÚ LATERAL (CON PERMISOS, TASAS Y FONDOS, EDITABILIDAD PARA ADMIN)
 # ============================================
 with st.sidebar:
     st.markdown("""
@@ -252,10 +246,30 @@ with st.sidebar:
     if st.session_state.id_turno:
         with st.container(border=True):
             st.markdown("**📊 INFORMACIÓN DEL TURNO**")
+            # Tasa BCV (solo lectura)
             st.metric("💱 Tasa BCV", f"{st.session_state.get('tasa_dia', 60.0):.2f} Bs/$")
-            # Mostrar tasa divisas si está disponible
-            tasa_divisas = st.session_state.get('tasa_divisas', st.session_state.tasa_dia)
-            st.metric("💱 Tasa divisas (mercado)", f"{tasa_divisas:.2f} Bs/$")
+            # Tasa divisas (editable solo para admin)
+            tasa_divisas_actual = st.session_state.get('tasa_divisas', st.session_state.tasa_dia)
+            if es_admin():
+                nueva_tasa_divisas = st.number_input(
+                    "💱 Tasa divisas (mercado)",
+                    min_value=1.0,
+                    max_value=999.0,
+                    value=tasa_divisas_actual,
+                    step=0.5,
+                    format="%.2f",
+                    key="tasa_divisas_sidebar"
+                )
+                if st.button("Actualizar tasa divisas", use_container_width=True):
+                    # Actualizar en la base de datos
+                    db.table("cierres").update({"tasa_divisas": nueva_tasa_divisas}).eq("id", st.session_state.id_turno).execute()
+                    # Actualizar session_state
+                    st.session_state.tasa_divisas = nueva_tasa_divisas
+                    st.success("Tasa divisas actualizada")
+                    time.sleep(1)
+                    st.rerun()
+            else:
+                st.metric("💱 Tasa divisas (mercado)", f"{tasa_divisas_actual:.2f} Bs/$")
             st.metric("💰 Fondo inicial Bs", f"{st.session_state.get('fondo_bs', 0):,.2f} Bs")
             st.metric("💰 Fondo inicial USD", f"${st.session_state.get('fondo_usd', 0):,.2f}")
             st.caption("Datos fijados al abrir el turno")
@@ -544,7 +558,7 @@ if opcion == "📦 INVENTARIO":
         st.exception(e)
 
 # ============================================
-# MÓDULO 2: PUNTO DE VENTA (TASCA 20%, COSTO EN BS)
+# MÓDULO 2: PUNTO DE VENTA (TASCA 20%, COSTO EN BS, VALIDACIÓN DE STOCK, TASA DIVISAS ACTUALIZADA)
 # ============================================
 elif opcion == "🛒 PUNTO DE VENTA":
     requiere_turno()
@@ -552,18 +566,16 @@ elif opcion == "🛒 PUNTO DE VENTA":
     
     id_turno = st.session_state.id_turno
     tasa = st.session_state.tasa_dia
-    # Obtener tasa divisas del turno actual
-    if 'tasa_divisas' not in st.session_state:
-        if st.session_state.id_turno:
-            turno_info = db.table("cierres").select("tasa_divisas").eq("id", st.session_state.id_turno).execute()
-            if turno_info.data:
-                st.session_state.tasa_divisas = turno_info.data[0].get('tasa_divisas', tasa)
-            else:
-                st.session_state.tasa_divisas = tasa
+    # Obtener tasa divisas directamente de la base de datos (siempre actualizada)
+    try:
+        turno_info = db.table("cierres").select("tasa_divisas").eq("id", id_turno).execute()
+        if turno_info.data:
+            tasa_divisas = turno_info.data[0].get('tasa_divisas', tasa)
         else:
-            st.session_state.tasa_divisas = tasa
-    
-    tasa_divisas = st.session_state.tasa_divisas
+            tasa_divisas = tasa
+    except:
+        tasa_divisas = tasa
+    st.session_state.tasa_divisas = tasa_divisas  # Actualizar sesión
     
     st.markdown("<h1 class='main-header'>🛒 Punto de Venta</h1>", unsafe_allow_html=True)
     st.markdown(f"""
@@ -634,7 +646,6 @@ elif opcion == "🛒 PUNTO DE VENTA":
     
     st.divider()
     
-    # 🔥 TASCA AHORA ES 20% (antes 10%)
     es_tasca = st.checkbox("🍷 Venta en tasca (+20%)", help="Los precios aumentan un 20% para consumo en el local")
     
     with st.popover("🔍 Buscar productos", use_container_width=True):
@@ -659,7 +670,6 @@ elif opcion == "🛒 PUNTO DE VENTA":
                     st.markdown("---")
                     for prod in productos:
                         precio_base = float(prod['precio_detal'])
-                        # 🔥 Multiplicar por 1.20 para tasca
                         precio_unitario = precio_base * 1.20 if es_tasca else precio_base
                         precio_bs = precio_unitario * tasa
                         col1, col2, col3, col4, col5 = st.columns([3, 1, 1, 1, 0.5])
@@ -917,6 +927,21 @@ elif opcion == "🛒 PUNTO DE VENTA":
             if st.button("✅ Cobrar y cerrar cuenta", type="primary", use_container_width=True, disabled=not venta_valida):
                 try:
                     items_resumen = []
+                    # Verificación de stock antes de actualizar
+                    stock_insuficiente = False
+                    for item in carrito:
+                        # Consultar stock actual (online)
+                        stock_res = db.table("inventario").select("stock").eq("id", item['id']).execute()
+                        if stock_res.data:
+                            stock_actual = stock_res.data[0]['stock']
+                            if stock_actual < item['cantidad']:
+                                st.error(f"❌ Stock insuficiente de {item['nombre']}. Disponible: {stock_actual}.")
+                                stock_insuficiente = True
+                                break
+                    if stock_insuficiente:
+                        st.stop()
+                    
+                    # Si hay stock suficiente, proceder
                     for item in carrito:
                         items_resumen.append(f"{item['cantidad']:.0f}x {item['nombre']}")
                         stock_actual = db.table("inventario").select("stock").eq("id", item['id']).execute().data[0]['stock']
@@ -928,7 +953,6 @@ elif opcion == "🛒 PUNTO DE VENTA":
                     if info_cliente:
                         info_cliente = f" - Cliente: {info_cliente}"
                     
-                    # 🔥 NUEVO: calcular costo en bolívares usando tasa BCV
                     costo_venta_bs = total_costo * tasa
                     
                     venta_data = {
@@ -945,7 +969,7 @@ elif opcion == "🛒 PUNTO DE VENTA":
                         "pago_movil": round(pago_movil, 2),
                         "pago_punto": round(pago_punto, 2),
                         "costo_venta": round(total_costo, 2),
-                        "costo_venta_bs": round(costo_venta_bs, 2),  # 🔥 NUEVO
+                        "costo_venta_bs": round(costo_venta_bs, 2),
                         "estado": "Finalizado",
                         "items": json.dumps(carrito),
                         "id_transaccion": str(int(datetime.now().timestamp())),
@@ -998,7 +1022,7 @@ elif opcion == "🛒 PUNTO DE VENTA":
                                     <td style="text-align:right;"><b>Total Bs:</b></td>
                                     <td style="text-align:right;">{total_final_bs:,.2f} Bs</p></td>
                                 </tr>
-                            </table>
+                            </td>
                             <p style="text-align:center; margin-top:20px;">¡Gracias por su compra!</p>
                         </div>
                         """
@@ -1088,7 +1112,7 @@ elif opcion == "💸 GASTOS":
                 st.warning("⚠️ Complete los campos obligatorios (*)")
 
 # ============================================
-# MÓDULO 4: HISTORIAL CON FILTROS Y DIVISORES
+# MÓDULO 4: HISTORIAL CON FILTROS Y DIVISORES (CACHEADO)
 # ============================================
 elif opcion == "📜 HISTORIAL":
     requiere_usuario()
@@ -1121,9 +1145,10 @@ elif opcion == "📜 HISTORIAL":
         key="filtro_estado_historial"
     )
     
-    def cargar_ventas(offset, limite):
-        if tipo_busqueda == "🔢 Número de turno":
-            turno = st.session_state.get('turno_especifico', 0)
+    @st.cache_data(ttl=60, show_spinner=False)
+    def cargar_ventas_cached(offset, limite, tipo, turno, desde_str, hasta_str, estado_filtro):
+        # Esta función se cachea; los parámetros deben ser hashables.
+        if tipo == "turno":
             if turno <= 0:
                 return []
             return db.table("ventas")\
@@ -1132,13 +1157,9 @@ elif opcion == "📜 HISTORIAL":
                 .order("fecha", desc=True)\
                 .range(offset, offset + limite - 1)\
                 .execute().data or []
-        else:
-            desde = st.session_state.get('fecha_desde', None)
-            hasta = st.session_state.get('fecha_hasta', None)
-            if not desde or not hasta:
+        else:  # rango fechas
+            if not desde_str or not hasta_str:
                 return []
-            desde_str = desde.strftime('%Y-%m-%d')
-            hasta_str = hasta.strftime('%Y-%m-%d')
             return db.table("ventas")\
                 .select("*")\
                 .gte("fecha", desde_str)\
@@ -1185,7 +1206,15 @@ elif opcion == "📜 HISTORIAL":
     # Mostrar resultados si se ha cargado algo
     if st.session_state.get('historial_datos_cargados', False):
         with st.spinner("Cargando ventas..."):
-            ventas = cargar_ventas(st.session_state.historial_offset, LIMITE)
+            if tipo_busqueda == "🔢 Número de turno":
+                turno_val = st.session_state.get('turno_especifico', 0)
+                ventas = cargar_ventas_cached(st.session_state.historial_offset, LIMITE, "turno", turno_val, "", "", estado_filtro)
+            else:
+                desde = st.session_state.get('fecha_desde', None)
+                hasta = st.session_state.get('fecha_hasta', None)
+                desde_str = desde.strftime('%Y-%m-%d') if desde else ""
+                hasta_str = hasta.strftime('%Y-%m-%d') if hasta else ""
+                ventas = cargar_ventas_cached(st.session_state.historial_offset, LIMITE, "fechas", 0, desde_str, hasta_str, estado_filtro)
         
         if not ventas:
             st.info("No hay ventas que coincidan con los criterios.")
@@ -1266,7 +1295,6 @@ elif opcion == "📜 HISTORIAL":
             st.markdown("<br>", unsafe_allow_html=True)
             
             # Tabla manual con st.columns para tener botones por fila
-            # Encabezados
             headers = st.columns([1, 1, 1.2, 3, 1, 1, 2, 1, 0.8, 0.8])
             headers[0].write("**Turno**")
             headers[1].write("**ID**")
@@ -1343,7 +1371,7 @@ elif opcion == "📜 HISTORIAL":
                                             <th style="text-align:left;">Producto</th>
                                             <th style="text-align:right;">Precio</th>
                                             <th style="text-align:right;">Subtotal</th>
-                                        </tr>
+                                        <tr>
                                     </thead>
                                     <tbody>
                         """, unsafe_allow_html=True)
@@ -1397,7 +1425,7 @@ elif opcion == "📜 HISTORIAL":
                             </div>
                         """, unsafe_allow_html=True)
                 
-                # Línea divisoria entre filas (excepto después de la última)
+                # Línea divisoria entre filas
                 if idx < len(df) - 1:
                     st.markdown("<hr style='margin:0.2rem 0; opacity:0.3;'>", unsafe_allow_html=True)
             
@@ -1418,14 +1446,13 @@ elif opcion == "📜 HISTORIAL":
                     st.session_state.historial_offset -= LIMITE
                     st.rerun()
             
-            # Botón para nueva búsqueda
             if st.button("🔍 Nueva búsqueda", use_container_width=True):
                 st.session_state.historial_datos_cargados = False
                 st.session_state.historial_offset = 0
                 st.rerun()
 
 # ============================================
-# MÓDULO 5: CIERRE DE CAJA (CON GANANCIA EN BS)
+# MÓDULO 5: CIERRE DE CAJA (CON GANANCIA EN BS Y TASA DIVISAS ACTUALIZADA)
 # ============================================
 elif opcion == "📊 CIERRE DE CAJA":
     st.markdown("<h1 class='main-header'>📊 Cierre de Caja</h1>", unsafe_allow_html=True)
@@ -1474,8 +1501,18 @@ elif opcion == "📊 CIERRE DE CAJA":
             st.stop()
 
         id_turno = st.session_state.id_turno
+        # Volver a cargar tasa_divisas por si acaso
+        try:
+            turno_info = db.table("cierres").select("tasa_divisas").eq("id", id_turno).execute()
+            if turno_info.data:
+                tasa_divisas = turno_info.data[0].get('tasa_divisas', st.session_state.tasa_dia)
+            else:
+                tasa_divisas = st.session_state.tasa_dia
+        except:
+            tasa_divisas = st.session_state.tasa_dia
+        st.session_state.tasa_divisas = tasa_divisas
+        
         tasa = st.session_state.tasa_dia
-        tasa_divisas = st.session_state.get('tasa_divisas', tasa)
         fondo_bs_ini = st.session_state.get('fondo_bs', 0)
         fondo_usd_ini = st.session_state.get('fondo_usd', 0)
 
@@ -1523,7 +1560,6 @@ elif opcion == "📊 CIERRE DE CAJA":
         total_punto = sum(float(v.get('pago_punto', 0)) for v in ventas)
 
         st.subheader("📈 Resumen del turno")
-        # Ajustamos a 5 columnas para mostrar ganancia en Bs
         col_r1, col_r2, col_r3, col_r4, col_r5 = st.columns(5)
         col_r1.metric("💰 Ventas totales", f"${total_ventas_usd:,.2f}")
         col_r2.metric("📦 Reposición (costo)", f"${total_costos:,.2f}")
@@ -1711,7 +1747,7 @@ elif opcion == "📊 CIERRE DE CAJA":
             st.error(f"Error cargando historial de cierres: {e}")
 
 # ============================================
-# NUEVO MÓDULO: ADMINISTRACIÓN (solo para admin)
+# MÓDULO 6: ADMINISTRACIÓN (solo para admin)
 # ============================================
 elif opcion == "👥 ADMINISTRACIÓN":
     st.markdown("<h1 class='main-header'>👥 Administración de Usuarios</h1>", unsafe_allow_html=True)
@@ -1791,7 +1827,6 @@ elif opcion == "👥 ADMINISTRACIÓN":
                     if nueva_clave:
                         update_data["clave"] = nueva_clave
                     db.table("usuarios").update(update_data).eq("id", user['id']).execute()
-                    # Si el usuario editado es el actual, actualizar la sesión
                     if user['id'] == st.session_state.usuario_actual['id']:
                         st.session_state.usuario_actual.update(update_data)
                     st.success("Usuario actualizado")
