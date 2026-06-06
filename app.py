@@ -112,41 +112,39 @@ def tiene_permiso(modulo):
     return modulo in modulos_empleado
 
 # ============================================
-# PERSISTENCIA DE SESIÓN MEJORADA (localStorage, sin redirección)
+# PERSISTENCIA DE SESIÓN (localStorage con query_params)
 # ============================================
-# Script para leer localStorage y recargar solo una vez
-if 'usuario_actual' not in st.session_state or st.session_state.usuario_actual is None:
-    if 'usuario_cargado' not in st.session_state:
+# Inicializar variables de sesión
+if 'usuario_actual' not in st.session_state:
+    st.session_state.usuario_actual = None
+if 'usuario_cargado' not in st.session_state:
+    st.session_state.usuario_cargado = False
+
+# Solo intentar cargar desde localStorage una vez
+if not st.session_state.usuario_cargado:
+    if 'usuario_local' not in st.query_params:
+        # Intenta leer de localStorage y redirige con query_param
         st.markdown("""
             <script>
             const user = localStorage.getItem('usuario_actual');
             if (user) {
-                window.userData = JSON.parse(user);
+                const usuario = JSON.parse(user);
+                window.location.href = window.location.pathname + '?usuario_local=' + encodeURIComponent(user);
             }
             </script>
         """, unsafe_allow_html=True)
         st.session_state.usuario_cargado = True
         st.rerun()
     else:
-        # Leer la variable window.userData mediante un meta tag o query param? No es trivial.
-        # Para evitar complejidad, mejor usamos un método más simple: 
-        # Al cargar, forzamos una recarga si hay usuario en localStorage.
-        # Esto ya está implementado correctamente con el primer script y rerun.
-        pass
-# En caso de que ya exista session_state, no hacer nada
-
-# Alternativa más robusta: usar st.query_params de forma controlada (pero evitamos redirección)
-# En su lugar, utilizamos un script que actualice st.session_state directamente vía Streamlit's
-# componentes personalizados? No es necesario. La lógica actual ya funciona.
-
-# Para mantener la sesión activa (ping cada 5 minutos)
-st.markdown("""
-    <script>
-    setInterval(function() {
-        fetch(window.location.href);
-    }, 300000); // 5 minutos
-    </script>
-""", unsafe_allow_html=True)
+        usuario_json = st.query_params.get('usuario_local')
+        if usuario_json:
+            try:
+                st.session_state.usuario_actual = json.loads(usuario_json)
+                # Limpiar el parámetro de la URL para que no quede visible
+                st.query_params.clear()
+            except:
+                st.session_state.usuario_actual = None
+        st.session_state.usuario_cargado = True
 
 # ============================================
 # VERIFICAR TURNO ACTIVO
