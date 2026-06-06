@@ -112,24 +112,23 @@ def tiene_permiso(modulo):
     return modulo in modulos_empleado
 
 # ============================================
-# PERSISTENCIA DE SESIÓN (localStorage con query_params)
+# PERSISTENCIA DE SESIÓN (localStorage con query_params, seguro)
 # ============================================
-# Inicializar variables de sesión
 if 'usuario_actual' not in st.session_state:
     st.session_state.usuario_actual = None
 if 'usuario_cargado' not in st.session_state:
     st.session_state.usuario_cargado = False
 
-# Solo intentar cargar desde localStorage una vez
 if not st.session_state.usuario_cargado:
     if 'usuario_local' not in st.query_params:
-        # Intenta leer de localStorage y redirige con query_param
         st.markdown("""
             <script>
             const user = localStorage.getItem('usuario_actual');
             if (user) {
                 const usuario = JSON.parse(user);
                 window.location.href = window.location.pathname + '?usuario_local=' + encodeURIComponent(user);
+            } else {
+                window.location.href = window.location.pathname + '?usuario_local=null';
             }
             </script>
         """, unsafe_allow_html=True)
@@ -137,13 +136,14 @@ if not st.session_state.usuario_cargado:
         st.rerun()
     else:
         usuario_json = st.query_params.get('usuario_local')
-        if usuario_json:
+        if usuario_json and usuario_json != 'null':
             try:
                 st.session_state.usuario_actual = json.loads(usuario_json)
-                # Limpiar el parámetro de la URL para que no quede visible
-                st.query_params.clear()
             except:
                 st.session_state.usuario_actual = None
+        else:
+            st.session_state.usuario_actual = None
+        st.query_params.clear()
         st.session_state.usuario_cargado = True
 
 # ============================================
@@ -195,6 +195,14 @@ def exportar_excel(df, nombre_archivo):
 # ============================================
 # MENÚ LATERAL (CON PERMISOS, TASAS Y FONDOS, EDITABILIDAD PARA ADMIN)
 # ============================================
+# Inicializar variables de sesión necesarias
+if 'usuario_actual' not in st.session_state:
+    st.session_state.usuario_actual = None
+if 'tasa_divisas' not in st.session_state:
+    st.session_state.tasa_divisas = 60.0
+if 'tasa_dia' not in st.session_state:
+    st.session_state.tasa_dia = 60.0
+
 with st.sidebar:
     st.markdown("""
         <div style="background: linear-gradient(135deg, #0a1929 0%, #1a2b3c 100%); padding: 2rem 1rem; border-radius: 0 0 20px 20px; text-align: center; margin-top: -1rem; margin-bottom: 1rem;">
@@ -244,10 +252,20 @@ with st.sidebar:
     if st.session_state.id_turno:
         with st.container(border=True):
             st.markdown("**📊 INFORMACIÓN DEL TURNO**")
-            # Tasa BCV (solo lectura)
-            st.metric("💱 Tasa BCV", f"{st.session_state.get('tasa_dia', 60.0):.2f} Bs/$")
-            # Tasa divisas (editable solo para admin)
-            tasa_divisas_actual = st.session_state.get('tasa_divisas', st.session_state.tasa_dia)
+            # Asegurar valores float
+            tasa_bcv = float(st.session_state.get('tasa_dia', 60.0))
+            st.metric("💱 Tasa BCV", f"{tasa_bcv:.2f} Bs/$")
+            
+            # Obtener tasa divisas actual (de la BD si es posible)
+            try:
+                turno_info = db.table("cierres").select("tasa_divisas").eq("id", st.session_state.id_turno).execute()
+                if turno_info.data:
+                    tasa_divisas_actual = float(turno_info.data[0].get('tasa_divisas', tasa_bcv))
+                else:
+                    tasa_divisas_actual = float(st.session_state.get('tasa_divisas', tasa_bcv))
+            except:
+                tasa_divisas_actual = float(st.session_state.get('tasa_divisas', tasa_bcv))
+            
             if es_admin():
                 nueva_tasa_divisas = st.number_input(
                     "💱 Tasa divisas (mercado)",
@@ -259,17 +277,21 @@ with st.sidebar:
                     key="tasa_divisas_sidebar"
                 )
                 if st.button("Actualizar tasa divisas", use_container_width=True):
-                    # Actualizar en la base de datos
-                    db.table("cierres").update({"tasa_divisas": nueva_tasa_divisas}).eq("id", st.session_state.id_turno).execute()
-                    # Actualizar session_state
-                    st.session_state.tasa_divisas = nueva_tasa_divisas
-                    st.success("Tasa divisas actualizada")
-                    time.sleep(1)
-                    st.rerun()
+                    try:
+                        db.table("cierres").update({"tasa_divisas": nueva_tasa_divisas}).eq("id", st.session_state.id_turno).execute()
+                        st.session_state.tasa_divisas = nueva_tasa_divisas
+                        st.success("Tasa divisas actualizada")
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
             else:
                 st.metric("💱 Tasa divisas (mercado)", f"{tasa_divisas_actual:.2f} Bs/$")
-            st.metric("💰 Fondo inicial Bs", f"{st.session_state.get('fondo_bs', 0):,.2f} Bs")
-            st.metric("💰 Fondo inicial USD", f"${st.session_state.get('fondo_usd', 0):,.2f}")
+            
+            fondo_bs_val = float(st.session_state.get('fondo_bs', 0))
+            fondo_usd_val = float(st.session_state.get('fondo_usd', 0))
+            st.metric("💰 Fondo inicial Bs", f"{fondo_bs_val:,.2f} Bs")
+            st.metric("💰 Fondo inicial USD", f"${fondo_usd_val:,.2f}")
             st.caption("Datos fijados al abrir el turno")
     else:
         with st.container(border=True):
