@@ -586,7 +586,7 @@ if opcion == "📦 INVENTARIO":
         st.exception(e)
 
 # ============================================
-# MÓDULO 2: PUNTO DE VENTA (OFERTA DIVISAS CORREGIDA)
+# MÓDULO 2: PUNTO DE VENTA (OFERTA DIVISAS SIN REDONDEO)
 # ============================================
 elif opcion == "🛒 PUNTO DE VENTA":
     requiere_turno()
@@ -681,7 +681,7 @@ elif opcion == "🛒 PUNTO DE VENTA":
     with col_opciones1:
         es_tasca = st.checkbox("🍷 Venta en tasca (+20%)", help="Los precios aumentan un 20% para consumo en el local")
     with col_opciones2:
-        es_oferta_divisas = st.checkbox("💲 Oferta en divisas", help="Usa el precio especial en USD (precio_divisas) para pagos en divisas.")
+        es_oferta_divisas = st.checkbox("💲 Oferta en divisas", help="Usa el precio especial en USD (precio_divisas) para pagos en divisas. El total se redondeará al alza en 1 USD.")
     
     with st.popover("🔍 Buscar productos", use_container_width=True):
         busqueda = st.text_input("", placeholder="Escribe nombre del producto...", key="buscar_venta_popover")
@@ -859,26 +859,31 @@ elif opcion == "🛒 PUNTO DE VENTA":
             st.markdown(f"### Total calculado Bs (a tasa BCV): {total_venta_bs:,.2f}")
         
         # ============================================
-        # REDONDEO AUTOMÁTICO A 10 BS (SIEMPRE HACIA ARRIBA)
+        # CÁLCULO DEL MONTO MÍNIMO A COBRAR
         # ============================================
         import math
         
-        # 🔥 CALCULAR TOTAL A COBRAR SEGÚN EL TIPO DE VENTA
         if es_oferta_divisas:
-            # Si hay oferta en divisas, usar tasa divisas y el total en USD (que ya es precio oferta)
-            total_bs_redondeado = math.ceil((total_venta_usd * tasa_divisas) / 10) * 10
+            # 🔥 OFERTA EN DIVISAS: NO REDONDEAR A 10 BS
+            # El monto mínimo es exactamente el total en USD convertido a Bs con tasa divisas
+            total_minimo_bs = total_venta_usd * tasa_divisas
+            total_redondeado_bs = math.ceil(total_minimo_bs / 10) * 10  # Solo para mostrar, pero no es exigido
             st.caption(f"Precios calculados con tasa divisas: {tasa_divisas:.2f} Bs/$")
+            st.markdown("---")
+            st.markdown("### 💰 TOTAL A COBRAR (OFERTA EN DIVISAS)")
+            st.markdown(f"**Total exacto en Bs:** {total_minimo_bs:,.2f} Bs")
+            st.markdown(f"**Equivalente en USD:** ${total_venta_usd:.2f}")
+            if total_redondeado_bs > total_minimo_bs:
+                st.caption(f"💰 Si deseas redondear a 10 Bs, el total sería: {total_redondeado_bs:,.2f} Bs (opcional)")
+            monto_minimo_bs = total_minimo_bs
         else:
-            # Si no hay oferta, usar tasa BCV
-            total_bs_redondeado = math.ceil(total_venta_bs / 10) * 10
-        
-        st.markdown("---")
-        st.markdown("### 💰 TOTAL A COBRAR (REDONDEADO A 10 BS)")
-        st.markdown(f"**Total redondeado a 10 Bs:** {total_bs_redondeado:,.2f} Bs")
-        if es_oferta_divisas:
-            st.caption(f"Equivalente en USD a tasa divisas: ${total_bs_redondeado / tasa_divisas:.2f}")
-        else:
-            st.caption(f"Equivalente en USD a tasa BCV: ${total_bs_redondeado / tasa:.2f}")
+            # 🔥 SIN OFERTA: REDONDEAR A 10 BS SIEMPRE HACIA ARRIBA
+            total_redondeado_bs = math.ceil(total_venta_bs / 10) * 10
+            st.markdown("---")
+            st.markdown("### 💰 TOTAL A COBRAR (REDONDEADO A 10 BS)")
+            st.markdown(f"**Total redondeado a 10 Bs:** {total_redondeado_bs:,.2f} Bs")
+            st.caption(f"Equivalente en USD a tasa BCV: ${total_redondeado_bs / tasa:.2f}")
+            monto_minimo_bs = total_redondeado_bs
         
         st.divider()
         
@@ -886,7 +891,7 @@ elif opcion == "🛒 PUNTO DE VENTA":
         # PAGOS MIXTOS (SIN CHECKBOX DE VUELTO)
         # ============================================
         with st.expander("💳 Detalle de pagos", expanded=True):
-            st.markdown(f"**💰 MONTO MÍNIMO A COBRAR:** {total_bs_redondeado:,.2f} Bs")
+            st.markdown(f"**💰 MONTO MÍNIMO A COBRAR:** {monto_minimo_bs:,.2f} Bs")
             st.markdown("**Ingresa los montos recibidos (el sistema sumará automáticamente):**")
             
             col_p1, col_p2 = st.columns(2)
@@ -909,27 +914,27 @@ elif opcion == "🛒 PUNTO DE VENTA":
             st.markdown("---")
             total_pagado_bs = total_bs_recibido + total_bs_por_usd
             
-            # 🔥 REGLA: El pago debe ser >= total_bs_redondeado
+            # 🔥 REGLA: El pago debe ser >= monto_minimo_bs
             col_res1, col_res2 = st.columns(2)
             with col_res1:
                 st.metric("💰 Total pagado en Bs", f"{total_pagado_bs:,.2f} Bs")
                 if total_usd_recibido > 0:
                     st.caption(f"(de los cuales USD: ${total_usd_recibido:.2f} → {total_bs_por_usd:,.2f} Bs a tasa divisas)")
             with col_res2:
-                st.metric("💵 Mínimo a cobrar", f"{total_bs_redondeado:,.2f} Bs")
+                st.metric("💵 Mínimo a cobrar", f"{monto_minimo_bs:,.2f} Bs")
             
             st.divider()
             
             # Validación
-            if total_pagado_bs >= total_bs_redondeado - 0.01:
+            if total_pagado_bs >= monto_minimo_bs - 0.01:
                 venta_valida = True
-                diferencia = total_pagado_bs - total_bs_redondeado
+                diferencia = total_pagado_bs - monto_minimo_bs
                 st.success(f"✅ **Pago suficiente.** Monto registrado: {total_pagado_bs:,.2f} Bs")
                 if diferencia > 0:
-                    st.info(f"📌 El cliente pagó {diferencia:,.2f} Bs por encima del total redondeado. Este monto se registrará como parte de la venta.")
+                    st.info(f"📌 El cliente pagó {diferencia:,.2f} Bs por encima del total mínimo. Este monto se registrará como parte de la venta.")
             else:
-                faltante = total_bs_redondeado - total_pagado_bs
-                st.error(f"❌ **Faltante:** {faltante:,.2f} Bs. El cliente debe pagar al menos {total_bs_redondeado:,.2f} Bs.")
+                faltante = monto_minimo_bs - total_pagado_bs
+                st.error(f"❌ **Faltante:** {faltante:,.2f} Bs. El cliente debe pagar al menos {monto_minimo_bs:,.2f} Bs.")
                 venta_valida = False
         
         # ============================================
