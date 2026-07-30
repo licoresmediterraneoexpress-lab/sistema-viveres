@@ -586,7 +586,7 @@ if opcion == "📦 INVENTARIO":
         st.exception(e)
 
 # ============================================
-# MÓDULO 2: PUNTO DE VENTA (REDONDEO AUTOMÁTICO Y PAGO REAL)
+# MÓDULO 2: PUNTO DE VENTA (OFERTA DIVISAS CORREGIDA)
 # ============================================
 elif opcion == "🛒 PUNTO DE VENTA":
     requiere_turno()
@@ -681,7 +681,7 @@ elif opcion == "🛒 PUNTO DE VENTA":
     with col_opciones1:
         es_tasca = st.checkbox("🍷 Venta en tasca (+20%)", help="Los precios aumentan un 20% para consumo en el local")
     with col_opciones2:
-        es_oferta_divisas = st.checkbox("💲 Oferta en divisas", help="Usa el precio especial en USD (precio_divisas) para pagos en divisas. El total se redondeará al alza en 1 USD.")
+        es_oferta_divisas = st.checkbox("💲 Oferta en divisas", help="Usa el precio especial en USD (precio_divisas) para pagos en divisas.")
     
     with st.popover("🔍 Buscar productos", use_container_width=True):
         busqueda = st.text_input("", placeholder="Escribe nombre del producto...", key="buscar_venta_popover")
@@ -863,23 +863,22 @@ elif opcion == "🛒 PUNTO DE VENTA":
         # ============================================
         import math
         
-        # 1. Redondeo en divisas (si aplica oferta)
+        # 🔥 CALCULAR TOTAL A COBRAR SEGÚN EL TIPO DE VENTA
         if es_oferta_divisas:
-            total_exacto_usd = total_venta_usd
-            total_redondeado_usd = math.ceil(total_exacto_usd)  # al 1 USD superior
-            # Convertir a Bs usando tasa divisas
-            total_bs_redondeado = total_redondeado_usd * tasa_divisas
+            # Si hay oferta en divisas, usar tasa divisas y el total en USD (que ya es precio oferta)
+            total_bs_redondeado = math.ceil((total_venta_usd * tasa_divisas) / 10) * 10
+            st.caption(f"Precios calculados con tasa divisas: {tasa_divisas:.2f} Bs/$")
         else:
-            total_bs_redondeado = total_venta_bs
-        
-        # 2. Redondeo en Bs a múltiplo de 10 (siempre hacia arriba)
-        total_redondeado_bs = math.ceil(total_bs_redondeado / 10) * 10
+            # Si no hay oferta, usar tasa BCV
+            total_bs_redondeado = math.ceil(total_venta_bs / 10) * 10
         
         st.markdown("---")
-        st.markdown("### 💰 TOTAL A COBRAR (REDONDEADO)")
-        st.markdown(f"**Total redondeado a 10 Bs:** {total_redondeado_bs:,.2f} Bs")
+        st.markdown("### 💰 TOTAL A COBRAR (REDONDEADO A 10 BS)")
+        st.markdown(f"**Total redondeado a 10 Bs:** {total_bs_redondeado:,.2f} Bs")
         if es_oferta_divisas:
-            st.caption(f"Equivalente en USD a tasa divisas: ${total_redondeado_bs / tasa_divisas:.2f}")
+            st.caption(f"Equivalente en USD a tasa divisas: ${total_bs_redondeado / tasa_divisas:.2f}")
+        else:
+            st.caption(f"Equivalente en USD a tasa BCV: ${total_bs_redondeado / tasa:.2f}")
         
         st.divider()
         
@@ -887,7 +886,7 @@ elif opcion == "🛒 PUNTO DE VENTA":
         # PAGOS MIXTOS (SIN CHECKBOX DE VUELTO)
         # ============================================
         with st.expander("💳 Detalle de pagos", expanded=True):
-            st.markdown(f"**💰 MONTO MÍNIMO A COBRAR:** {total_redondeado_bs:,.2f} Bs")
+            st.markdown(f"**💰 MONTO MÍNIMO A COBRAR:** {total_bs_redondeado:,.2f} Bs")
             st.markdown("**Ingresa los montos recibidos (el sistema sumará automáticamente):**")
             
             col_p1, col_p2 = st.columns(2)
@@ -910,27 +909,27 @@ elif opcion == "🛒 PUNTO DE VENTA":
             st.markdown("---")
             total_pagado_bs = total_bs_recibido + total_bs_por_usd
             
-            # 🔥 REGLA SIMPLE: El pago debe ser >= total_redondeado_bs
+            # 🔥 REGLA: El pago debe ser >= total_bs_redondeado
             col_res1, col_res2 = st.columns(2)
             with col_res1:
                 st.metric("💰 Total pagado en Bs", f"{total_pagado_bs:,.2f} Bs")
                 if total_usd_recibido > 0:
                     st.caption(f"(de los cuales USD: ${total_usd_recibido:.2f} → {total_bs_por_usd:,.2f} Bs a tasa divisas)")
             with col_res2:
-                st.metric("💵 Mínimo a cobrar", f"{total_redondeado_bs:,.2f} Bs")
+                st.metric("💵 Mínimo a cobrar", f"{total_bs_redondeado:,.2f} Bs")
             
             st.divider()
             
             # Validación
-            if total_pagado_bs >= total_redondeado_bs - 0.01:
+            if total_pagado_bs >= total_bs_redondeado - 0.01:
                 venta_valida = True
-                diferencia = total_pagado_bs - total_redondeado_bs
+                diferencia = total_pagado_bs - total_bs_redondeado
                 st.success(f"✅ **Pago suficiente.** Monto registrado: {total_pagado_bs:,.2f} Bs")
                 if diferencia > 0:
                     st.info(f"📌 El cliente pagó {diferencia:,.2f} Bs por encima del total redondeado. Este monto se registrará como parte de la venta.")
             else:
-                faltante = total_redondeado_bs - total_pagado_bs
-                st.error(f"❌ **Faltante:** {faltante:,.2f} Bs. El cliente debe pagar al menos {total_redondeado_bs:,.2f} Bs.")
+                faltante = total_bs_redondeado - total_pagado_bs
+                st.error(f"❌ **Faltante:** {faltante:,.2f} Bs. El cliente debe pagar al menos {total_bs_redondeado:,.2f} Bs.")
                 venta_valida = False
         
         # ============================================
@@ -970,9 +969,9 @@ elif opcion == "🛒 PUNTO DE VENTA":
                     
                     costo_venta_bs = total_costo * tasa
                     
-                    # El monto cobrado en Bs es lo que realmente pagó (total_pagado_bs)
+                    # El monto cobrado en Bs es lo que realmente pagó
                     monto_cobrado_bs = total_pagado_bs
-                    # El total_usd se recalcula basado en lo cobrado (usando tasa divisas si aplica oferta)
+                    # El total_usd se recalcula basado en lo cobrado
                     if es_oferta_divisas:
                         total_final_usd = monto_cobrado_bs / tasa_divisas
                     else:
