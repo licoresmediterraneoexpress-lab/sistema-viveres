@@ -1506,7 +1506,7 @@ elif opcion == "📜 HISTORIAL":
                 st.rerun()
 
 # ============================================
-# MÓDULO 5: CIERRE DE CAJA (CON GANANCIA EN BS Y TASA DIVISAS ACTUALIZADA)
+# MÓDULO 5: CIERRE DE CAJA (CON PROPI NAS Y REDONDEO)
 # ============================================
 elif opcion == "📊 CIERRE DE CAJA":
     st.markdown("<h1 class='main-header'>📊 Cierre de Caja</h1>", unsafe_allow_html=True)
@@ -1586,10 +1586,13 @@ elif opcion == "📊 CIERRE DE CAJA":
         total_costos = sum(float(v.get('costo_venta', 0)) for v in ventas)
         total_gastos = sum(float(g.get('monto_usd', 0)) for g in gastos)
 
-        # 🔥 Nuevos cálculos en bolívares
+        # 🔥 Cálculos en bolívares
         total_ingresos_bs = sum(float(v.get('monto_cobrado_bs', 0)) for v in ventas)
         total_costo_bs = sum(float(v.get('costo_venta_bs', 0)) for v in ventas)
         ganancia_neta_bs = total_ingresos_bs - total_costo_bs
+
+        # 🔥 Nueva métrica: Propinas / Redondeo (vuelto no entregado)
+        total_propina = sum(float(v.get('propina', 0)) for v in ventas)
 
         total_pagos_usd = sum(
             float(v.get('pago_divisas', 0)) +
@@ -1614,12 +1617,14 @@ elif opcion == "📊 CIERRE DE CAJA":
         total_punto = sum(float(v.get('pago_punto', 0)) for v in ventas)
 
         st.subheader("📈 Resumen del turno")
-        col_r1, col_r2, col_r3, col_r4, col_r5 = st.columns(5)
+        # Ajustamos a 6 columnas para incluir propina
+        col_r1, col_r2, col_r3, col_r4, col_r5, col_r6 = st.columns(6)
         col_r1.metric("💰 Ventas totales", f"${total_ventas_usd:,.2f}")
         col_r2.metric("📦 Reposición (costo)", f"${total_costos:,.2f}")
         col_r3.metric("💸 Gastos", f"${total_gastos:,.2f}")
         col_r4.metric("📊 Ganancia USD", f"${ganancia_neta_usd:,.2f}")
-        col_r5.metric("🪙 Ganancia Bs", f"{ganancia_neta_bs:,.2f} Bs", help="Ingresos en Bs menos costo en Bs (costo convertido a tasa BCV)")
+        col_r5.metric("🪙 Ganancia Bs", f"{ganancia_neta_bs:,.2f} Bs", help="Ingresos en Bs menos costo en Bs")
+        col_r6.metric("💸 Propinas/Redondeo", f"{total_propina:,.2f} Bs", help="Vuelto no entregado por el cliente (registrado como propina)")
 
         with st.expander("💰 Ver desglose por método de pago", expanded=True):
             col_d1, col_d2 = st.columns(2)
@@ -1668,7 +1673,11 @@ elif opcion == "📊 CIERRE DE CAJA":
             total_bs_fisico = montos['efec_bs'] + montos['pmovil_bs'] + montos['punto_bs']
             total_usd_fisico = montos['efec_usd'] + montos['zelle_usd'] + montos['otros_usd']
 
-            esperado_bs = fondo_bs_ini + total_pagos_bs - (total_gastos * tasa)
+            # El esperado en Bs incluye las propinas (porque es dinero que entra en caja)
+            # La fórmula sigue siendo la misma, porque las propinas ya están incluidas en total_pagos_bs (monto_cobrado_bs no incluye propina, pero el efectivo físico sí la incluye).
+            # Para que cuadre, el esperado debe ser: fondo + ventas en Bs - gastos + propinas
+            # Pero como las propinas son un ingreso extra, las sumamos al esperado.
+            esperado_bs = fondo_bs_ini + total_pagos_bs + total_propina - (total_gastos * tasa)
             esperado_usd = fondo_usd_ini + total_pagos_usd - total_gastos
 
             diff_bs = total_bs_fisico - esperado_bs
@@ -1679,7 +1688,7 @@ elif opcion == "📊 CIERRE DE CAJA":
             col_x1, col_x2 = st.columns(2)
             with col_x1:
                 st.markdown("**🇻🇪 Bolívares**")
-                st.metric("Esperado", f"{esperado_bs:,.2f} Bs")
+                st.metric("Esperado (incluye propinas)", f"{esperado_bs:,.2f} Bs")
                 st.metric("Físico", f"{total_bs_fisico:,.2f} Bs")
                 st.metric("Diferencia", f"{diff_bs:+,.2f} Bs")
             with col_x2:
@@ -1739,6 +1748,7 @@ elif opcion == "📊 CIERRE DE CAJA":
                         st.markdown(f"**Cerró:** {st.session_state.usuario_actual['nombre'] if st.session_state.usuario_actual else 'Anónimo'}")
                         st.markdown(f"**Fecha:** {datetime.now().strftime('%d/%m/%Y %H:%M')}")
                         st.markdown(f"**Ganancia en Bs:** {ganancia_neta_bs:,.2f} Bs")
+                        st.markdown(f"**Propinas/Redondeo:** {total_propina:,.2f} Bs")
                     with col_y2:
                         st.markdown(f"**Ventas:** ${total_ventas_usd:,.2f}")
                         st.markdown(f"**Reposición:** ${reposicion:,.2f}")
