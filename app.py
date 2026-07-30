@@ -586,7 +586,7 @@ if opcion == "📦 INVENTARIO":
         st.exception(e)
 
 # ============================================
-# MÓDULO 2: PUNTO DE VENTA (REDONDEO A 10 BS)
+# MÓDULO 2: PUNTO DE VENTA (REDONDEO AUTOMÁTICO Y EXTRA POR REDONDEO)
 # ============================================
 elif opcion == "🛒 PUNTO DE VENTA":
     requiere_turno()
@@ -859,86 +859,38 @@ elif opcion == "🛒 PUNTO DE VENTA":
             st.markdown(f"### Total calculado Bs (a tasa BCV): {total_venta_bs:,.2f}")
         
         # ============================================
-        # REDONDEO EN DIVISAS (1 USD) Y EN BOLÍVARES (10 BS)
+        # REDONDEO AUTOMÁTICO (SIN AJUSTE MANUAL)
         # ============================================
         import math
         
-        # Primero, determinar el total en divisas (si aplica oferta)
+        # 1. Redondeo en divisas (si aplica oferta)
         if es_oferta_divisas:
             total_exacto_usd = total_venta_usd
-            total_redondeado_usd = math.ceil(total_exacto_usd)  # redondear al 1 USD superior
-            
-            st.markdown("---")
-            st.markdown("### 💱 Redondeo en divisas")
-            st.markdown(f"**Total exacto en divisas:** ${total_exacto_usd:.2f} USD")
-            st.markdown(f"**Total redondeado sugerido:** ${total_redondeado_usd:.2f} USD (redondeo al alza a 1 USD)")
-            
-            total_final_usd = st.number_input(
-                "Ajustar total a cobrar en USD (opcional)",
-                min_value=total_exacto_usd,
-                value=float(total_redondeado_usd),
-                step=1.0,
-                format="%.2f",
-                key="total_redondeado_usd_input",
-                help="Puedes modificar el total a cobrar en USD, siempre que sea mayor o igual al total exacto."
-            )
-            
-            if total_final_usd < total_exacto_usd:
-                st.error(f"❌ El monto en USD no puede ser menor que el total exacto (${total_exacto_usd:.2f}).")
-                st.stop()
-            
-            # Calcular total en Bs usando tasa divisas
-            total_bs_pre_redondeo = total_final_usd * tasa_divisas
+            total_redondeado_usd = math.ceil(total_exacto_usd)  # al 1 USD superior
+            # Convertir a Bs usando tasa divisas
+            total_bs_redondeado = total_redondeado_usd * tasa_divisas
         else:
-            # Si no hay oferta en divisas, usar el total normal
-            total_final_usd = total_venta_usd
-            total_bs_pre_redondeo = total_venta_bs
+            total_bs_redondeado = total_venta_bs
         
-        # ============================================
-        # REDONDEO EN BOLÍVARES A MÚLTIPLO DE 10
-        # ============================================
-        # Calcular redondeo a 10 Bs hacia arriba
-        total_redondeado_bs = math.ceil(total_bs_pre_redondeo / 10) * 10
+        # 2. Redondeo en Bs a múltiplo de 10 (siempre hacia arriba)
+        total_final_bs = math.ceil(total_bs_redondeado / 10) * 10
+        total_final_usd = total_final_bs / tasa_divisas if es_oferta_divisas else total_final_bs / tasa
         
-        # Mostrar ambos totales
         st.markdown("---")
-        st.markdown("### 🇻🇪 Redondeo en Bolívares")
-        st.markdown(f"**Total exacto en Bs:** {total_bs_pre_redondeo:,.2f} Bs")
-        st.markdown(f"**Total a cobrar (redondeado a 10 Bs):** {total_redondeado_bs:,.2f} Bs")
-        
-        # Permitir ajuste manual del total redondeado (siempre ≥ total exacto)
-        total_final_bs = st.number_input(
-            "Ajustar total a cobrar en Bs (opcional)",
-            min_value=total_bs_pre_redondeo,
-            value=float(total_redondeado_bs),
-            step=10.0,
-            format="%.2f",
-            key="total_redondeado_bs_input",
-            help="Puedes modificar el total a cobrar en Bs, siempre que sea mayor o igual al total exacto."
-        )
-        
-        if total_final_bs < total_bs_pre_redondeo:
-            st.error(f"❌ El monto en Bs no puede ser menor que el total exacto ({total_bs_pre_redondeo:,.2f}).")
-            st.stop()
-        
-        # Actualizar el total en USD según el redondeo en Bs (si aplica oferta divisas, usamos la tasa divisas para convertir)
-        if es_oferta_divisas:
-            total_final_usd = total_final_bs / tasa_divisas if tasa_divisas > 0 else total_final_usd
-        else:
-            # Si no hay oferta, la conversión a USD es solo informativa
-            total_final_usd = total_final_bs / tasa if tasa > 0 else total_venta_usd
-        
-        st.info(f"**Total a cobrar final:** ${total_final_usd:.2f} USD / {total_final_bs:,.2f} Bs")
+        st.markdown("### 💰 TOTAL A COBRAR (REDONDEADO AUTOMÁTICAMENTE)")
+        st.markdown(f"**Total en USD:** ${total_final_usd:.2f}")
+        st.markdown(f"**Total en Bs:** {total_final_bs:,.2f} Bs")
+        st.caption("El redondeo se ha aplicado automáticamente al múltiplo de 10 Bs superior.")
         
         st.divider()
         
         # ============================================
-        # PAGOS MIXTOS CON DOS TASAS Y BOTÓN "NO DAR VUELTO"
+        # PAGOS MIXTOS CON DOS TASAS
         # ============================================
         with st.expander("💳 Detalle de pagos", expanded=True):
             st.markdown(f"**💰 MONTO FINAL A COBRAR:** ${total_final_usd:.2f} / {total_final_bs:,.2f} Bs")
             st.markdown("---")
-            st.markdown("**Ingresa los montos recibidos (el sistema los sumará automáticamente):**")
+            st.markdown("**Ingresa los montos recibidos:**")
             
             col_p1, col_p2 = st.columns(2)
             with col_p1:
@@ -971,6 +923,7 @@ elif opcion == "🛒 PUNTO DE VENTA":
             
             st.divider()
             
+            # Verificar si el pago es suficiente
             if diferencia_bs >= -0.01:
                 vuelto_bs = diferencia_bs
                 st.success(f"✅ **Pago suficiente.** Vuelto: **{vuelto_bs:,.2f} Bs**")
@@ -978,10 +931,10 @@ elif opcion == "🛒 PUNTO DE VENTA":
                     st.caption(f"(Equivalente en USD a tasa divisas: ${vuelto_bs / tasa_divisas:.2f} USD)")
                 venta_valida = True
                 
-                # 🔥 Botón "No entregar vuelto"
+                # 🔥 NUEVO: Solo si hay vuelto y es positivo, mostrar el checkbox
                 if vuelto_bs > 0:
-                    no_entregar_vuelto = st.checkbox("💸 No entregar vuelto (registrar como propina/redondeo)", 
-                                                     help="Activa esto si el cliente no desea recibir el vuelto y prefieres quedártelo como propina o redondeo.")
+                    no_entregar_vuelto = st.checkbox("💸 No entregar vuelto (registrar como Extra por redondeo)", 
+                                                     help="Activa esto si no puedes dar el vuelto. La diferencia se registrará como ingreso extra.")
                 else:
                     no_entregar_vuelto = False
             else:
@@ -1025,9 +978,10 @@ elif opcion == "🛒 PUNTO DE VENTA":
                     if info_cliente:
                         info_cliente = f" - Cliente: {info_cliente}"
                     
-                    propina = 0.0
+                    # Calcular extra por redondeo (si no se entregó vuelto)
+                    extra_redondeo = 0.0
                     if no_entregar_vuelto and vuelto_bs > 0:
-                        propina = vuelto_bs
+                        extra_redondeo = vuelto_bs
                     
                     costo_venta_bs = total_costo * tasa
                     
@@ -1046,7 +1000,7 @@ elif opcion == "🛒 PUNTO DE VENTA":
                         "pago_punto": round(pago_punto, 2),
                         "costo_venta": round(total_costo, 2),
                         "costo_venta_bs": round(costo_venta_bs, 2),
-                        "propina": round(propina, 2),
+                        "extra_redondeo": round(extra_redondeo, 2),  # 🔥 NUEVO: extra por no dar vuelto
                         "estado": "Finalizado",
                         "items": json.dumps(carrito),
                         "id_transaccion": str(int(datetime.now().timestamp())),
