@@ -325,7 +325,7 @@ with st.sidebar:
         st.error("🔴 Caja cerrada")
 
 # ============================================
-# MÓDULO 1: INVENTARIO (SIN CAMBIOS)
+# MÓDULO 1: INVENTARIO (CON PRECIO OFERTA EN DIVISAS)
 # ============================================
 if opcion == "📦 INVENTARIO":
     st.markdown("<h1 class='main-header'>📦 Gestión de Inventario</h1>", unsafe_allow_html=True)
@@ -344,6 +344,8 @@ if opcion == "📦 INVENTARIO":
                 df['categoria'] = 'Otros'
             if 'codigo_barras' not in df.columns:
                 df['codigo_barras'] = ''
+            if 'precio_divisas' not in df.columns:
+                df['precio_divisas'] = 0.0
         
         tab1, tab2, tab3, tab4 = st.tabs(["📋 Ver Inventario", "➕ Agregar Producto", "📊 Estadísticas", "📥 Respaldos"])
         
@@ -358,8 +360,8 @@ if opcion == "📦 INVENTARIO":
             with col_f4:
                 if st.button("📤 Exportar a Excel", use_container_width=True):
                     if not df.empty:
-                        export_df = df[['nombre', 'categoria', 'stock', 'costo', 'precio_detal', 'precio_mayor', 'min_mayor']].copy()
-                        export_df.columns = ['Producto', 'Categoría', 'Stock', 'Costo $', 'Precio Detal $', 'Precio Mayor $', 'Min. Mayor']
+                        export_df = df[['nombre', 'categoria', 'stock', 'costo', 'precio_detal', 'precio_mayor', 'precio_divisas', 'min_mayor']].copy()
+                        export_df.columns = ['Producto', 'Categoría', 'Stock', 'Costo $', 'Precio Detal $', 'Precio Mayor $', 'Precio Oferta Divisas $', 'Min. Mayor']
                         href = exportar_excel(export_df, f"inventario_{datetime.now().strftime('%Y%m%d')}")
                         st.markdown(href, unsafe_allow_html=True)
             
@@ -389,10 +391,10 @@ if opcion == "📦 INVENTARIO":
                         return 'color: orange; font-weight: bold;'
                     return 'color: green; font-weight: bold;'
                 
-                columnas_mostrar = ['nombre', 'categoria', 'stock', 'costo', 'precio_detal', 'precio_mayor', 'min_mayor']
+                columnas_mostrar = ['nombre', 'categoria', 'stock', 'costo', 'precio_detal', 'precio_mayor', 'precio_divisas', 'min_mayor']
                 columnas_mostrar = [col for col in columnas_mostrar if col in df_filtrado.columns]
                 df_mostrar = df_filtrado[columnas_mostrar].copy()
-                df_mostrar.columns = ['Producto', 'Categoría', 'Stock', 'Costo $', 'Detal $', 'Mayor $', 'Mín. Mayor']
+                df_mostrar.columns = ['Producto', 'Categoría', 'Stock', 'Costo $', 'Detal $', 'Mayor $', 'Oferta Divisas $', 'Mín. Mayor']
                 styled_df = df_mostrar.style.map(colorear_stock, subset=['Stock'])
                 st.dataframe(styled_df, use_container_width=True, hide_index=True)
                 st.caption(f"Mostrando {len(df_filtrado)} de {len(df)} productos")
@@ -415,6 +417,8 @@ if opcion == "📦 INVENTARIO":
                             with col_e2:
                                 nuevo_detal = st.number_input("Precio Detal $", value=float(prod['precio_detal']), min_value=0.0, step=0.01)
                                 nuevo_mayor = st.number_input("Precio Mayor $", value=float(prod['precio_mayor']), min_value=0.0, step=0.01)
+                                nuevo_precio_divisas = st.number_input("Precio Oferta en Divisas $", value=float(prod.get('precio_divisas', 0)), min_value=0.0, step=0.01,
+                                                                      help="Deja en 0 si no aplica oferta especial en divisas")
                                 nuevo_min = st.number_input("Mín. Mayor", value=int(prod['min_mayor']), min_value=1, step=1)
                             if st.form_submit_button("💾 Guardar Cambios", use_container_width=True):
                                 try:
@@ -425,6 +429,7 @@ if opcion == "📦 INVENTARIO":
                                         "costo": nuevo_costo,
                                         "precio_detal": nuevo_detal,
                                         "precio_mayor": nuevo_mayor,
+                                        "precio_divisas": nuevo_precio_divisas,
                                         "min_mayor": nuevo_min
                                     }
                                     if nuevo_codigo:
@@ -470,6 +475,8 @@ if opcion == "📦 INVENTARIO":
                 with col_a2:
                     precio_detal = st.number_input("Precio Detal $ *", min_value=0.0, step=0.01, format="%.2f")
                     precio_mayor = st.number_input("Precio Mayor $ *", min_value=0.0, step=0.01, format="%.2f")
+                    precio_divisas = st.number_input("Precio Oferta en Divisas $ (opcional)", min_value=0.0, step=0.01, format="%.2f",
+                                                    help="Deja en 0 si no aplica oferta especial en divisas")
                     min_mayor = st.number_input("Mínimo para Mayor *", min_value=1, value=6, step=1)
                 if st.form_submit_button("📦 Registrar Producto", use_container_width=True):
                     if not nombre:
@@ -489,6 +496,7 @@ if opcion == "📦 INVENTARIO":
                                 "costo": costo,
                                 "precio_detal": precio_detal,
                                 "precio_mayor": precio_mayor,
+                                "precio_divisas": precio_divisas,
                                 "min_mayor": min_mayor
                             }
                             if codigo_barras:
@@ -552,16 +560,16 @@ if opcion == "📦 INVENTARIO":
                 with col_r1:
                     st.markdown("**📊 Respaldo completo**")
                     if st.button("📥 Exportar inventario completo", use_container_width=True):
-                        export_df = df[['nombre', 'categoria', 'stock', 'costo', 'precio_detal', 'precio_mayor', 'min_mayor']].copy()
-                        export_df.columns = ['Producto', 'Categoría', 'Stock', 'Costo $', 'Precio Detal $', 'Precio Mayor $', 'Min. Mayor']
+                        export_df = df[['nombre', 'categoria', 'stock', 'costo', 'precio_detal', 'precio_mayor', 'precio_divisas', 'min_mayor']].copy()
+                        export_df.columns = ['Producto', 'Categoría', 'Stock', 'Costo $', 'Precio Detal $', 'Precio Mayor $', 'Precio Oferta Divisas $', 'Min. Mayor']
                         export_df = export_df.sort_values('Producto')
                         href = exportar_excel(export_df, f"inventario_completo_{datetime.now().strftime('%Y%m%d_%H%M')}")
                         st.markdown(href, unsafe_allow_html=True)
                 with col_r2:
                     st.markdown("**📋 Lista de precios**")
                     if st.button("📥 Exportar lista de precios", use_container_width=True):
-                        precio_df = df[['nombre', 'categoria', 'precio_detal', 'precio_mayor', 'min_mayor']].copy()
-                        precio_df.columns = ['Producto', 'Categoría', 'Precio Detal $', 'Precio Mayor $', 'Mín. Mayor']
+                        precio_df = df[['nombre', 'categoria', 'precio_detal', 'precio_mayor', 'precio_divisas', 'min_mayor']].copy()
+                        precio_df.columns = ['Producto', 'Categoría', 'Precio Detal $', 'Precio Mayor $', 'Precio Oferta Divisas $', 'Mín. Mayor']
                         precio_df = precio_df.sort_values('Categoría')
                         href = exportar_excel(precio_df, f"lista_precios_{datetime.now().strftime('%Y%m%d')}")
                         st.markdown(href, unsafe_allow_html=True)
