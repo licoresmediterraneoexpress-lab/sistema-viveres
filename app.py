@@ -586,7 +586,7 @@ if opcion == "📦 INVENTARIO":
         st.exception(e)
 
 # ============================================
-# MÓDULO 2: PUNTO DE VENTA (TASCA 20%, COSTO EN BS, VALIDACIÓN DE STOCK, TASA DIVISAS ACTUALIZADA)
+# MÓDULO 2: PUNTO DE VENTA (OFERTAS, REDONDEO, NO DAR VUELTO)
 # ============================================
 elif opcion == "🛒 PUNTO DE VENTA":
     requiere_turno()
@@ -603,7 +603,7 @@ elif opcion == "🛒 PUNTO DE VENTA":
             tasa_divisas = tasa
     except:
         tasa_divisas = tasa
-    st.session_state.tasa_divisas = tasa_divisas  # Actualizar sesión
+    st.session_state.tasa_divisas = tasa_divisas
     
     st.markdown("<h1 class='main-header'>🛒 Punto de Venta</h1>", unsafe_allow_html=True)
     st.markdown(f"""
@@ -674,7 +674,14 @@ elif opcion == "🛒 PUNTO DE VENTA":
     
     st.divider()
     
-    es_tasca = st.checkbox("🍷 Venta en tasca (+20%)", help="Los precios aumentan un 20% para consumo en el local")
+    # ============================================
+    # OPCIONES DE VENTA: TASCA Y OFERTA EN DIVISAS
+    # ============================================
+    col_opciones1, col_opciones2 = st.columns(2)
+    with col_opciones1:
+        es_tasca = st.checkbox("🍷 Venta en tasca (+20%)", help="Los precios aumentan un 20% para consumo en el local")
+    with col_opciones2:
+        es_oferta_divisas = st.checkbox("💲 Oferta en divisas", help="Usa el precio especial en USD (precio_divisas) para pagos en divisas. El total se redondeará al alza en 1 USD.")
     
     with st.popover("🔍 Buscar productos", use_container_width=True):
         busqueda = st.text_input("", placeholder="Escribe nombre del producto...", key="buscar_venta_popover")
@@ -697,7 +704,13 @@ elif opcion == "🛒 PUNTO DE VENTA":
                     cols_header[3].write("**Precio Bs (BCV)**")
                     st.markdown("---")
                     for prod in productos:
-                        precio_base = float(prod['precio_detal'])
+                        # Determinar precio base según oferta divisas
+                        if es_oferta_divisas and float(prod.get('precio_divisas', 0)) > 0:
+                            precio_base = float(prod['precio_divisas'])
+                            es_oferta = True
+                        else:
+                            precio_base = float(prod['precio_detal'])
+                            es_oferta = False
                         precio_unitario = precio_base * 1.20 if es_tasca else precio_base
                         precio_bs = precio_unitario * tasa
                         col1, col2, col3, col4, col5 = st.columns([3, 1, 1, 1, 0.5])
@@ -712,21 +725,29 @@ elif opcion == "🛒 PUNTO DE VENTA":
                                 if item['id'] == prod['id']:
                                     cantidad_existente += item['cantidad']
                             nueva_cantidad = cantidad_existente + 1
-                            if nueva_cantidad >= prod['min_mayor'] and not es_tasca:
-                                precio_final = float(prod['precio_mayor'])
-                                tipo_precio = " (Mayor)"
+                            
+                            # Determinar precio final
+                            if es_oferta_divisas and float(prod.get('precio_divisas', 0)) > 0:
+                                precio_final = float(prod['precio_divisas'])
+                                tipo_precio = " (Oferta Divisas)"
                             else:
-                                precio_final = precio_base
-                                tipo_precio = ""
-                            if es_tasca:
-                                precio_final = precio_base * 1.20
-                                tipo_precio = " (Tasca +20%)"
+                                if nueva_cantidad >= prod['min_mayor'] and not es_tasca:
+                                    precio_final = float(prod['precio_mayor'])
+                                    tipo_precio = " (Mayor)"
+                                else:
+                                    precio_final = precio_base
+                                    tipo_precio = ""
+                                if es_tasca:
+                                    precio_final = precio_final * 1.20
+                                    tipo_precio = " (Tasca +20%)"
+                            
                             encontrado = False
                             for item in st.session_state.mesas[st.session_state.mesa_actual]['carrito']:
                                 if item['id'] == prod['id']:
                                     item['cantidad'] += 1
                                     item['precio'] = precio_final
                                     item['subtotal'] = item['cantidad'] * item['precio']
+                                    item['tipo_precio'] = tipo_precio
                                     encontrado = True
                                     break
                             if not encontrado:
@@ -796,21 +817,25 @@ elif opcion == "🛒 PUNTO DE VENTA":
                     else:
                         prod_data = None
                         try:
-                            prod_resp = db.table("inventario").select("precio_detal, precio_mayor, min_mayor").eq("id", item['id']).execute()
+                            prod_resp = db.table("inventario").select("precio_detal, precio_mayor, precio_divisas, min_mayor").eq("id", item['id']).execute()
                             if prod_resp.data:
                                 prod_data = prod_resp.data[0]
                         except:
                             pass
                         if prod_data:
-                            if nueva_cant >= prod_data['min_mayor'] and not es_tasca:
-                                nuevo_precio = float(prod_data['precio_mayor'])
-                                tipo_precio = " (Mayor)"
+                            if es_oferta_divisas and float(prod_data.get('precio_divisas', 0)) > 0:
+                                nuevo_precio = float(prod_data['precio_divisas'])
+                                tipo_precio = " (Oferta Divisas)"
                             else:
-                                nuevo_precio = float(prod_data['precio_detal'])
-                                tipo_precio = ""
-                            if es_tasca:
-                                nuevo_precio = nuevo_precio * 1.20
-                                tipo_precio = " (Tasca +20%)"
+                                if nueva_cant >= prod_data['min_mayor'] and not es_tasca:
+                                    nuevo_precio = float(prod_data['precio_mayor'])
+                                    tipo_precio = " (Mayor)"
+                                else:
+                                    nuevo_precio = float(prod_data['precio_detal'])
+                                    tipo_precio = ""
+                                if es_tasca:
+                                    nuevo_precio = nuevo_precio * 1.20
+                                    tipo_precio = " (Tasca +20%)"
                             item['precio'] = nuevo_precio
                             item['tipo_precio'] = tipo_precio
                         item['cantidad'] = nueva_cant
@@ -836,65 +861,52 @@ elif opcion == "🛒 PUNTO DE VENTA":
             st.markdown(f"### Total calculado Bs (a tasa BCV): {total_venta_bs:,.2f}")
         
         # ============================================
-        # AJUSTE DE MONTO FINAL CON SELECCIÓN DE TASA
+        # REDONDEO AUTOMÁTICO EN DIVISAS (1 USD hacia arriba)
         # ============================================
-        with st.expander("🔧 Ajustar monto final (redondeo)", expanded=False):
-            st.markdown(f"**Tasas disponibles:** BCV: {tasa:.2f} Bs/$ | Divisas: {tasa_divisas:.2f} Bs/$")
-            tasa_a_usar = st.radio(
-                "Selecciona la tasa con la que se calculará el monto final si ajustas en Dólares:",
-                ["BCV", "Divisas"],
-                horizontal=True,
-                key="tasa_cobro"
-            )
-            st.markdown("Si deseas redondear el total a cobrar, selecciona una opción e ingresa el monto:")
-            opcion_ajuste = st.radio(
-                "Ajustar en:",
-                ["No ajustar (usar calculado)", "Bolívares (Bs)", "Dólares (USD)"],
-                horizontal=True,
-                key="opcion_ajuste"
+        # Calcular total exacto en divisas
+        total_exacto_usd = total_venta_usd  # Ya está en USD
+        
+        # Si está activa la oferta en divisas, aplicamos redondeo
+        if es_oferta_divisas:
+            import math
+            # Redondear hacia arriba al siguiente 1 USD
+            total_redondeado_usd = math.ceil(total_exacto_usd)
+            # Permitir ajuste manual (solo si es >= total exacto)
+            st.markdown("---")
+            st.markdown("### 💱 Redondeo en divisas")
+            st.markdown(f"**Total exacto en divisas:** ${total_exacto_usd:.2f} USD")
+            st.markdown(f"**Total redondeado sugerido:** ${total_redondeado_usd:.2f} USD (redondeo al alza a 1 USD)")
+            
+            # Campo para ajustar el total redondeado (si el cliente prefiere otro monto cerrado)
+            total_final_usd = st.number_input(
+                "Ajustar total a cobrar en USD (opcional)",
+                min_value=total_exacto_usd,
+                value=float(total_redondeado_usd),
+                step=1.0,
+                format="%.2f",
+                key="total_redondeado_usd_input",
+                help="Puedes modificar el total a cobrar en USD, siempre que sea mayor o igual al total exacto."
             )
             
-            if opcion_ajuste == "Bolívares (Bs)":
-                monto_ajustado_bs = st.number_input(
-                    "Monto final en Bs",
-                    min_value=0.0,
-                    value=float(total_venta_bs),
-                    step=10.0,
-                    format="%.2f",
-                    key="monto_ajustado_bs"
-                )
-                total_final_bs = monto_ajustado_bs
-                if tasa_a_usar == "BCV":
-                    total_final_usd = monto_ajustado_bs / tasa if tasa > 0 else 0
-                    st.info(f"Equivalente en USD (a tasa BCV): ${total_final_usd:.2f}")
-                else:
-                    total_final_usd = monto_ajustado_bs / tasa_divisas if tasa_divisas > 0 else 0
-                    st.info(f"Equivalente en USD (a tasa divisas): ${total_final_usd:.2f}")
-            elif opcion_ajuste == "Dólares (USD)":
-                monto_ajustado_usd = st.number_input(
-                    "Monto final en USD",
-                    min_value=0.0,
-                    value=float(total_venta_usd),
-                    step=1.0,
-                    format="%.2f",
-                    key="monto_ajustado_usd"
-                )
-                total_final_usd = monto_ajustado_usd
-                if tasa_a_usar == "BCV":
-                    total_final_bs = monto_ajustado_usd * tasa
-                    st.info(f"Equivalente en Bs (a tasa BCV): {total_final_bs:,.2f} Bs")
-                else:
-                    total_final_bs = monto_ajustado_usd * tasa_divisas
-                    st.info(f"Equivalente en Bs (a tasa divisas): {total_final_bs:,.2f} Bs")
-            else:
-                total_final_usd = total_venta_usd
-                total_final_bs = total_venta_bs
-                st.info(f"Se usará el total calculado: ${total_final_usd:.2f} / {total_final_bs:,.2f} Bs (tasa BCV)")
+            # Validar que no sea menor al total exacto
+            if total_final_usd < total_exacto_usd:
+                st.error(f"❌ El monto en USD no puede ser menor que el total exacto (${total_exacto_usd:.2f}).")
+                st.stop()
+            
+            # Calcular total en Bs usando tasa divisas
+            total_final_bs = total_final_usd * tasa_divisas
+            
+            st.info(f"**Total a cobrar:** ${total_final_usd:.2f} USD → {total_final_bs:,.2f} Bs (a tasa divisas {tasa_divisas:.2f} Bs/$)")
+        else:
+            # Si no hay oferta en divisas, usar el total normal (sin redondeo)
+            total_final_usd = total_venta_usd
+            total_final_bs = total_venta_bs
+            st.info("**Total a cobrar (sin redondeo):** ${:.2f} USD / {:.2f} Bs".format(total_final_usd, total_final_bs))
         
         st.divider()
         
         # ============================================
-        # PAGOS MIXTOS CON DOS TASAS
+        # PAGOS MIXTOS CON DOS TASAS Y BOTÓN "NO DAR VUELTO"
         # ============================================
         with st.expander("💳 Detalle de pagos", expanded=True):
             st.markdown(f"**💰 MONTO FINAL A COBRAR:** ${total_final_usd:.2f} / {total_final_bs:,.2f} Bs")
@@ -932,16 +944,25 @@ elif opcion == "🛒 PUNTO DE VENTA":
             
             st.divider()
             
+            # Verificar si el pago es suficiente
             if diferencia_bs >= -0.01:
                 vuelto_bs = diferencia_bs
                 st.success(f"✅ **Pago suficiente.** Vuelto: **{vuelto_bs:,.2f} Bs**")
                 if vuelto_bs > 0:
                     st.caption(f"(Equivalente en USD a tasa divisas: ${vuelto_bs / tasa_divisas:.2f} USD)")
                 venta_valida = True
+                
+                # 🔥 NUEVO: Botón "No entregar vuelto"
+                if vuelto_bs > 0:
+                    no_entregar_vuelto = st.checkbox("💸 No entregar vuelto (registrar como propina/redondeo)", 
+                                                     help="Activa esto si el cliente no desea recibir el vuelto y prefieres quedártelo como propina o redondeo.")
+                else:
+                    no_entregar_vuelto = False
             else:
                 faltante_bs = -diferencia_bs
                 st.error(f"❌ **Faltante:** {faltante_bs:,.2f} Bs. El cliente debe pagar esa cantidad adicional.")
                 venta_valida = False
+                no_entregar_vuelto = False
         
         # ============================================
         # BOTONES DE ACCIÓN
@@ -958,7 +979,6 @@ elif opcion == "🛒 PUNTO DE VENTA":
                     # Verificación de stock antes de actualizar
                     stock_insuficiente = False
                     for item in carrito:
-                        # Consultar stock actual (online)
                         stock_res = db.table("inventario").select("stock").eq("id", item['id']).execute()
                         if stock_res.data:
                             stock_actual = stock_res.data[0]['stock']
@@ -981,6 +1001,11 @@ elif opcion == "🛒 PUNTO DE VENTA":
                     if info_cliente:
                         info_cliente = f" - Cliente: {info_cliente}"
                     
+                    # Determinar propina (si se activó "No entregar vuelto")
+                    propina = 0.0
+                    if no_entregar_vuelto and vuelto_bs > 0:
+                        propina = vuelto_bs
+                    
                     costo_venta_bs = total_costo * tasa
                     
                     venta_data = {
@@ -998,6 +1023,7 @@ elif opcion == "🛒 PUNTO DE VENTA":
                         "pago_punto": round(pago_punto, 2),
                         "costo_venta": round(total_costo, 2),
                         "costo_venta_bs": round(costo_venta_bs, 2),
+                        "propina": round(propina, 2),  # 🔥 NUEVO
                         "estado": "Finalizado",
                         "items": json.dumps(carrito),
                         "id_transaccion": str(int(datetime.now().timestamp())),
