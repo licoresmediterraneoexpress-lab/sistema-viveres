@@ -586,7 +586,7 @@ if opcion == "📦 INVENTARIO":
         st.exception(e)
 
 # ============================================
-# MÓDULO 2: PUNTO DE VENTA (REDONDEO AUTOMÁTICO Y EXTRA POR REDONDEO)
+# MÓDULO 2: PUNTO DE VENTA (REDONDEO AUTOMÁTICO Y PAGO REAL)
 # ============================================
 elif opcion == "🛒 PUNTO DE VENTA":
     requiere_turno()
@@ -859,7 +859,7 @@ elif opcion == "🛒 PUNTO DE VENTA":
             st.markdown(f"### Total calculado Bs (a tasa BCV): {total_venta_bs:,.2f}")
         
         # ============================================
-        # REDONDEO AUTOMÁTICO (SIN AJUSTE MANUAL)
+        # REDONDEO AUTOMÁTICO A 10 BS (SIEMPRE HACIA ARRIBA)
         # ============================================
         import math
         
@@ -873,24 +873,22 @@ elif opcion == "🛒 PUNTO DE VENTA":
             total_bs_redondeado = total_venta_bs
         
         # 2. Redondeo en Bs a múltiplo de 10 (siempre hacia arriba)
-        total_final_bs = math.ceil(total_bs_redondeado / 10) * 10
-        total_final_usd = total_final_bs / tasa_divisas if es_oferta_divisas else total_final_bs / tasa
+        total_redondeado_bs = math.ceil(total_bs_redondeado / 10) * 10
         
         st.markdown("---")
-        st.markdown("### 💰 TOTAL A COBRAR (REDONDEADO AUTOMÁTICAMENTE)")
-        st.markdown(f"**Total en USD:** ${total_final_usd:.2f}")
-        st.markdown(f"**Total en Bs:** {total_final_bs:,.2f} Bs")
-        st.caption("El redondeo se ha aplicado automáticamente al múltiplo de 10 Bs superior.")
+        st.markdown("### 💰 TOTAL A COBRAR (REDONDEADO)")
+        st.markdown(f"**Total redondeado a 10 Bs:** {total_redondeado_bs:,.2f} Bs")
+        if es_oferta_divisas:
+            st.caption(f"Equivalente en USD a tasa divisas: ${total_redondeado_bs / tasa_divisas:.2f}")
         
         st.divider()
         
         # ============================================
-        # PAGOS MIXTOS CON DOS TASAS
+        # PAGOS MIXTOS (SIN CHECKBOX DE VUELTO)
         # ============================================
         with st.expander("💳 Detalle de pagos", expanded=True):
-            st.markdown(f"**💰 MONTO FINAL A COBRAR:** ${total_final_usd:.2f} / {total_final_bs:,.2f} Bs")
-            st.markdown("---")
-            st.markdown("**Ingresa los montos recibidos:**")
+            st.markdown(f"**💰 MONTO MÍNIMO A COBRAR:** {total_redondeado_bs:,.2f} Bs")
+            st.markdown("**Ingresa los montos recibidos (el sistema sumará automáticamente):**")
             
             col_p1, col_p2 = st.columns(2)
             with col_p1:
@@ -911,37 +909,29 @@ elif opcion == "🛒 PUNTO DE VENTA":
             
             st.markdown("---")
             total_pagado_bs = total_bs_recibido + total_bs_por_usd
-            diferencia_bs = total_pagado_bs - total_final_bs
             
+            # 🔥 REGLA SIMPLE: El pago debe ser >= total_redondeado_bs
             col_res1, col_res2 = st.columns(2)
             with col_res1:
                 st.metric("💰 Total pagado en Bs", f"{total_pagado_bs:,.2f} Bs")
                 if total_usd_recibido > 0:
                     st.caption(f"(de los cuales USD: ${total_usd_recibido:.2f} → {total_bs_por_usd:,.2f} Bs a tasa divisas)")
             with col_res2:
-                st.metric("💵 Total a cobrar", f"{total_final_bs:,.2f} Bs")
+                st.metric("💵 Mínimo a cobrar", f"{total_redondeado_bs:,.2f} Bs")
             
             st.divider()
             
-            # Verificar si el pago es suficiente
-            if diferencia_bs >= -0.01:
-                vuelto_bs = diferencia_bs
-                st.success(f"✅ **Pago suficiente.** Vuelto: **{vuelto_bs:,.2f} Bs**")
-                if vuelto_bs > 0:
-                    st.caption(f"(Equivalente en USD a tasa divisas: ${vuelto_bs / tasa_divisas:.2f} USD)")
+            # Validación
+            if total_pagado_bs >= total_redondeado_bs - 0.01:
                 venta_valida = True
-                
-                # 🔥 NUEVO: Solo si hay vuelto y es positivo, mostrar el checkbox
-                if vuelto_bs > 0:
-                    no_entregar_vuelto = st.checkbox("💸 No entregar vuelto (registrar como Extra por redondeo)", 
-                                                     help="Activa esto si no puedes dar el vuelto. La diferencia se registrará como ingreso extra.")
-                else:
-                    no_entregar_vuelto = False
+                diferencia = total_pagado_bs - total_redondeado_bs
+                st.success(f"✅ **Pago suficiente.** Monto registrado: {total_pagado_bs:,.2f} Bs")
+                if diferencia > 0:
+                    st.info(f"📌 El cliente pagó {diferencia:,.2f} Bs por encima del total redondeado. Este monto se registrará como parte de la venta.")
             else:
-                faltante_bs = -diferencia_bs
-                st.error(f"❌ **Faltante:** {faltante_bs:,.2f} Bs. El cliente debe pagar esa cantidad adicional.")
+                faltante = total_redondeado_bs - total_pagado_bs
+                st.error(f"❌ **Faltante:** {faltante:,.2f} Bs. El cliente debe pagar al menos {total_redondeado_bs:,.2f} Bs.")
                 venta_valida = False
-                no_entregar_vuelto = False
         
         # ============================================
         # BOTONES DE ACCIÓN
@@ -978,19 +968,22 @@ elif opcion == "🛒 PUNTO DE VENTA":
                     if info_cliente:
                         info_cliente = f" - Cliente: {info_cliente}"
                     
-                    # Calcular extra por redondeo (si no se entregó vuelto)
-                    extra_redondeo = 0.0
-                    if no_entregar_vuelto and vuelto_bs > 0:
-                        extra_redondeo = vuelto_bs
-                    
                     costo_venta_bs = total_costo * tasa
+                    
+                    # El monto cobrado en Bs es lo que realmente pagó (total_pagado_bs)
+                    monto_cobrado_bs = total_pagado_bs
+                    # El total_usd se recalcula basado en lo cobrado (usando tasa divisas si aplica oferta)
+                    if es_oferta_divisas:
+                        total_final_usd = monto_cobrado_bs / tasa_divisas
+                    else:
+                        total_final_usd = monto_cobrado_bs / tasa
                     
                     venta_data = {
                         "id_cierre": id_turno,
                         "producto": ", ".join(items_resumen),
                         "cantidad": len(carrito),
                         "total_usd": round(total_final_usd, 2),
-                        "monto_cobrado_bs": round(total_final_bs, 2),
+                        "monto_cobrado_bs": round(monto_cobrado_bs, 2),
                         "tasa_cambio": tasa,
                         "pago_divisas": round(pago_usd_efectivo, 2),
                         "pago_zelle": round(pago_zelle, 2),
@@ -1000,7 +993,6 @@ elif opcion == "🛒 PUNTO DE VENTA":
                         "pago_punto": round(pago_punto, 2),
                         "costo_venta": round(total_costo, 2),
                         "costo_venta_bs": round(costo_venta_bs, 2),
-                        "extra_redondeo": round(extra_redondeo, 2),  # 🔥 NUEVO: extra por no dar vuelto
                         "estado": "Finalizado",
                         "items": json.dumps(carrito),
                         "id_transaccion": str(int(datetime.now().timestamp())),
@@ -1050,8 +1042,8 @@ elif opcion == "🛒 PUNTO DE VENTA":
                                     <td style="text-align:right;">${total_final_usd:.2f}</td>
                                 </tr>
                                 <tr>
-                                    <td style="text-align:right;"><b>Total Bs:</b></td>
-                                    <td style="text-align:right;">{total_final_bs:,.2f} Bs</td>
+                                    <td style="text-align:right;"><b>Total Bs (cobrado):</b></td>
+                                    <td style="text-align:right;">{monto_cobrado_bs:,.2f} Bs</td>
                                 </tr>
                             </table>
                             <p style="text-align:center; margin-top:20px;">¡Gracias por su compra!</p>
@@ -1483,7 +1475,7 @@ elif opcion == "📜 HISTORIAL":
                 st.rerun()
 
 # ============================================
-# MÓDULO 5: CIERRE DE CAJA (CON EXTRA POR REDONDEO)
+# MÓDULO 5: CIERRE DE CAJA (SIN EXTRA POR REDONDEO)
 # ============================================
 elif opcion == "📊 CIERRE DE CAJA":
     st.markdown("<h1 class='main-header'>📊 Cierre de Caja</h1>", unsafe_allow_html=True)
@@ -1568,9 +1560,6 @@ elif opcion == "📊 CIERRE DE CAJA":
         total_costo_bs = sum(float(v.get('costo_venta_bs', 0)) for v in ventas)
         ganancia_neta_bs = total_ingresos_bs - total_costo_bs
 
-        # 🔥 Extra por redondeo (vuelto no entregado)
-        total_extra_redondeo = sum(float(v.get('extra_redondeo', 0)) for v in ventas)
-
         total_pagos_usd = sum(
             float(v.get('pago_divisas', 0)) +
             float(v.get('pago_zelle', 0)) +
@@ -1594,14 +1583,12 @@ elif opcion == "📊 CIERRE DE CAJA":
         total_punto = sum(float(v.get('pago_punto', 0)) for v in ventas)
 
         st.subheader("📈 Resumen del turno")
-        # Ajustamos a 6 columnas para incluir extra por redondeo
-        col_r1, col_r2, col_r3, col_r4, col_r5, col_r6 = st.columns(6)
+        col_r1, col_r2, col_r3, col_r4, col_r5 = st.columns(5)
         col_r1.metric("💰 Ventas totales", f"${total_ventas_usd:,.2f}")
         col_r2.metric("📦 Reposición (costo)", f"${total_costos:,.2f}")
         col_r3.metric("💸 Gastos", f"${total_gastos:,.2f}")
         col_r4.metric("📊 Ganancia USD", f"${ganancia_neta_usd:,.2f}")
         col_r5.metric("🪙 Ganancia Bs", f"{ganancia_neta_bs:,.2f} Bs", help="Ingresos en Bs menos costo en Bs")
-        col_r6.metric("💰 Extra por redondeo", f"{total_extra_redondeo:,.2f} Bs", help="Vuelto no entregado por falta de cambio, registrado como ingreso extra")
 
         with st.expander("💰 Ver desglose por método de pago", expanded=True):
             col_d1, col_d2 = st.columns(2)
@@ -1650,8 +1637,9 @@ elif opcion == "📊 CIERRE DE CAJA":
             total_bs_fisico = montos['efec_bs'] + montos['pmovil_bs'] + montos['punto_bs']
             total_usd_fisico = montos['efec_usd'] + montos['zelle_usd'] + montos['otros_usd']
 
-            # El esperado en Bs incluye el extra por redondeo (porque ese dinero físico está en caja)
-            esperado_bs = fondo_bs_ini + total_pagos_bs + total_extra_redondeo - (total_gastos * tasa)
+            # El esperado es: fondo inicial + ingresos en Bs - gastos en Bs
+            # Los ingresos en Bs ya incluyen cualquier pago por encima del redondeo
+            esperado_bs = fondo_bs_ini + total_ingresos_bs - (total_gastos * tasa)
             esperado_usd = fondo_usd_ini + total_pagos_usd - total_gastos
 
             diff_bs = total_bs_fisico - esperado_bs
@@ -1662,7 +1650,7 @@ elif opcion == "📊 CIERRE DE CAJA":
             col_x1, col_x2 = st.columns(2)
             with col_x1:
                 st.markdown("**🇻🇪 Bolívares**")
-                st.metric("Esperado (incluye extra)", f"{esperado_bs:,.2f} Bs")
+                st.metric("Esperado", f"{esperado_bs:,.2f} Bs")
                 st.metric("Físico", f"{total_bs_fisico:,.2f} Bs")
                 st.metric("Diferencia", f"{diff_bs:+,.2f} Bs")
             with col_x2:
@@ -1722,7 +1710,6 @@ elif opcion == "📊 CIERRE DE CAJA":
                         st.markdown(f"**Cerró:** {st.session_state.usuario_actual['nombre'] if st.session_state.usuario_actual else 'Anónimo'}")
                         st.markdown(f"**Fecha:** {datetime.now().strftime('%d/%m/%Y %H:%M')}")
                         st.markdown(f"**Ganancia en Bs:** {ganancia_neta_bs:,.2f} Bs")
-                        st.markdown(f"**Extra por redondeo:** {total_extra_redondeo:,.2f} Bs")
                     with col_y2:
                         st.markdown(f"**Ventas:** ${total_ventas_usd:,.2f}")
                         st.markdown(f"**Reposición:** ${reposicion:,.2f}")
