@@ -1479,7 +1479,7 @@ elif opcion == "📜 HISTORIAL":
                 st.rerun()
 
 # ============================================
-# MÓDULO 5: CIERRE DE CAJA (CORREGIDO - CON CONVERSIÓN DE DIVISAS)
+# MÓDULO 5: CIERRE DE CAJA (CORREGIDO - CON FONDO INICIAL EN USD)
 # ============================================
 elif opcion == "📊 CIERRE DE CAJA":
     st.markdown("<h1 class='main-header'>📊 Cierre de Caja</h1>", unsafe_allow_html=True)
@@ -1647,8 +1647,8 @@ elif opcion == "📊 CIERRE DE CAJA":
             # 🔥 CONVERTIR USD FÍSICOS A BS USANDO TASA DIVISAS
             total_bs_fisico_convertido = total_bs_fisico_original + (total_usd_fisico_original * tasa_divisas)
             
-            # 🔥 ESPERADO EN BS: fondo inicial Bs + pagos en Bs + (pagos en USD * tasa_divisas) - gastos
-            esperado_bs = fondo_bs_ini + total_pagos_bs + (total_pagos_usd * tasa_divisas) - (total_gastos * tasa)
+            # 🔥 ESPERADO EN BS: INCLUYE FONDO INICIAL EN USD CONVERTIDO A BS
+            esperado_bs = fondo_bs_ini + (fondo_usd_ini * tasa_divisas) + total_pagos_bs + (total_pagos_usd * tasa_divisas) - (total_gastos * tasa)
             esperado_usd = fondo_usd_ini + total_pagos_usd - total_gastos
 
             diff_bs = total_bs_fisico_convertido - esperado_bs
