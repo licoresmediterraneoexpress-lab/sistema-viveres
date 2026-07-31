@@ -1479,7 +1479,7 @@ elif opcion == "📜 HISTORIAL":
                 st.rerun()
 
 # ============================================
-# MÓDULO 5: CIERRE DE CAJA (SIN EXTRA POR REDONDEO)
+# MÓDULO 5: CIERRE DE CAJA (CORREGIDO - CON CONVERSIÓN DE DIVISAS)
 # ============================================
 elif opcion == "📊 CIERRE DE CAJA":
     st.markdown("<h1 class='main-header'>📊 Cierre de Caja</h1>", unsafe_allow_html=True)
@@ -1559,11 +1559,12 @@ elif opcion == "📊 CIERRE DE CAJA":
         total_costos = sum(float(v.get('costo_venta', 0)) for v in ventas)
         total_gastos = sum(float(g.get('monto_usd', 0)) for g in gastos)
 
-        # 🔥 Cálculos en bolívares
+        # 🔥 Cálculos en bolívares: total_ingresos_bs es la suma de monto_cobrado_bs de las ventas
         total_ingresos_bs = sum(float(v.get('monto_cobrado_bs', 0)) for v in ventas)
         total_costo_bs = sum(float(v.get('costo_venta_bs', 0)) for v in ventas)
         ganancia_neta_bs = total_ingresos_bs - total_costo_bs
 
+        # 🔥 Pagos reales en Bs y USD (según lo registrado en la venta)
         total_pagos_usd = sum(
             float(v.get('pago_divisas', 0)) +
             float(v.get('pago_zelle', 0)) +
@@ -1638,29 +1639,35 @@ elif opcion == "📊 CIERRE DE CAJA":
 
         if st.session_state.get('montos_calculados', False):
             montos = st.session_state.montos_fisicos
-            total_bs_fisico = montos['efec_bs'] + montos['pmovil_bs'] + montos['punto_bs']
-            total_usd_fisico = montos['efec_usd'] + montos['zelle_usd'] + montos['otros_usd']
-
-            # El esperado es: fondo inicial + ingresos en Bs - gastos en Bs
-            # Los ingresos en Bs ya incluyen cualquier pago por encima del redondeo
-            esperado_bs = fondo_bs_ini + total_ingresos_bs - (total_gastos * tasa)
+            
+            # 🔥 TOTALES FÍSICOS EN SU MONEDA ORIGINAL
+            total_bs_fisico_original = montos['efec_bs'] + montos['pmovil_bs'] + montos['punto_bs']
+            total_usd_fisico_original = montos['efec_usd'] + montos['zelle_usd'] + montos['otros_usd']
+            
+            # 🔥 CONVERTIR USD FÍSICOS A BS USANDO TASA DIVISAS
+            total_bs_fisico_convertido = total_bs_fisico_original + (total_usd_fisico_original * tasa_divisas)
+            
+            # 🔥 ESPERADO EN BS: fondo inicial Bs + pagos en Bs + (pagos en USD * tasa_divisas) - gastos
+            esperado_bs = fondo_bs_ini + total_pagos_bs + (total_pagos_usd * tasa_divisas) - (total_gastos * tasa)
             esperado_usd = fondo_usd_ini + total_pagos_usd - total_gastos
 
-            diff_bs = total_bs_fisico - esperado_bs
-            diff_usd = total_usd_fisico - esperado_usd
+            diff_bs = total_bs_fisico_convertido - esperado_bs
+            diff_usd = total_usd_fisico_original - esperado_usd
+            # La diferencia total en USD: usamos tasa BCV para convertir diff_bs a USD
             diff_total = diff_usd + (diff_bs / tasa if tasa > 0 else 0)
 
             st.subheader("📊 Comparación Caja vs Sistema")
             col_x1, col_x2 = st.columns(2)
             with col_x1:
-                st.markdown("**🇻🇪 Bolívares**")
+                st.markdown("**🇻🇪 Bolívares (incluye conversión de USD)**")
                 st.metric("Esperado", f"{esperado_bs:,.2f} Bs")
-                st.metric("Físico", f"{total_bs_fisico:,.2f} Bs")
+                st.metric("Físico (convertido)", f"{total_bs_fisico_convertido:,.2f} Bs")
                 st.metric("Diferencia", f"{diff_bs:+,.2f} Bs")
+                st.caption(f"Físico original en Bs: {total_bs_fisico_original:,.2f} Bs + USD {total_usd_fisico_original:.2f} × {tasa_divisas:.2f} = {total_bs_fisico_convertido:,.2f} Bs")
             with col_x2:
                 st.markdown("**🇺🇸 Dólares**")
                 st.metric("Esperado", f"${esperado_usd:,.2f}")
-                st.metric("Físico", f"${total_usd_fisico:,.2f}")
+                st.metric("Físico", f"${total_usd_fisico_original:,.2f}")
                 st.metric("Diferencia", f"${diff_usd:+,.2f}")
 
             st.metric("DIFERENCIA TOTAL", f"${diff_total:+,.2f}")
@@ -1687,8 +1694,8 @@ elif opcion == "📊 CIERRE DE CAJA":
                         "estado": "cerrado",
                         "usuario_cierre": st.session_state.usuario_actual['nombre'] if st.session_state.usuario_actual else 'Anónimo',
                         "observaciones": montos['observaciones'],
-                        "fondo_bs_final": total_bs_fisico,
-                        "fondo_usd_final": total_usd_fisico,
+                        "fondo_bs_final": total_bs_fisico_convertido,
+                        "fondo_usd_final": total_usd_fisico_original,
                         "efectivo_bs_fisico": montos['efec_bs'],
                         "pmovil_fisico": montos['pmovil_bs'],
                         "punto_fisico": montos['punto_bs'],
