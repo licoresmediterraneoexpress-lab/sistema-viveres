@@ -1479,7 +1479,7 @@ elif opcion == "📜 HISTORIAL":
                 st.rerun()
 
 # ============================================
-# MÓDULO 5: CIERRE DE CAJA (CORREGIDO - CON FONDO INICIAL EN USD)
+# MÓDULO 5: CIERRE DE CAJA (GANANCIAS CORREGIDAS CON DOS TASAS)
 # ============================================
 elif opcion == "📊 CIERRE DE CAJA":
     st.markdown("<h1 class='main-header'>📊 Cierre de Caja</h1>", unsafe_allow_html=True)
@@ -1555,31 +1555,45 @@ elif opcion == "📊 CIERRE DE CAJA":
         ventas = db.table("ventas").select("*").eq("id_cierre", id_turno).eq("estado", "Finalizado").execute().data or []
         gastos = db.table("gastos").select("*").eq("id_cierre", id_turno).execute().data or []
 
-        total_ventas_usd = sum(float(v.get('total_usd', 0)) for v in ventas)
-        total_costos = sum(float(v.get('costo_venta', 0)) for v in ventas)
-        total_gastos = sum(float(g.get('monto_usd', 0)) for g in gastos)
-
-        # 🔥 Cálculos en bolívares: total_ingresos_bs es la suma de monto_cobrado_bs de las ventas
-        total_ingresos_bs = sum(float(v.get('monto_cobrado_bs', 0)) for v in ventas)
-        total_costo_bs = sum(float(v.get('costo_venta_bs', 0)) for v in ventas)
-        ganancia_neta_bs = total_ingresos_bs - total_costo_bs
-
-        # 🔥 Pagos reales en Bs y USD (según lo registrado en la venta)
-        total_pagos_usd = sum(
-            float(v.get('pago_divisas', 0)) +
-            float(v.get('pago_zelle', 0)) +
-            float(v.get('pago_otros', 0)) for v in ventas
-        )
-        total_pagos_bs = sum(
+        # ============================================
+        # 🔥 NUEVOS CÁLCULOS DE GANANCIA (DOS TASAS)
+        # ============================================
+        # 1. Ingresos reales en Bs (lo que realmente entró en caja, convertido a Bs)
+        #    - Pagos en Bs (ya están en Bs, se suman tal cual)
+        #    - Pagos en USD convertidos a Bs usando TASA DIVISAS (paralela)
+        total_pagos_bs_raw = sum(
             float(v.get('pago_efectivo', 0)) +
             float(v.get('pago_movil', 0)) +
             float(v.get('pago_punto', 0)) for v in ventas
         )
+        total_pagos_usd_raw = sum(
+            float(v.get('pago_divisas', 0)) +
+            float(v.get('pago_zelle', 0)) +
+            float(v.get('pago_otros', 0)) for v in ventas
+        )
+        # Ingresos reales = Bs (ya) + USD × tasa divisas
+        total_ingresos_reales_bs = total_pagos_bs_raw + (total_pagos_usd_raw * tasa_divisas)
 
-        ganancia_bruta = total_ventas_usd - total_costos
-        ganancia_neta_usd = ganancia_bruta - total_gastos
-        reposicion = total_costos
+        # 2. Costos reales en Bs (lo que realmente pagaste por la mercancía y gastos)
+        #    - Costo de mercancía en USD × tasa BCV (porque así compraste)
+        #    - Gastos en USD × tasa BCV
+        total_costos_usd = sum(float(v.get('costo_venta', 0)) for v in ventas)
+        total_gastos_usd = sum(float(g.get('monto_usd', 0)) for g in gastos)
+        total_costos_reales_bs = (total_costos_usd + total_gastos_usd) * tasa
 
+        # 3. Ganancia real en Bs
+        ganancia_real_bs = total_ingresos_reales_bs - total_costos_reales_bs
+
+        # 4. Equivalente en USD (a tasa divisas)
+        ganancia_real_usd_paralelo = ganancia_real_bs / tasa_divisas if tasa_divisas > 0 else 0
+
+        # Métricas legacy (mantener compatibilidad)
+        total_ventas_usd = sum(float(v.get('total_usd', 0)) for v in ventas)
+        reposicion = total_costos_usd
+        ganancia_bruta_legacy = total_ventas_usd - total_costos_usd
+        ganancia_neta_legacy = ganancia_bruta_legacy - total_gastos_usd
+
+        # Desglose pagos (para mostrar en el expander)
         total_efectivo_usd = sum(float(v.get('pago_divisas', 0)) for v in ventas)
         total_zelle = sum(float(v.get('pago_zelle', 0)) for v in ventas)
         total_otros_usd = sum(float(v.get('pago_otros', 0)) for v in ventas)
@@ -1587,21 +1601,65 @@ elif opcion == "📊 CIERRE DE CAJA":
         total_movil = sum(float(v.get('pago_movil', 0)) for v in ventas)
         total_punto = sum(float(v.get('pago_punto', 0)) for v in ventas)
 
+        # ============================================
+        # 📈 RESUMEN DEL TURNO (NUEVO ESQUEMA)
+        # ============================================
         st.subheader("📈 Resumen del turno")
-        col_r1, col_r2, col_r3, col_r4, col_r5 = st.columns(5)
-        col_r1.metric("💰 Ventas totales", f"${total_ventas_usd:,.2f}")
-        col_r2.metric("📦 Reposición (costo)", f"${total_costos:,.2f}")
-        col_r3.metric("💸 Gastos", f"${total_gastos:,.2f}")
-        col_r4.metric("📊 Ganancia USD", f"${ganancia_neta_usd:,.2f}")
-        col_r5.metric("🪙 Ganancia Bs", f"{ganancia_neta_bs:,.2f} Bs", help="Ingresos en Bs menos costo en Bs")
+        
+        col_r1, col_r2, col_r3 = st.columns(3)
+        col_r1.metric("💰 Ingresos reales en Bs", f"{total_ingresos_reales_bs:,.2f} Bs", 
+                      help="Pagos en Bs + (Pagos en USD × tasa divisas)")
+        col_r2.metric("📦 Costos reales en Bs", f"{total_costos_reales_bs:,.2f} Bs",
+                      help="(Costo mercancía + Gastos) × tasa BCV")
+        col_r3.metric("💸 Gastos del turno", f"${total_gastos_usd:,.2f}")
+        
+        st.markdown("---")
+        col_g1, col_g2, col_g3 = st.columns(3)
+        with col_g1:
+            st.markdown(f"""
+                <div style='background: linear-gradient(135deg, #28a745 0%, #20c997 100%); 
+                        padding: 1.2rem; border-radius: 10px; color: white; text-align: center;'>
+                    <span style='font-size: 1rem; opacity: 0.9;'>💰 GANANCIA REAL EN Bs</span><br>
+                    <span style='font-size: 2rem; font-weight: 700;'>{ganancia_real_bs:,.2f} Bs</span>
+                </div>
+            """, unsafe_allow_html=True)
+        with col_g2:
+            st.markdown(f"""
+                <div style='background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); 
+                        padding: 1.2rem; border-radius: 10px; color: white; text-align: center;'>
+                    <span style='font-size: 1rem; opacity: 0.9;'>💵 EQUIVALENTE EN USD</span><br>
+                    <span style='font-size: 2rem; font-weight: 700;'>${ganancia_real_usd_paralelo:,.2f}</span>
+                    <br><span style='font-size: 0.75rem; opacity: 0.8;'>a tasa divisas {tasa_divisas:.2f} Bs/$</span>
+                </div>
+            """, unsafe_allow_html=True)
+        with col_g3:
+            st.markdown(f"""
+                <div style='background: linear-gradient(135deg, #ffc107 0%, #fd7e14 100%); 
+                        padding: 1.2rem; border-radius: 10px; color: white; text-align: center;'>
+                    <span style='font-size: 1rem; opacity: 0.9;'>📊 VENTAS TOTALES</span><br>
+                    <span style='font-size: 2rem; font-weight: 700;'>${total_ventas_usd:,.2f}</span>
+                </div>
+            """, unsafe_allow_html=True)
 
-        with st.expander("💰 Ver desglose por método de pago", expanded=True):
+        st.markdown(f"""
+            <div style='background-color: #f0f2f6; padding: 1rem; border-radius: 8px; margin-top: 1rem;'>
+                <div style='display: flex; justify-content: space-between; align-items: center;'>
+                    <span style='font-weight:600;'>📦 Para reponer mercancía:</span>
+                    <span style='color: #dc3545; font-weight:600;'>${reposicion:,.2f} USD</span>
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
+
+        with st.expander("💰 Ver desglose por método de pago", expanded=False):
             col_d1, col_d2 = st.columns(2)
             with col_d1:
-                st.markdown("**💵 Pagos en USD**")
-                st.metric("Efectivo USD", f"${total_efectivo_usd:,.2f}")
-                st.metric("Zelle USD", f"${total_zelle:,.2f}")
-                st.metric("Otros USD", f"${total_otros_usd:,.2f}")
+                st.markdown("**💵 Pagos en USD (entran a tasa divisas)**")
+                st.metric("Efectivo USD", f"${total_efectivo_usd:,.2f}", 
+                          help=f"Equivalente en Bs: {total_efectivo_usd * tasa_divisas:,.2f} Bs")
+                st.metric("Zelle USD", f"${total_zelle:,.2f}",
+                          help=f"Equivalente en Bs: {total_zelle * tasa_divisas:,.2f} Bs")
+                st.metric("Otros USD", f"${total_otros_usd:,.2f}",
+                          help=f"Equivalente en Bs: {total_otros_usd * tasa_divisas:,.2f} Bs")
             with col_d2:
                 st.markdown("**💵 Pagos en Bs**")
                 st.metric("Efectivo Bs", f"{total_efectivo_bs:,.2f} Bs")
@@ -1647,14 +1705,14 @@ elif opcion == "📊 CIERRE DE CAJA":
             # 🔥 CONVERTIR USD FÍSICOS A BS USANDO TASA DIVISAS
             total_bs_fisico_convertido = total_bs_fisico_original + (total_usd_fisico_original * tasa_divisas)
             
-            # 🔥 ESPERADO EN BS: INCLUYE FONDO INICIAL EN USD CONVERTIDO A BS
-            esperado_bs = fondo_bs_ini + (fondo_usd_ini * tasa_divisas) + total_pagos_bs + (total_pagos_usd * tasa_divisas) - (total_gastos * tasa)
-            esperado_usd = fondo_usd_ini + total_pagos_usd - total_gastos
+            # 🔥 ESPERADO EN BS (con conversión de USD a tasa divisas)
+            esperado_bs = fondo_bs_ini + (fondo_usd_ini * tasa_divisas) + total_pagos_bs_raw + (total_pagos_usd_raw * tasa_divisas) - (total_gastos_usd * tasa)
+            esperado_usd = fondo_usd_ini + total_pagos_usd_raw - total_gastos_usd
 
             diff_bs = total_bs_fisico_convertido - esperado_bs
             diff_usd = total_usd_fisico_original - esperado_usd
-            # La diferencia total en USD: usamos tasa BCV para convertir diff_bs a USD
-            diff_total = diff_usd + (diff_bs / tasa if tasa > 0 else 0)
+            # La diferencia total en USD: usamos tasa divisas para convertir diff_bs a USD
+            diff_total = diff_usd + (diff_bs / tasa_divisas if tasa_divisas > 0 else 0)
 
             st.subheader("📊 Comparación Caja vs Sistema")
             col_x1, col_x2 = st.columns(2)
@@ -1687,8 +1745,8 @@ elif opcion == "📊 CIERRE DE CAJA":
                     datos_cierre = {
                         "fecha_cierre": datetime.now().isoformat(),
                         "total_ventas": total_ventas_usd,
-                        "total_costos": total_costos,
-                        "total_ganancias": ganancia_neta_usd,
+                        "total_costos": total_costos_usd,
+                        "total_ganancias": ganancia_real_usd_paralelo,  # 🔥 Ahora guarda la ganancia en USD a paralelo
                         "diferencia": diff_total,
                         "tasa_cierre": tasa,
                         "estado": "cerrado",
@@ -1720,13 +1778,13 @@ elif opcion == "📊 CIERRE DE CAJA":
                         st.markdown(f"**Abrió:** {usuario_apertura}")
                         st.markdown(f"**Cerró:** {st.session_state.usuario_actual['nombre'] if st.session_state.usuario_actual else 'Anónimo'}")
                         st.markdown(f"**Fecha:** {datetime.now().strftime('%d/%m/%Y %H:%M')}")
-                        st.markdown(f"**Ganancia en Bs:** {ganancia_neta_bs:,.2f} Bs")
+                        st.markdown(f"**Tasas:** BCV {tasa:.2f} | Divisas {tasa_divisas:.2f}")
                     with col_y2:
-                        st.markdown(f"**Ventas:** ${total_ventas_usd:,.2f}")
-                        st.markdown(f"**Reposición:** ${reposicion:,.2f}")
-                        st.markdown(f"**Gastos:** ${total_gastos:,.2f}")
-                        st.markdown(f"**Ganancia neta USD:** ${ganancia_neta_usd:,.2f}")
-                    st.markdown(f"**Diferencia total:** ${diff_total:+,.2f}")
+                        st.markdown(f"**Ingresos reales:** {total_ingresos_reales_bs:,.2f} Bs")
+                        st.markdown(f"**Costos reales:** {total_costos_reales_bs:,.2f} Bs")
+                        st.markdown(f"**GANANCIA REAL:** {ganancia_real_bs:,.2f} Bs")
+                        st.markdown(f"**Ganancia en USD:** ${ganancia_real_usd_paralelo:,.2f}")
+                    st.markdown(f"**Diferencia de caja:** ${diff_total:+,.2f}")
 
                     if st.button("🔄 Volver al inicio"):
                         st.rerun()
@@ -1758,7 +1816,7 @@ elif opcion == "📊 CIERRE DE CAJA":
                         "usuario_apertura": "Abrió",
                         "usuario_cierre": "Cerró",
                         "total_ventas": st.column_config.NumberColumn("Ventas USD", format="$%.2f"),
-                        "total_ganancias": st.column_config.NumberColumn("Ganancias USD", format="$%.2f"),
+                        "total_ganancias": st.column_config.NumberColumn("Ganancia USD", format="$%.2f"),
                         "diferencia": st.column_config.NumberColumn("Diferencia USD", format="$%.2f")
                     },
                     use_container_width=True,
